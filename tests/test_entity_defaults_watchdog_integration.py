@@ -113,6 +113,7 @@ def _valid_payload(
     exclude_entity_name_regex: str = "",
     check_interval_minutes: int = 60,
     max_device_notifications: int = 0,
+    validate_includes_excludes: bool = True,
 ) -> dict[str, Any]:
     """Build a fully-populated EDW service-call payload."""
     return {
@@ -127,6 +128,7 @@ def _valid_payload(
         "exclude_entity_name_regex_raw": exclude_entity_name_regex,
         "check_interval_minutes_raw": check_interval_minutes,
         "max_device_notifications_raw": max_device_notifications,
+        "validate_includes_excludes_raw": validate_includes_excludes,
         "debug_logging_raw": False,
     }
 
@@ -513,6 +515,300 @@ class TestDeviceAttachedDisabledEntityFilter:
             f"expected 1 enabled entity scanned; got "
             f"{state.attributes['entities']}"
         )
+
+
+class TestUnmatchedDirectives:
+    """End-to-end coverage of the unmatched-directives
+    notification surface added by the
+    ``validate_includes_excludes`` toggle.
+    """
+
+    async def test_typoed_integration_fires_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_unmatched",
+                exclude_integrations=["typoed_integration"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_unmatched__unmatched_directives"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id in notifs
+        body: str = notifs[notif_id]["message"]
+        assert "typoed_integration" in body
+        assert "exclude_integrations" in body
+        assert "unknown integration" in body
+
+    async def test_toggle_off_dismisses_prior_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_toggle",
+                exclude_integrations=["typoed_integration"],
+                validate_includes_excludes=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_toggle__unmatched_directives"
+        )
+        assert notif_id in _async_get_or_create_notifications(hass)
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_toggle",
+                exclude_integrations=["typoed_integration"],
+                validate_includes_excludes=False,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert notif_id not in _async_get_or_create_notifications(hass)
+
+    async def test_each_directive_category_surfaces_end_to_end(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """One representative bullet per directive category
+        in a single notification body so a refactor that
+        drops a category from ``_validate_edw_directives``
+        fails CI rather than silently shipping.
+        """
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_categories",
+                exclude_integrations=["typoed_integration"],
+                exclude_entities=["sensor.does_not_exist"],
+                exclude_device_name_regex="^xyz_no_device_matches$",
+                exclude_entity_id_regex="^xyz_no_entity_matches$",
+                exclude_entity_name_regex="^xyz_no_name_matches$",
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_categories__unmatched_directives"
+        )
+        body = _async_get_or_create_notifications(hass)[notif_id]["message"]
+        for fragment in (
+            "exclude_integrations",
+            "exclude_entities",
+            "exclude_device_name_regex",
+            "exclude_entity_id_regex",
+            "exclude_entity_name_regex",
+            "typoed_integration",
+            "sensor.does_not_exist",
+            "xyz_no_device_matches",
+            "xyz_no_entity_matches",
+            "xyz_no_name_matches",
+        ):
+            assert fragment in body, (
+                f"missing {fragment!r} in unmatched-directives body: {body!r}"
+            )
+
+    async def test_cap_bypass_unmatched_directives_always_surfaces(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """The unmatched-directives notification rides outside the
+        per-device cap.
+
+        Regression guard: the cap-bypass is structural -- the
+        unmatched spec is appended to the dispatch list AFTER
+        ``prepare_notifications`` already trimmed the per-device
+        results. Plant two devices with name-override drift (so
+        cap=1 engages) plus a typo'd directive; assert the
+        cap-summary AND the unmatched-directives notification
+        both fire.
+        """
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.edw_capbypass",
+            "on",
+            {"friendly_name": "EDW: CapBypass", "id": "8989"},
+        )
+        fake_entry = _mock_config_entry(
+            domain="fake_edw_capbypass",
+            title="fake_edw_capbypass",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+
+        # Plant two devices each with a name-override that
+        # diverges from the integration's original_name --
+        # triggers name-drift findings on both, so cap=1
+        # engages.
+        for i in range(2):
+            device = dev_reg.async_get_or_create(
+                config_entry_id=fake_entry.entry_id,
+                identifiers={("fake_edw_capbypass", f"device-cap-{i}")},
+                name=f"CapDevice {i}",
+            )
+            entry = ent_reg.async_get_or_create(
+                domain="sensor",
+                platform="fake_edw_capbypass",
+                unique_id=f"drift-{i}",
+                device_id=device.id,
+                config_entry=fake_entry,
+                original_name=f"Original {i}",
+            )
+            # Set a name override that differs from
+            # original_name -> EDW flags name drift.
+            ent_reg.async_update_entity(
+                entry.entity_id,
+                name=f"OverriddenName{i}",
+            )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_capbypass",
+                include_integrations=["fake_edw_capbypass"],
+                drift_checks=["device-entity-name"],
+                exclude_integrations=["typoed_edw_capbypass_int"],
+                max_device_notifications=1,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        prefix = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_capbypass__"
+        )
+        per_device = [
+            nid for nid in notifs if nid.startswith(f"{prefix}device_")
+        ]
+        cap_id = f"{prefix}cap"
+        unmatched_id = f"{prefix}unmatched_directives"
+
+        state = hass.states.get(
+            "blueprint_toolkit.edw_edw_capbypass_state",
+        )
+        attrs = state.attributes if state else {}
+        # Cap engaged: only one per-device fired.
+        assert len(per_device) == 1, (
+            f"expected exactly 1 per-device notif under cap=1; "
+            f"diagnostic state attrs: {attrs}; "
+            f"got {sorted(per_device)}"
+        )
+        assert cap_id in notifs
+        assert unmatched_id in notifs, (
+            f"unmatched-directives notif suppressed by cap; "
+            f"got {sorted(notifs.keys())}"
+        )
+        body = notifs[unmatched_id]["message"]
+        assert "typoed_edw_capbypass_int" in body
+
+    async def test_out_of_target_integration_exclude_does_not_false_flag(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """An ``exclude_entities`` entry pointing at a registered
+        entity outside ``include_integrations`` is redundant but
+        not a typo -- the validator must NOT flag it as "no entity
+        matches". Plants a fake registry entry on a non-targeted
+        integration, sets ``include_integrations`` to a different
+        integration, and asserts the validator stays quiet.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+
+        # Plant a registry entry on integration "plant_other".
+        ent_reg = er.async_get(hass)
+        from pytest_homeassistant_custom_component.common import (
+            MockConfigEntry,
+        )
+
+        other_entry = MockConfigEntry(
+            domain="plant_other",
+            title="plant_other",
+        )
+        other_entry.add_to_hass(hass)
+        ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="plant_other",
+            unique_id="plant_other_only_one",
+            suggested_object_id="plant_other_only_one",
+            config_entry=other_entry,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_oot",
+                include_integrations=["plant_target"],
+                exclude_entities=["sensor.plant_other_only_one"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_oot__unmatched_directives"
+        )
+        notifs = _async_get_or_create_notifications(hass)
+        if notif_id in notifs:
+            body = notifs[notif_id]["message"]
+            assert "sensor.plant_other_only_one" not in body, (
+                "out-of-target-integration entity exclude "
+                f"false-flagged as no-match: {body!r}"
+            )
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

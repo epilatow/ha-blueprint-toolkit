@@ -274,6 +274,7 @@ def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
         "dead_device_threshold_minutes_raw": 1440,
         "enabled_checks_raw": [],
         "max_device_notifications_raw": 0,
+        "validate_includes_excludes_raw": True,
         "debug_logging_raw": False,
     }
     payload.update(overrides)

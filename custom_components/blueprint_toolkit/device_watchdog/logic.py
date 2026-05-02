@@ -515,6 +515,39 @@ def evaluate_devices(
 
 
 @dataclass
+class DirectiveInputs:
+    """Per-instance include / exclude directive inputs for DW.
+
+    Carries the user-supplied directive lists + the enabled
+    toggle + the candidate sets the regex / entity-id
+    validators measure against.
+
+    The handler builds ``device_name_candidates`` and
+    ``entity_id_candidates`` from the FULL device + entity
+    registries (NOT filtered by include / exclude
+    integrations), with ``entity_id_candidates`` narrowed to
+    ``monitored_entity_domains`` only. Reason: the
+    integration filter and the regex filter are independent
+    layers from the user's perspective, but the actual
+    exclusion code applies them in a fixed order
+    (integration first, regex after). If the validator
+    measured against the post-integration-filter set, a
+    user with both layers configured would see "unmatched
+    regex" warnings whenever the integration filter already
+    pruned the entities the regex would have matched -- a
+    confusing leak of internal ordering.
+    """
+
+    enabled: bool
+    include_integrations: list[str]
+    exclude_integrations: list[str]
+    exclude_device_name_regex_lines: list[helpers.JoinedRegexLine]
+    exclude_entity_id_regex_lines: list[helpers.JoinedRegexLine]
+    device_name_candidates: frozenset[str]
+    entity_id_candidates: frozenset[str]
+
+
+@dataclass
 class EvaluationResult:
     """Full evaluation result for the service wrapper."""
 
@@ -527,14 +560,84 @@ class EvaluationResult:
     issues_count: int
     stat_entity_issues: int
     stat_stale: int
+    unmatched_directives: list[helpers.UnmatchedDirective] = field(
+        default_factory=list,
+    )
+
+
+def _validate_dw_directives(
+    inputs: DirectiveInputs,
+    all_integrations: list[str],
+) -> list[helpers.UnmatchedDirective]:
+    """Compose the per-category validators into DW's unmatched list.
+
+    Integration directives match against
+    ``all_integrations`` (the full set the handler
+    enumerated). Device-name and entity-id regexes match
+    against the candidate sets the handler pre-built from
+    the full registries (see ``DirectiveInputs`` for the
+    rationale -- candidates are deliberately broader than
+    the post-include/exclude-integration set so the
+    validator doesn't leak the actual exclusion code's
+    layer ordering).
+    """
+    if not inputs.enabled:
+        return []
+
+    integration_candidates = frozenset(all_integrations)
+
+    out: list[helpers.UnmatchedDirective] = []
+    out.extend(
+        helpers.validate_directives_item(
+            field="include_integrations",
+            directives=inputs.include_integrations,
+            candidates=integration_candidates,
+            reason="unknown integration",
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_item(
+            field="exclude_integrations",
+            directives=inputs.exclude_integrations,
+            candidates=integration_candidates,
+            reason="unknown integration",
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_regex(
+            field="exclude_device_name_regex",
+            lines=inputs.exclude_device_name_regex_lines,
+            candidates=inputs.device_name_candidates,
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_regex(
+            field="exclude_entity_id_regex",
+            lines=inputs.exclude_entity_id_regex_lines,
+            candidates=inputs.entity_id_candidates,
+        ),
+    )
+    return out
+
+
+_DISABLED_DIRECTIVES = DirectiveInputs(
+    enabled=False,
+    include_integrations=[],
+    exclude_integrations=[],
+    exclude_device_name_regex_lines=[],
+    exclude_entity_id_regex_lines=[],
+    device_name_candidates=frozenset(),
+    entity_id_candidates=frozenset(),
+)
 
 
 def run_evaluation(
     config: Config,
     devices: list[DeviceInfo],
     current_time: datetime,
-    all_integrations_count: int,
+    all_integrations: list[str],
     max_notifications: int,
+    directive_inputs: DirectiveInputs | None = None,
 ) -> EvaluationResult:
     """Run device evaluation in a worker thread.
 
@@ -562,11 +665,17 @@ def run_evaluation(
     notifications += diag_notifications
 
     issues = [r for r in results if r.has_issue]
+    unmatched = _validate_dw_directives(
+        directive_inputs
+        if directive_inputs is not None
+        else _DISABLED_DIRECTIVES,
+        all_integrations,
+    )
 
     return EvaluationResult(
         results=results,
         notifications=notifications,
-        all_integrations_count=all_integrations_count,
+        all_integrations_count=len(all_integrations),
         stat_entities=sum(
             r.entities_evaluated + r.entities_filtered
             for r in results
@@ -577,4 +686,5 @@ def run_evaluation(
         issues_count=len(issues),
         stat_entity_issues=sum(len(r.unavailable_entities) for r in issues),
         stat_stale=sum(1 for r in issues if r.is_stale),
+        unmatched_directives=unmatched,
     )

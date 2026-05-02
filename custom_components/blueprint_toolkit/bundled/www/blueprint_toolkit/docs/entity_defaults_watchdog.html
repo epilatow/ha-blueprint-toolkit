@@ -133,6 +133,10 @@ device name + ID drift)</li>
 <td>Cap on per-device notifications. Default 10. 0 = unlimited.</td>
 </tr>
 <tr>
+<td>Validate include / exclude directives</td>
+<td>Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See <strong>Unmatched include / exclude directives</strong> below.</td>
+</tr>
+<tr>
 <td>Debug Logging</td>
 <td>Log debug info to HA logs.</td>
 </tr>
@@ -239,9 +243,9 @@ entity's editor. Registry-backed entries from other integrations show the
 friendly name in plain text followed by the owning integration's name as a
 link to its config page -- scan the integration column to see when several
 flagged entities share a single source (e.g. five rows all tagged
-<code>-  integration rachio</code>) and can be suppressed together via
-<strong>Exclude integrations</strong>. State-only entities (YAML blocks without <code>unique_id:</code>)
-have no owning integration, so they show a nudge to add one instead.</p>
+<code>-  integration rachio</code>) and can be suppressed together via <strong>Exclude
+integrations</strong>. State-only entities (YAML blocks without <code>unique_id:</code>) have no
+owning integration, so they show a nudge to add one instead.</p>
 <p><strong>Stale collision suffixes</strong> -- entities whose ID ends in <code>_N</code> (N &gt;= 2) but no
 un-suffixed or lower-<code>_N</code> peer exists:</p>
 <pre><code class="language-text">- `automation.front_porch_light_2` -&gt; rename to `automation.front_porch_light`
@@ -275,6 +279,19 @@ skip all battery entities).</li>
 <li><strong>Entity name exclude regex</strong>: match entity names by pattern.</li>
 <li><strong>Device name exclude regex</strong>: skip entire devices by name.</li>
 </ul>
+<h3>Unmatched include / exclude directives</h3>
+<p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
+include / exclude entry is checked against the live truth set after each scan.
+Anything that doesn't bind -- a typo'd integration name like <code>zwavejs</code> instead
+of <code>zwave_js</code>, an <code>Exclude entities</code> entry for an entity that no longer
+exists, or a regex line in any of the <strong>Device name</strong> / <strong>Entity ID</strong> /
+<strong>Entity name</strong> exclude fields that catches no current row -- shows up in a
+single &quot;Unmatched include / exclude directives&quot; notification with one bullet
+per offending entry, the field it came from, and a short reason. Fix the typo
+or remove the stale entry and the notification clears on the next scan. The
+notification is informational, not a config error. Disable the toggle to skip
+the check; any prior unmatched-directives notification dismisses on the next
+scan.</p>
 <h2>Developer notes</h2>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to
@@ -299,6 +316,9 @@ Tools &gt; States to find it.</p>
 <li><code>deviceless_drift</code>: Deviceless entities flagged as drifted (excludes
 stale-suffix cases)</li>
 <li><code>deviceless_stale</code>: Deviceless entities with stale collision suffixes</li>
+<li><code>unmatched_directives</code>: Include / exclude directives that bound to zero live
+candidates this run (zero unless <strong>Validate include / exclude directives</strong>
+surfaced something)</li>
 </ul>
 <h3>Debug logging</h3>
 <p>Enable the <strong>Debug Logging</strong> toggle in the blueprint. Debug output appears in
@@ -307,7 +327,8 @@ custom components).</p>
 <p>Example output for an automation named &quot;Entity Defaults Watchdog&quot;:</p>
 <pre><code class="language-text">[EDW: Entity Defaults Watchdog] integrations=12
   devices=45 entities=320 device_issues=2
-  entity_issues=5
+  entity_issues=5 deviceless_drift=3 deviceless_stale=0
+  unmatched_directives=0
 </code></pre>
 </body>
 </html>

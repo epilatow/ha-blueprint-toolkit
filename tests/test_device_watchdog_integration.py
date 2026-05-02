@@ -108,6 +108,7 @@ def _valid_payload(
     dead_device_threshold_minutes: int = 1440,
     enabled_checks: list[str] | None = None,
     max_device_notifications: int = 0,
+    validate_includes_excludes: bool = True,
 ) -> dict[str, Any]:
     """Build a fully-populated DW service-call payload."""
     return {
@@ -122,6 +123,7 @@ def _valid_payload(
         "dead_device_threshold_minutes_raw": dead_device_threshold_minutes,
         "enabled_checks_raw": enabled_checks or [],
         "max_device_notifications_raw": max_device_notifications,
+        "validate_includes_excludes_raw": validate_includes_excludes,
         "debug_logging_raw": False,
     }
 
@@ -460,6 +462,219 @@ class TestPerDeviceLinkPrefix:
         assert body.startswith(
             "Automation: [DW: Finding](/config/automation/edit/9999)\n",
         ), f"missing automation-link prefix; body was: {body[:200]!r}"
+
+
+class TestUnmatchedDirectives:
+    """End-to-end coverage of the unmatched-directives
+    notification surface added by the
+    ``validate_includes_excludes`` toggle.
+    """
+
+    async def test_typoed_integration_fires_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_unmatched",
+                exclude_integrations=["typoed_integration"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_device_watchdog"
+            "__automation.dw_unmatched__unmatched_directives"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id in notifs
+        body: str = notifs[notif_id]["message"]
+        assert "typoed_integration" in body
+        assert "exclude_integrations" in body
+        assert "unknown integration" in body
+
+    async def test_toggle_off_dismisses_prior_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        await _setup_integration(hass)
+        # Toggle on + typo'd value -> notification fires.
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_toggle",
+                exclude_integrations=["typoed_integration"],
+                validate_includes_excludes=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_device_watchdog"
+            "__automation.dw_toggle__unmatched_directives"
+        )
+        assert notif_id in _async_get_or_create_notifications(hass)
+
+        # Toggle off -> dismissed even with the same value.
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_toggle",
+                exclude_integrations=["typoed_integration"],
+                validate_includes_excludes=False,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        assert notif_id not in _async_get_or_create_notifications(hass)
+
+    async def test_cap_bypass_unmatched_directives_always_surfaces(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """The unmatched-directives notification rides outside the
+        per-device cap.
+
+        Regression guard: the cap-bypass is structural -- the
+        unmatched spec is appended to the dispatch list AFTER
+        ``prepare_notifications`` already trimmed the per-device
+        results. A future refactor that lifts the cap into the
+        dispatcher (or moves the unmatched spec inside the input
+        list ``prepare_notifications`` sees) would silently bury
+        the user's typo'd-exclusion diagnostic under a busy run.
+        Plant enough findings to trigger the cap, AND a typo'd
+        directive, assert both the cap-summary and the
+        unmatched-directives notification fire.
+        """
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.dw_capbypass",
+            "on",
+            {"friendly_name": "DW: CapBypass", "id": "8989"},
+        )
+        fake_entry = _mock_config_entry(
+            domain="fake_capbypass",
+            title="fake_capbypass",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+
+        # Plant two devices with unavailable entities so the
+        # cap of 1 is exceeded.
+        for i in range(2):
+            device = dev_reg.async_get_or_create(
+                config_entry_id=fake_entry.entry_id,
+                identifiers={("fake_capbypass", f"device-cap-{i}")},
+                name=f"CapDevice {i}",
+            )
+            entry = ent_reg.async_get_or_create(
+                domain="binary_sensor",
+                platform="fake_capbypass",
+                unique_id=f"unavail-cap-{i}",
+                device_id=device.id,
+                config_entry=fake_entry,
+                original_name="unavail",
+            )
+            hass.states.async_set(
+                entry.entity_id,
+                "unavailable",
+                {"friendly_name": f"Unavail{i}"},
+            )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_capbypass",
+                include_integrations=["fake_capbypass"],
+                enabled_checks=["unavailable-entities"],
+                exclude_integrations=["typoed_capbypass_int"],
+                max_device_notifications=1,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        prefix = "blueprint_toolkit_device_watchdog__automation.dw_capbypass__"
+        per_device = [
+            nid for nid in notifs if nid.startswith(f"{prefix}device_")
+        ]
+        cap_id = f"{prefix}cap"
+        unmatched_id = f"{prefix}unmatched_directives"
+        # Cap engaged: only one per-device fired.
+        assert len(per_device) == 1, (
+            f"expected exactly 1 per-device notif under cap=1; "
+            f"got {sorted(per_device)}"
+        )
+        # Cap-summary fires alongside.
+        assert cap_id in notifs
+        # Unmatched-directives notification still surfaces.
+        assert unmatched_id in notifs, (
+            f"unmatched-directives notif suppressed by cap; "
+            f"got {sorted(notifs.keys())}"
+        )
+        body = notifs[unmatched_id]["message"]
+        assert "typoed_capbypass_int" in body
+
+    async def test_regex_categories_surface_end_to_end(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """One representative bullet per regex directive
+        category in a single notification body so a refactor
+        that drops a category from
+        ``_validate_dw_directives`` fails CI.
+        """
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_regex_cats",
+                exclude_device_name_regex="^xyz_no_device_matches$",
+                exclude_entity_id_regex="^xyz_no_entity_matches$",
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_device_watchdog"
+            "__automation.dw_regex_cats__unmatched_directives"
+        )
+        body = _async_get_or_create_notifications(hass)[notif_id]["message"]
+        assert "exclude_device_name_regex" in body
+        assert "exclude_entity_id_regex" in body
+        assert "xyz_no_device_matches" in body
+        assert "xyz_no_entity_matches" in body
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

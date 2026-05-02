@@ -25,12 +25,14 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     Config,
     DeviceEntry,
     DeviceInfo,
+    DirectiveInputs,
     EntityInfo,
     RegistryEntry,
     _build_notification_message,
     _check_staleness,
     _evaluate_device,
     _filter_entities,
+    _validate_dw_directives,
     check_disabled_diagnostics,
     evaluate_devices,
     evaluate_diagnostics,
@@ -38,6 +40,7 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
 )
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     PersistentNotification,
+    validate_and_join_regex_patterns,
 )
 
 T0 = datetime(2024, 1, 15, 12, 0, 0)
@@ -478,7 +481,7 @@ class TestRunEvaluationDiagnosticsGate:
             cfg,
             [self._diag_device()],
             T0,
-            all_integrations_count=1,
+            all_integrations=["foo"],
             max_notifications=0,
         )
         diag_ids = [
@@ -500,7 +503,7 @@ class TestRunEvaluationDiagnosticsGate:
             cfg,
             [self._diag_device()],
             T0,
-            all_integrations_count=1,
+            all_integrations=["foo"],
             max_notifications=0,
         )
         diag_ids = [
@@ -1176,6 +1179,116 @@ class TestNotificationPrefixIsolation:
         ids_a = {n.notification_id for n in evaluate_diagnostics(cfg_a, [dev])}
         ids_b = {n.notification_id for n in evaluate_diagnostics(cfg_b, [dev])}
         assert ids_a.isdisjoint(ids_b)
+
+
+class TestValidateDwDirectives:
+    """Direct tests against ``_validate_dw_directives`` -- the
+    handler builds candidate sets from the FULL registries
+    (not the post-include/exclude-integration set), so the
+    validator should report a regex as matched whenever its
+    pattern matches ANYTHING in the candidate set the
+    handler hands over, even if the actual exclusion code's
+    integration-filter would have pruned the match.
+    """
+
+    @staticmethod
+    def _di(
+        *,
+        entity_id_regex: str = "",
+        device_name_regex: str = "",
+        entity_id_candidates: frozenset[str] = frozenset(),
+        device_name_candidates: frozenset[str] = frozenset(),
+        include_integrations: list[str] | None = None,
+        exclude_integrations: list[str] | None = None,
+    ) -> DirectiveInputs:
+        return DirectiveInputs(
+            enabled=True,
+            include_integrations=include_integrations or [],
+            exclude_integrations=exclude_integrations or [],
+            exclude_device_name_regex_lines=validate_and_join_regex_patterns(
+                device_name_regex,
+                "exclude_device_name_regex",
+            ).lines,
+            exclude_entity_id_regex_lines=validate_and_join_regex_patterns(
+                entity_id_regex,
+                "exclude_entity_id_regex",
+            ).lines,
+            device_name_candidates=device_name_candidates,
+            entity_id_candidates=entity_id_candidates,
+        )
+
+    def test_entity_id_regex_matches_candidate_set(self) -> None:
+        # Bug-fix coverage: a regex matching an entity in
+        # the broad candidate set is NOT flagged unmatched
+        # even if the entity belongs to an integration the
+        # user excluded at the integration layer. The
+        # handler is responsible for sourcing this set from
+        # the FULL registries.
+        di = self._di(
+            entity_id_regex=(
+                r"sensor\.clothes_.*_(total_time|remaining_time|delayed_start)"
+            ),
+            entity_id_candidates=frozenset(
+                {
+                    "sensor.clothes_dryer_total_time",
+                    "sensor.clothes_washer_remaining_time",
+                    "sensor.unrelated_temp",
+                }
+            ),
+            exclude_integrations=["lg_thinq"],
+        )
+        out = _validate_dw_directives(
+            di,
+            all_integrations=["lg_thinq", "tplink"],
+        )
+        # No bullet for ``exclude_entity_id_regex`` -- the
+        # regex matched two of the three candidates.
+        assert not [u for u in out if u.field == "exclude_entity_id_regex"], out
+
+    def test_entity_id_regex_unmatched_when_no_candidate_matches(
+        self,
+    ) -> None:
+        di = self._di(
+            entity_id_regex=r"^xyz_no_entity_matches$",
+            entity_id_candidates=frozenset({"sensor.foo", "sensor.bar"}),
+        )
+        out = _validate_dw_directives(di, all_integrations=[])
+        unmatched = [u for u in out if u.field == "exclude_entity_id_regex"]
+        assert len(unmatched) == 1
+        assert unmatched[0].value == r"^xyz_no_entity_matches$"
+
+    def test_leading_space_regex_is_unmatched(self) -> None:
+        # Bug-fix coverage: the helper preserves leading
+        # whitespace verbatim, so a typo'd "  _audio_input_format$"
+        # (leading space) compiles to a pattern requiring a
+        # literal space before ``_audio_input_format``. No
+        # entity_id contains a space, so the validator
+        # correctly flags the line.
+        di = self._di(
+            entity_id_regex=" _audio_input_format$",
+            entity_id_candidates=frozenset(
+                {
+                    "sensor.kitchen_sonos_audio_input_format",
+                    "sensor.living_room_sonos_audio_input_format",
+                }
+            ),
+        )
+        out = _validate_dw_directives(di, all_integrations=[])
+        unmatched = [u for u in out if u.field == "exclude_entity_id_regex"]
+        assert len(unmatched) == 1
+        assert unmatched[0].value == " _audio_input_format$"
+
+    def test_device_name_regex_uses_candidate_set(self) -> None:
+        di = self._di(
+            device_name_regex=r"^Clothes (Washer|Dryer)$",
+            device_name_candidates=frozenset(
+                {"Clothes Washer", "Clothes Dryer", "Front Door Lock"}
+            ),
+        )
+        out = _validate_dw_directives(di, all_integrations=[])
+        assert not [u for u in out if u.field == "exclude_device_name_regex"], (
+            out
+        )
 
 
 class TestCodeQuality(CodeQualityBase):

@@ -934,6 +934,49 @@ def evaluate_devices(
 
 
 @dataclass
+class DirectiveInputs:
+    """Per-instance include / exclude directive inputs for EDW.
+
+    Carries the user-supplied directive lists, the enabled
+    toggle, and the candidate sets the validators measure
+    against. All candidate sets are sourced from the FULL
+    registries (NOT filtered by include / exclude
+    integrations), so the validator's "matches no
+    candidates" signal doesn't depend on the order
+    integration-filter vs regex-filter run inside the
+    actual exclusion code -- a user with both layers
+    configured shouldn't see "regex matches nothing" warnings
+    when the integration filter already pruned the entities
+    the regex would have caught.
+
+    - ``all_registered_entity_ids``: every entity ID the
+      registry knows about (used for ``exclude_entities``).
+    - ``device_name_candidates``: every device's
+      ``name_by_user or name`` the device registry knows
+      about.
+    - ``entity_id_candidates``: every entity ID in the
+      registry.
+    - ``entity_name_candidates``: the union of ``name`` and
+      ``original_name`` across every entity-registry entry
+      (NOT ``name_by_user``, which is device-registry only;
+      the entity registry's user-set name lives in
+      ``name``).
+    """
+
+    enabled: bool
+    include_integrations: list[str]
+    exclude_integrations: list[str]
+    exclude_entities: list[str]
+    all_registered_entity_ids: frozenset[str]
+    exclude_device_name_regex_lines: list[helpers.JoinedRegexLine]
+    exclude_entity_id_regex_lines: list[helpers.JoinedRegexLine]
+    exclude_entity_name_regex_lines: list[helpers.JoinedRegexLine]
+    device_name_candidates: frozenset[str]
+    entity_id_candidates: frozenset[str]
+    entity_name_candidates: frozenset[str]
+
+
+@dataclass
 class EvaluationResult:
     """Full evaluation result for the service wrapper."""
 
@@ -951,6 +994,93 @@ class EvaluationResult:
     stat_deviceless_excluded: int
     stat_deviceless_drift: int
     stat_deviceless_stale: int
+    unmatched_directives: list[helpers.UnmatchedDirective] = field(
+        default_factory=list,
+    )
+
+
+def _validate_edw_directives(
+    inputs: DirectiveInputs,
+    all_integrations: list[str],
+) -> list[helpers.UnmatchedDirective]:
+    """Compose the per-category validators into EDW's unmatched list.
+
+    Integration directives match against
+    ``all_integrations``. The other categories use the
+    candidate sets the handler pre-built from the full
+    registries (see ``DirectiveInputs`` for the rationale --
+    candidates are deliberately broader than the
+    post-include/exclude-integration set so the validator
+    doesn't leak the actual exclusion code's layer
+    ordering).
+    """
+    if not inputs.enabled:
+        return []
+
+    integration_candidates = frozenset(all_integrations)
+
+    out: list[helpers.UnmatchedDirective] = []
+    out.extend(
+        helpers.validate_directives_item(
+            field="include_integrations",
+            directives=inputs.include_integrations,
+            candidates=integration_candidates,
+            reason="unknown integration",
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_item(
+            field="exclude_integrations",
+            directives=inputs.exclude_integrations,
+            candidates=integration_candidates,
+            reason="unknown integration",
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_item(
+            field="exclude_entities",
+            directives=inputs.exclude_entities,
+            candidates=inputs.all_registered_entity_ids,
+            reason="no entity matches",
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_regex(
+            field="exclude_device_name_regex",
+            lines=inputs.exclude_device_name_regex_lines,
+            candidates=inputs.device_name_candidates,
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_regex(
+            field="exclude_entity_id_regex",
+            lines=inputs.exclude_entity_id_regex_lines,
+            candidates=inputs.entity_id_candidates,
+        ),
+    )
+    out.extend(
+        helpers.validate_directives_regex(
+            field="exclude_entity_name_regex",
+            lines=inputs.exclude_entity_name_regex_lines,
+            candidates=inputs.entity_name_candidates,
+        ),
+    )
+    return out
+
+
+_DISABLED_DIRECTIVES = DirectiveInputs(
+    enabled=False,
+    include_integrations=[],
+    exclude_integrations=[],
+    exclude_entities=[],
+    all_registered_entity_ids=frozenset(),
+    exclude_device_name_regex_lines=[],
+    exclude_entity_id_regex_lines=[],
+    exclude_entity_name_regex_lines=[],
+    device_name_candidates=frozenset(),
+    entity_id_candidates=frozenset(),
+    entity_name_candidates=frozenset(),
+)
 
 
 def run_evaluation(
@@ -958,8 +1088,9 @@ def run_evaluation(
     devices: list[DeviceInfo],
     deviceless_entities: list[DevicelessEntityInfo],
     peers_by_domain: dict[str, set[str]],
-    all_integrations_count: int,
+    all_integrations: list[str],
     max_notifications: int,
+    directive_inputs: DirectiveInputs | None = None,
 ) -> EvaluationResult:
     """Run entity defaults evaluation in a worker thread.
 
@@ -1014,7 +1145,7 @@ def run_evaluation(
     return EvaluationResult(
         results=results,
         notifications=notifications,
-        all_integrations_count=all_integrations_count,
+        all_integrations_count=len(all_integrations),
         stat_entities=sum(
             [
                 r.entities_checked + r.entities_excluded
@@ -1036,4 +1167,10 @@ def run_evaluation(
         stat_deviceless_excluded=deviceless.entities_excluded,
         stat_deviceless_drift=stat_deviceless_drift,
         stat_deviceless_stale=stat_deviceless_stale,
+        unmatched_directives=_validate_edw_directives(
+            directive_inputs
+            if directive_inputs is not None
+            else _DISABLED_DIRECTIVES,
+            all_integrations,
+        ),
     )

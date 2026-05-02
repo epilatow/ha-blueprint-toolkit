@@ -48,12 +48,15 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
+    JoinedRegexLine,
+    all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
     entry_for_domain,
     make_emit_config_error,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
+    make_unmatched_directives_notification,
     notification_prefix,
     process_persistent_notifications_with_sweep,
     register_blueprint_handler,
@@ -72,6 +75,17 @@ _SERVICE = "reference_watchdog"
 _SERVICE_TAG = "RW"
 _SERVICE_NAME = "Reference Watchdog"
 BLUEPRINT_PATH = "blueprint_toolkit/reference_watchdog.yaml"
+
+# Synthetic ``Owner.integration`` labels RW's YAML scanners
+# emit for sources that don't have an entity-registry
+# platform (and so don't appear in ``all_integration_ids``).
+# Mirrors the blueprint's exclude_integrations quick-pick
+# list. Folded into the directive-validator candidate set so
+# picking ``customize`` from the dropdown doesn't fire a
+# false unmatched-directives notification.
+_RW_SYNTHETIC_INTEGRATIONS: frozenset[str] = frozenset(
+    {"automation", "script", "template", "customize", "lovelace"},
+)
 
 
 # --------------------------------------------------------
@@ -114,6 +128,7 @@ _SCHEMA = vol.Schema(
         vol.Required("max_source_notifications_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=1000)
         ),
+        vol.Required("validate_includes_excludes_raw"): cv.boolean,
         vol.Required("debug_logging_raw"): cv.boolean,
     },
     extra=vol.ALLOW_EXTRA,
@@ -183,11 +198,12 @@ async def _async_argparse(
     # surviving lines with ``|`` so the logic module gets
     # a single alternation regex it can hand to
     # ``re.search``.
-    exclude_entity_id_regex, regex_errors = validate_and_join_regex_patterns(
+    eid_regex_result = validate_and_join_regex_patterns(
         data["exclude_entity_id_regex_raw"],
         "exclude_entity_id_regex",
     )
-    errors.extend(regex_errors)
+    exclude_entity_id_regex = eid_regex_result.joined
+    errors.extend(eid_regex_result.errors)
 
     # Argparse complete; emit accumulated errors (or
     # dismiss any prior config_error notification).
@@ -211,9 +227,11 @@ async def _async_argparse(
         exclude_integrations=list(data["exclude_integrations_raw"]),
         exclude_entities=list(data["exclude_entities_raw"]),
         exclude_entity_id_regex=exclude_entity_id_regex,
+        exclude_entity_id_regex_lines=eid_regex_result.lines,
         check_disabled_entities=data["check_disabled_entities_raw"],
         check_interval_minutes=data["check_interval_minutes_raw"],
         max_notifications=data["max_source_notifications_raw"],
+        validate_includes_excludes=data["validate_includes_excludes_raw"],
         debug_logging=data["debug_logging_raw"],
     )
 
@@ -234,9 +252,11 @@ async def _async_service_layer(
     exclude_integrations: list[str],
     exclude_entities: list[str],
     exclude_entity_id_regex: str,
+    exclude_entity_id_regex_lines: list[JoinedRegexLine],
     check_disabled_entities: bool,
     check_interval_minutes: int,
     max_notifications: int,
+    validate_includes_excludes: bool,
     debug_logging: bool,
 ) -> None:
     """Run a scan + dispatch notifications + persist diagnostics."""
@@ -269,11 +289,33 @@ async def _async_service_layer(
     # registries it queries are loop-only.
     truth_set = _build_truth_set(hass)
 
+    # RW's exclude_integrations matches against
+    # ``Owner.integration`` -- which can be a config-entry
+    # domain (a real entity-registry platform, covered by
+    # ``all_integration_ids``) OR one of the built-in
+    # synthetic adapter labels emitted by the YAML scanners
+    # (``automation``, ``script``, ``template``,
+    # ``customize``, ``lovelace``). Union both so the
+    # blueprint's quick-pick choices don't false-flag
+    # against the directive validator.
+    rw_integration_candidates = (
+        frozenset(all_integration_ids(hass)) | _RW_SYNTHETIC_INTEGRATIONS
+    )
+    directive_inputs = logic.DirectiveInputs(
+        enabled=validate_includes_excludes,
+        integration_candidates=rw_integration_candidates,
+        exclude_integrations=exclude_integrations,
+        exclude_entities=exclude_entities,
+        exclude_paths=exclude_paths,
+        exclude_entity_id_regex_lines=exclude_entity_id_regex_lines,
+    )
+
     config_dir = hass.config.config_dir
 
     # Heavy work (filesystem walk, YAML/jinja parsing,
-    # notification building) runs in HA's executor pool
-    # so the event loop stays responsive.
+    # notification building, directive validation) runs in
+    # HA's executor pool so the event loop stays
+    # responsive.
     ev = await hass.async_add_executor_job(
         logic.run_evaluation,
         config_dir,
@@ -281,14 +323,24 @@ async def _async_service_layer(
         truth_set,
         exclude_paths,
         max_notifications,
+        directive_inputs,
+    )
+
+    unmatched_spec = make_unmatched_directives_notification(
+        service=_SERVICE,
+        instance_id=instance_id,
+        unmatched=ev.unmatched_directives,
     )
 
     # Sweep so prior-run notifications no longer present
     # this run (e.g. an owner whose findings cleared
-    # between runs) get dismissed automatically.
+    # between runs) get dismissed automatically. The
+    # unmatched-directives spec is appended outside the
+    # per-owner cap so it always surfaces -- a typo'd
+    # exclusion shouldn't be hidden by a busy run.
     await process_persistent_notifications_with_sweep(
         hass,
-        ev.notifications,
+        list(ev.notifications) + [unmatched_spec],
         sweep_prefix=notif_prefix,
     )
 
@@ -318,6 +370,7 @@ async def _async_service_layer(
             "refs_service_skipped": ev.refs_service_skipped,
             "source_orphan_count": ev.source_orphan_count,
             "source_orphan_candidates": ev.source_orphan_candidates,
+            "unmatched_directives": len(ev.unmatched_directives),
         },
     )
 
@@ -325,7 +378,7 @@ async def _async_service_layer(
         _LOGGER.warning(
             "%s owners=%d with_issues=%d findings=%d refs=%d"
             " (struct=%d jinja=%d sniff=%d svc_skipped=%d)"
-            " orphans=%d/%d",
+            " orphans=%d/%d unmatched_directives=%d",
             tag,
             ev.owners_total,
             ev.owners_with_issues,
@@ -337,6 +390,7 @@ async def _async_service_layer(
             ev.refs_service_skipped,
             ev.source_orphan_count,
             ev.source_orphan_candidates,
+            len(ev.unmatched_directives),
         )
 
 

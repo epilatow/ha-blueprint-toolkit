@@ -125,6 +125,25 @@ blueprint:
           max: 1000
           mode: box
 
+    validate_includes_excludes:
+      name: Validate include / exclude directives
+      description: >
+        When enabled, each include / exclude directive is
+        checked against the live truth set after every
+        scan. If a directive matches nothing (typo'd
+        integration name, removed entity, regex line
+        that catches no candidates), an informational
+        persistent notification surfaces the offending
+        entries so you can clean them up. The
+        notification clears automatically once the typo
+        is fixed or the stale entry is removed. Disable
+        to skip the check entirely; any prior unmatched-
+        directives notification dismisses on the next
+        scan.
+      default: true
+      selector:
+        boolean: {}
+
     debug_logging:
       name: Debug Logging
       description: >
@@ -162,6 +181,7 @@ actions:
       exclude_entity_name_regex_raw: !input exclude_entity_name_regex
       check_interval_minutes_raw: !input check_interval_minutes
       max_device_notifications_raw: !input max_device_notifications
+      validate_includes_excludes_raw: !input validate_includes_excludes
       debug_logging_raw: !input debug_logging
 
 # A single in-flight scan at a time per instance: if a

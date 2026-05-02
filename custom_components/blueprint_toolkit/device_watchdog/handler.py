@@ -49,6 +49,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
+    JoinedRegexLine,
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
@@ -56,6 +57,7 @@ from ..helpers import (
     make_emit_config_error,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
+    make_unmatched_directives_notification,
     notification_prefix,
     process_persistent_notifications_with_sweep,
     register_blueprint_handler,
@@ -123,6 +125,7 @@ _SCHEMA = vol.Schema(
         vol.Required("max_device_notifications_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=1000)
         ),
+        vol.Required("validate_includes_excludes_raw"): cv.boolean,
         vol.Required("debug_logging_raw"): cv.boolean,
     },
     extra=vol.ALLOW_EXTRA,
@@ -209,16 +212,18 @@ async def _async_argparse(
     # rejection, and alternation join behave identically.
     # See ``test_helpers_lifecycle.TestValidateAndJoinRegexPatterns``
     # for the parser contract.
-    exclude_device_name_regex, dev_errors = validate_and_join_regex_patterns(
+    dev_regex_result = validate_and_join_regex_patterns(
         data["exclude_device_name_regex_raw"],
         "exclude_device_name_regex",
     )
-    errors.extend(dev_errors)
-    exclude_entity_id_regex, eid_errors = validate_and_join_regex_patterns(
+    exclude_device_name_regex = dev_regex_result.joined
+    errors.extend(dev_regex_result.errors)
+    eid_regex_result = validate_and_join_regex_patterns(
         data["exclude_entity_id_regex_raw"],
         "exclude_entity_id_regex",
     )
-    errors.extend(eid_errors)
+    exclude_entity_id_regex = eid_regex_result.joined
+    errors.extend(eid_regex_result.errors)
 
     # Argparse complete; emit accumulated errors (or
     # dismiss any prior config_error notification).
@@ -239,12 +244,15 @@ async def _async_argparse(
         include_integrations=list(data["include_integrations_raw"]),
         exclude_integrations=list(data["exclude_integrations_raw"]),
         exclude_device_name_regex=exclude_device_name_regex,
+        exclude_device_name_regex_lines=dev_regex_result.lines,
         exclude_entity_id_regex=exclude_entity_id_regex,
+        exclude_entity_id_regex_lines=eid_regex_result.lines,
         monitored_entity_domains=list(data["monitored_entity_domains_raw"]),
         check_interval_minutes=data["check_interval_minutes_raw"],
         dead_threshold_seconds=dead_threshold_seconds,
         enabled_checks=enabled_checks,
         max_notifications=data["max_device_notifications_raw"],
+        validate_includes_excludes=data["validate_includes_excludes_raw"],
         debug_logging=data["debug_logging_raw"],
     )
 
@@ -264,12 +272,15 @@ async def _async_service_layer(
     include_integrations: list[str],
     exclude_integrations: list[str],
     exclude_device_name_regex: str,
+    exclude_device_name_regex_lines: list[JoinedRegexLine],
     exclude_entity_id_regex: str,
+    exclude_entity_id_regex_lines: list[JoinedRegexLine],
     monitored_entity_domains: list[str],
     check_interval_minutes: int,
     dead_threshold_seconds: int,
     enabled_checks: frozenset[str],
     max_notifications: int,
+    validate_includes_excludes: bool,
     debug_logging: bool,
 ) -> None:
     """Run a scan + dispatch notifications + persist diagnostics."""
@@ -313,24 +324,73 @@ async def _async_service_layer(
         diag_check_enabled=(logic.CHECK_DISABLED_DIAGNOSTICS in enabled_checks),
     )
 
+    # Candidate sets for the regex validators. Built from
+    # the FULL device + entity registries (no integration
+    # filter applied), with the entity-id set narrowed to
+    # ``monitored_entity_domains`` only. The integration
+    # filter and the regex filter are independent layers
+    # from the user's perspective; measuring against the
+    # post-integration set would surface "regex matches
+    # nothing" warnings whenever the integration filter
+    # already pruned the entities the regex would have
+    # caught -- a confusing leak of internal ordering.
+    dev_reg = dr.async_get(hass)
+    device_name_candidates = frozenset(
+        d.name_by_user or d.name
+        for d in dev_reg.devices.values()
+        if d.name_by_user or d.name
+    )
+    monitored_lower = {d.lower() for d in monitored_entity_domains}
+    ent_reg = er.async_get(hass)
+    if monitored_lower:
+        entity_id_candidates = frozenset(
+            e.entity_id
+            for e in ent_reg.entities.values()
+            if e.entity_id.split(".", 1)[0] in monitored_lower
+        )
+    else:
+        entity_id_candidates = frozenset(
+            e.entity_id for e in ent_reg.entities.values()
+        )
+
+    directive_inputs = logic.DirectiveInputs(
+        enabled=validate_includes_excludes,
+        include_integrations=include_integrations,
+        exclude_integrations=exclude_integrations,
+        exclude_device_name_regex_lines=exclude_device_name_regex_lines,
+        exclude_entity_id_regex_lines=exclude_entity_id_regex_lines,
+        device_name_candidates=device_name_candidates,
+        entity_id_candidates=entity_id_candidates,
+    )
+
     # Heavy work (per-device classification, disabled-
-    # diag scan, notification body assembly) runs in HA's
-    # executor pool so the event loop stays responsive.
+    # diag scan, notification body assembly, directive
+    # validation) runs in HA's executor pool so the event
+    # loop stays responsive.
     ev = await hass.async_add_executor_job(
         logic.run_evaluation,
         config,
         devices,
         now,
-        len(all_integrations),
+        all_integrations,
         max_notifications,
+        directive_inputs,
+    )
+
+    unmatched_spec = make_unmatched_directives_notification(
+        service=_SERVICE,
+        instance_id=instance_id,
+        unmatched=ev.unmatched_directives,
     )
 
     # Sweep so prior-run notifications no longer present
-    # this run (e.g. a device whose health cleared
-    # between runs) get dismissed automatically.
+    # this run (e.g. a device whose health cleared between
+    # runs) get dismissed automatically. The unmatched-
+    # directives spec is appended outside the per-device
+    # cap so a typo'd exclusion always surfaces.
     await process_persistent_notifications_with_sweep(
         hass,
-        ev.notifications,
+        list(ev.notifications) + [unmatched_spec],
         sweep_prefix=notif_prefix,
     )
 
@@ -359,13 +419,15 @@ async def _async_service_layer(
             # ``bundled/docs/device_watchdog.md`` describes
             # this name.
             "device_stale_issues": ev.stat_stale,
+            "unmatched_directives": len(ev.unmatched_directives),
         },
     )
 
     if debug_logging:
         _LOGGER.warning(
             "%s integrations=%d devices=%d entities=%d"
-            " device_issues=%d entity_issues=%d stale=%d",
+            " device_issues=%d entity_issues=%d stale=%d"
+            " unmatched_directives=%d",
             tag,
             ev.all_integrations_count,
             len(ev.results),
@@ -373,6 +435,7 @@ async def _async_service_layer(
             ev.issues_count,
             ev.stat_entity_issues,
             ev.stat_stale,
+            len(ev.unmatched_directives),
         )
 
 

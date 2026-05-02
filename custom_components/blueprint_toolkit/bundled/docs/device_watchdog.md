@@ -35,18 +35,19 @@ automatically when devices recover.
 
 ## Configuration
 
-| Parameter                       | Description                                                                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Include integrations            | Integration IDs to monitor. Empty means all.                                                             |
-| Exclude integrations            | Integration IDs to skip even if included.                                                                |
-| Device name exclude regex       | Skip devices whose name matches. One pattern per line.                                                   |
-| Entity ID exclude regex         | Skip entities whose ID matches. One pattern per line.                                                    |
-| Entity domains to monitor       | Only check entities in these domains                                                                     |
-| Check interval (minutes)        | Minutes between watchdog evaluations                                                                     |
-| Dead device threshold (minutes) | Staleness threshold for state reports                                                                    |
-| Enabled checks                  | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all. |
-| Max device notifications        | Cap on per-device notifications. Default 10. 0 = unlimited.                                              |
-| Debug logging                   | Log debug info to HA logs                                                                                |
+| Parameter                             | Description                                                                                                                                                |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Include integrations                  | Integration IDs to monitor. Empty means all.                                                                                                               |
+| Exclude integrations                  | Integration IDs to skip even if included.                                                                                                                  |
+| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                     |
+| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                      |
+| Entity domains to monitor             | Only check entities in these domains                                                                                                                       |
+| Check interval (minutes)              | Minutes between watchdog evaluations                                                                                                                       |
+| Dead device threshold (minutes)       | Staleness threshold for state reports                                                                                                                      |
+| Enabled checks                        | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all.                                                   |
+| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                |
+| Validate include / exclude directives | Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below. |
+| Debug logging                         | Log debug info to HA logs                                                                                                                                  |
 
 See the blueprint UI for default values.
 
@@ -65,6 +66,20 @@ evaluation runs. This is because each run re-creates all active notifications
 all creates happen within milliseconds, the panel's display order is
 effectively random. The same devices are shown -- only the panel ordering
 varies.
+
+### Unmatched include / exclude directives
+
+When **Validate include / exclude directives** is enabled (default), every
+include / exclude entry is checked against the live truth set after each scan.
+Anything that doesn't bind -- a typo'd integration name like `zwavejs` instead
+of `zwave_js`, a regex line in **Device name exclude regex** or **Entity ID
+exclude regex** that catches no current device or entity -- shows up in a
+single "Unmatched include / exclude directives" notification with one bullet
+per offending entry, the field it came from, and a short reason. Fix the typo
+or remove the stale entry and the notification clears on the next scan. The
+notification is informational, not a config error. Disable the toggle to skip
+the check; any prior unmatched-directives notification dismisses on the next
+scan.
 
 ## Developer notes
 
@@ -86,6 +101,9 @@ States to find it.
 - `device_issues`: Devices with issues
 - `entity_issues`: Entities with issues
 - `device_stale_issues`: Devices flagged as stale
+- `unmatched_directives`: Include / exclude directives that bound to zero live
+  candidates this run (zero unless **Validate include / exclude directives**
+  surfaced something)
 
 ### Debug logging
 
@@ -97,5 +115,6 @@ Example output for an automation named "Device Watchdog":
 
 ```text
 [DW: Device Watchdog] integrations=12 devices=45
-  entities=320 device_issues=2 entity_issues=5
+  entities=320 device_issues=2 entity_issues=5 stale=1
+  unmatched_directives=0
 ```

@@ -1415,36 +1415,40 @@ class TestValidateAndJoinRegexPatterns:
     """
 
     def test_single_line_passes_through(self) -> None:
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "sensor\\.foo",
             "exclude_entity_id_regex",
         )
-        assert joined == "sensor\\.foo"
-        assert errors == []
+        assert result.joined == "sensor\\.foo"
+        assert result.errors == []
+        assert len(result.lines) == 1
+        assert result.lines[0].line_number == 1
+        assert result.lines[0].raw == "sensor\\.foo"
 
     def test_multiline_joined_with_pipe(self) -> None:
         # The bug the user hit: multiple patterns on
         # separate lines must combine into a single
         # alternation regex.
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "sensor\\.loft_humidifier_energy\nsensor\\.office_humidifier_energy",
             "exclude_entity_id_regex",
         )
-        assert errors == []
+        assert result.errors == []
         assert (
-            joined == "sensor\\.loft_humidifier_energy"
+            result.joined == "sensor\\.loft_humidifier_energy"
             "|sensor\\.office_humidifier_energy"
         )
 
     def test_joined_pattern_actually_matches_each_line(self) -> None:
         # End-to-end: feed the joined pattern back through
         # ``matches_pattern`` and verify both inputs match.
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "sensor\\.loft_humidifier_energy\n"
             "sensor\\.office_humidifier_energy",
             "exclude_entity_id_regex",
         )
-        assert errors == []
+        assert result.errors == []
+        joined = result.joined
         assert helpers.matches_pattern("sensor.loft_humidifier_energy", joined)
         assert helpers.matches_pattern(
             "sensor.office_humidifier_energy", joined
@@ -1455,73 +1459,128 @@ class TestValidateAndJoinRegexPatterns:
         assert not helpers.matches_pattern("sensor.bedroom_temperature", joined)
 
     def test_empty_lines_skipped(self) -> None:
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "\n  \nfoo\n\n",
             "exclude_entity_id_regex",
         )
-        assert joined == "foo"
-        assert errors == []
+        assert result.joined == "foo"
+        assert result.errors == []
+        # The valid line was originally on line 3 of the
+        # raw input; the 1-indexed line_number tracks the
+        # user's editor position, not the post-skip index.
+        assert len(result.lines) == 1
+        assert result.lines[0].line_number == 3
 
     def test_invalid_pattern_per_line_error(self) -> None:
         # One invalid line drops out; valid neighbours
         # still get joined.
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "valid.*\n[invalid\nalso_valid",
             "exclude_entity_id_regex",
         )
-        assert len(errors) == 1
-        assert "[invalid" in errors[0]
-        assert "exclude_entity_id_regex" in errors[0]
+        assert len(result.errors) == 1
+        assert "[invalid" in result.errors[0]
+        assert "exclude_entity_id_regex" in result.errors[0]
         # Valid lines get joined; the invalid one is
         # excluded but error surfaced.
-        assert "valid" in joined
-        assert "also_valid" in joined
-        assert "[invalid" not in joined
+        assert "valid" in result.joined
+        assert "also_valid" in result.joined
+        assert "[invalid" not in result.joined
+        # Per-line tracking: only the two valid lines are
+        # represented; their original line_numbers are 1
+        # and 3 (the invalid line on 2 is dropped).
+        assert [line.line_number for line in result.lines] == [1, 3]
 
     def test_match_all_pattern_rejected(self) -> None:
         # ``.*`` matches every entity; rejecting it stops
         # the user accidentally turning the field into a
         # match-everything filter.
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             ".*",
             "exclude_entity_id_regex",
         )
-        assert joined == ""
-        assert len(errors) == 1
-        assert "matches empty string" in errors[0]
+        assert result.joined == ""
+        assert len(result.errors) == 1
+        assert "matches empty string" in result.errors[0]
 
     def test_match_empty_via_alternation_rejected(self) -> None:
         # ``|||||`` is the canonical "all alternatives are
         # empty" pattern -- also matches everything.
-        _joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "|||||",
             "exclude_entity_id_regex",
         )
-        assert any("matches empty string" in e for e in errors)
+        assert any("matches empty string" in e for e in result.errors)
 
     def test_match_empty_via_optional_rejected(self) -> None:
         # ``a?`` matches "" too.
-        _joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "a?",
             "exclude_entity_id_regex",
         )
-        assert any("matches empty string" in e for e in errors)
+        assert any("matches empty string" in e for e in result.errors)
 
     def test_empty_input_returns_empty(self) -> None:
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "",
             "exclude_entity_id_regex",
         )
-        assert joined == ""
-        assert errors == []
+        assert result.joined == ""
+        assert result.errors == []
+        assert result.lines == []
 
     def test_only_whitespace_returns_empty(self) -> None:
-        joined, errors = helpers.validate_and_join_regex_patterns(
+        result = helpers.validate_and_join_regex_patterns(
             "  \n\t\n   ",
             "exclude_entity_id_regex",
         )
-        assert joined == ""
-        assert errors == []
+        assert result.joined == ""
+        assert result.errors == []
+        assert result.lines == []
+
+    def test_leading_whitespace_preserved_not_stripped(self) -> None:
+        # A line with a leading space (typo or otherwise) is
+        # preserved verbatim. Stripping it would silently
+        # rewrite the user's regex to a different pattern in
+        # both the validator and the live filter, hiding the
+        # typo: ``" _foo$"`` would become ``"_foo$"`` and
+        # match anything ending in ``_foo``, while the user
+        # thinks it's anchored on a literal space. Compiling
+        # the line as-written makes the validator's "matches
+        # no candidates" signal honest.
+        result = helpers.validate_and_join_regex_patterns(
+            " _audio_input_format$",
+            "exclude_entity_id_regex",
+        )
+        assert result.errors == []
+        assert len(result.lines) == 1
+        assert result.lines[0].raw == " _audio_input_format$"
+        # The compiled pattern requires a literal space
+        # before ``_audio_input_format``: it must NOT match
+        # an entity_id like ``sensor.kitchen_sonos_audio_input_format``
+        # which has no space.
+        assert (
+            result.lines[0].compiled.search(
+                "sensor.kitchen_sonos_audio_input_format"
+            )
+            is None
+        )
+        # And the joined alternation preserves the space.
+        assert result.joined == " _audio_input_format$"
+
+    def test_trailing_whitespace_preserved_not_stripped(self) -> None:
+        result = helpers.validate_and_join_regex_patterns(
+            "sensor\\.foo ",
+            "exclude_entity_id_regex",
+        )
+        assert result.errors == []
+        assert len(result.lines) == 1
+        assert result.lines[0].raw == "sensor\\.foo "
+        # The trailing space is part of the pattern; it
+        # only matches strings containing ``foo`` followed
+        # by a literal space.
+        assert result.lines[0].compiled.search("sensor.foo bar") is not None
+        assert result.lines[0].compiled.search("sensor.foo") is None
 
 
 # --------------------------------------------------------
@@ -1534,6 +1593,193 @@ def _reset_timer_capture() -> None:
     _track_cancel_calls.clear()
     _call_later_calls.clear()
     _call_later_cancel_calls.clear()
+
+
+# --------------------------------------------------------
+# validate_directives + make_unmatched_directives_notification
+# --------------------------------------------------------
+
+
+class TestValidateDirectivesItem:
+    """Membership-check helper for integration / entity directives.
+
+    Per-handler logic modules compose this with the path-
+    and regex-flavoured helpers below to produce the per-
+    instance unmatched-directives list.
+    """
+
+    def test_all_match_returns_empty(self) -> None:
+        assert (
+            helpers.validate_directives_item(
+                field="exclude_integrations",
+                directives=["automation"],
+                candidates=frozenset({"automation", "script"}),
+                reason="unknown integration",
+            )
+            == []
+        )
+
+    def test_unknown_value_flagged(self) -> None:
+        unmatched = helpers.validate_directives_item(
+            field="exclude_integrations",
+            directives=["zwave-js", "automation"],
+            candidates=frozenset({"zwave_js", "automation"}),
+            reason="unknown integration",
+        )
+        # Order preserved -- hyphenated typo first, real one
+        # silent.
+        assert len(unmatched) == 1
+        assert unmatched[0].field == "exclude_integrations"
+        assert unmatched[0].value == "zwave-js"
+        assert unmatched[0].reason == "unknown integration"
+
+    def test_reason_is_caller_supplied(self) -> None:
+        unmatched = helpers.validate_directives_item(
+            field="exclude_entities",
+            directives=["sensor.removed"],
+            candidates=frozenset({"sensor.alive"}),
+            reason="no entity matches",
+        )
+        assert unmatched[0].reason == "no entity matches"
+
+    def test_empty_directives_returns_empty(self) -> None:
+        assert (
+            helpers.validate_directives_item(
+                field="exclude_integrations",
+                directives=[],
+                candidates=frozenset({"automation"}),
+                reason="unknown integration",
+            )
+            == []
+        )
+
+
+class TestValidateDirectivesPath:
+    """fnmatch-flavoured directive validator (RW exclude_paths)."""
+
+    def test_glob_matches_returns_empty(self) -> None:
+        assert (
+            helpers.validate_directives_path(
+                field="exclude_paths",
+                directives=["*.yaml"],
+                candidates=frozenset({"automations.yaml", "scripts.yaml"}),
+            )
+            == []
+        )
+
+    def test_no_match_flagged(self) -> None:
+        unmatched = helpers.validate_directives_path(
+            field="exclude_paths",
+            directives=["*.yaml", "deleted/*.yml"],
+            candidates=frozenset({"automations.yaml", "scripts.yaml"}),
+        )
+        assert len(unmatched) == 1
+        assert unmatched[0].value == "deleted/*.yml"
+        assert unmatched[0].reason == "no path matches"
+
+
+class TestValidateDirectivesRegex:
+    """Per-line regex check, used for every multi-line regex blueprint
+    input.
+
+    Carries the ``line_number`` from the
+    ``JoinedRegexResult.lines`` shape so the notification
+    body can render "line 3" for a multi-line input where
+    only the third pattern is stale.
+    """
+
+    def test_per_line_attribution(self) -> None:
+        result = helpers.validate_and_join_regex_patterns(
+            "sensor\\.foo\nsensor\\.deleted",
+            "exclude_entity_id_regex",
+        )
+        assert result.errors == []
+        unmatched = helpers.validate_directives_regex(
+            field="exclude_entity_id_regex",
+            lines=result.lines,
+            candidates=frozenset({"sensor.foo", "sensor.bar"}),
+        )
+        assert len(unmatched) == 1
+        assert unmatched[0].field == "exclude_entity_id_regex"
+        assert unmatched[0].value == "sensor\\.deleted"
+        assert unmatched[0].reason == "regex matched no candidates"
+        # Line 2 in the original raw input.
+        assert unmatched[0].line_number == 2
+
+    def test_all_match_returns_empty(self) -> None:
+        result = helpers.validate_and_join_regex_patterns(
+            "sensor\\..*",
+            "exclude_entity_id_regex",
+        )
+        assert (
+            helpers.validate_directives_regex(
+                field="exclude_entity_id_regex",
+                lines=result.lines,
+                candidates=frozenset({"sensor.foo"}),
+            )
+            == []
+        )
+
+
+class TestMakeUnmatchedDirectivesNotification:
+    """Spec-builder contract for the new notification slot."""
+
+    def test_empty_returns_inactive_spec(self) -> None:
+        spec = helpers.make_unmatched_directives_notification(
+            service="device_watchdog",
+            instance_id="automation.dw_x",
+            unmatched=[],
+        )
+        assert spec.active is False
+        assert spec.notification_id == (
+            "blueprint_toolkit_device_watchdog__"
+            "automation.dw_x__unmatched_directives"
+        )
+        assert spec.instance_id == "automation.dw_x"
+
+    def test_non_empty_lists_each_directive(self) -> None:
+        spec = helpers.make_unmatched_directives_notification(
+            service="reference_watchdog",
+            instance_id="automation.rw_x",
+            unmatched=[
+                helpers.UnmatchedDirective(
+                    field="exclude_integrations",
+                    value="zwave-js",
+                    reason="unknown integration",
+                ),
+                helpers.UnmatchedDirective(
+                    field="exclude_entities",
+                    value="sensor.removed",
+                    reason="no entity matches",
+                ),
+            ],
+        )
+        assert spec.active is True
+        assert "zwave-js" in spec.message
+        assert "sensor.removed" in spec.message
+        assert "exclude_integrations" in spec.message
+        assert "exclude_entities" in spec.message
+        assert "unknown integration" in spec.message
+        assert "no entity matches" in spec.message
+        # Title carries the category; no friendly-name
+        # escape needed since titles are plain text.
+        assert spec.title == "Unmatched include / exclude directives"
+
+    def test_md_escape_applied_to_value(self) -> None:
+        # Stray ``[`` / ``]`` in a directive value can't
+        # corrupt the rendered markdown body.
+        spec = helpers.make_unmatched_directives_notification(
+            service="device_watchdog",
+            instance_id="automation.dw_x",
+            unmatched=[
+                helpers.UnmatchedDirective(
+                    field="exclude_entities",
+                    value="sensor.[bad",
+                    reason="no entity matches",
+                ),
+            ],
+        )
+        assert "sensor.\\[bad" in spec.message
 
 
 class TestStaleInputKeyReferences:

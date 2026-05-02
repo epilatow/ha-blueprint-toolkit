@@ -106,18 +106,23 @@ def _valid_payload(
     exclude_entity_id_regex: str = "",
     check_interval_minutes: int = 60,
     max_source_notifications: int = 0,
+    validate_includes_excludes: bool = True,
+    exclude_integrations: list[str] | None = None,
+    exclude_entities: list[str] | None = None,
+    exclude_paths: str = "",
 ) -> dict[str, Any]:
     """Build a fully-populated RW service-call payload."""
     return {
         "instance_id": instance_id,
         "trigger_id": "manual",
-        "exclude_paths_raw": "",
-        "exclude_integrations_raw": [],
-        "exclude_entities_raw": [],
+        "exclude_paths_raw": exclude_paths,
+        "exclude_integrations_raw": list(exclude_integrations or []),
+        "exclude_entities_raw": list(exclude_entities or []),
         "exclude_entity_id_regex_raw": exclude_entity_id_regex,
         "check_disabled_entities_raw": False,
         "check_interval_minutes_raw": check_interval_minutes,
         "max_source_notifications_raw": max_source_notifications,
+        "validate_includes_excludes_raw": validate_includes_excludes,
         "debug_logging_raw": False,
     }
 
@@ -521,6 +526,337 @@ class TestServiceLayerScan:
         assert "script.also_missing" in body
         # The valid script in the list MUST NOT be flagged.
         assert "script.exists" not in body
+
+
+class TestUnmatchedDirectives:
+    """End-to-end coverage of the unmatched-directives
+    notification surface added by the
+    ``validate_includes_excludes`` toggle.
+    """
+
+    async def test_typoed_integration_fires_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_unmatched",
+                exclude_integrations=["typoed_integration"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notif_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_unmatched__unmatched_directives"
+        )
+        assert notif_id in notifs, (
+            "expected unmatched-directives notification; got: "
+            f"{sorted(notifs.keys())}"
+        )
+        body: str = notifs[notif_id]["message"]
+        assert "typoed_integration" in body
+        assert "exclude_integrations" in body
+        assert "unknown integration" in body
+
+    async def test_toggle_off_dismisses_prior_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        await _setup_integration(hass)
+        # First run: typo'd integration with toggle on ->
+        # notification fires.
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_toggle",
+                exclude_integrations=["typoed_integration"],
+                validate_includes_excludes=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_toggle__unmatched_directives"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id in notifs, "first run should fire the notification"
+
+        # Second run: toggle off -> the prior notification
+        # gets dismissed, even with the same typo'd value.
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_toggle",
+                exclude_integrations=["typoed_integration"],
+                validate_includes_excludes=False,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        notifs = _async_get_or_create_notifications(hass)
+        assert notif_id not in notifs, (
+            "toggle-off run must dismiss the prior unmatched-directives notif"
+        )
+
+    async def test_each_directive_category_surfaces_end_to_end(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """One representative bullet per directive category in a single
+        notification body: integration / entity / path / regex.
+
+        Locks down the per-handler ``_validate_rw_directives``
+        composition so a refactor that drops a category from
+        the orchestration silently fails CI rather than
+        silently shipping.
+        """
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_categories",
+                exclude_integrations=["typoed_integration"],
+                exclude_entities=["sensor.test_each_dir_cat_unique_id"],
+                exclude_paths="deleted_dir/*.yaml",
+                exclude_entity_id_regex=r"^xyz_no_match_anywhere_each_cat$",
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_categories__unmatched_directives"
+        )
+        body = _async_get_or_create_notifications(hass)[notif_id]["message"]
+        assert "exclude_integrations" in body
+        assert "exclude_entities" in body
+        assert "exclude_paths" in body
+        assert "exclude_entity_id_regex" in body
+        assert "typoed_integration" in body
+        assert "sensor.test_each_dir_cat_unique_id" in body
+        assert "deleted_dir" in body
+        assert "xyz_no_match_anywhere_each_cat" in body
+
+    async def test_cap_bypass_unmatched_directives_always_surfaces(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """The unmatched-directives notification rides outside the
+        per-owner cap.
+
+        Regression guard: the cap-bypass is structural -- the
+        unmatched spec is appended to the dispatch list AFTER
+        ``prepare_notifications`` already trimmed the per-owner
+        results. A future refactor that lifts the cap into the
+        dispatcher (or moves the unmatched spec inside the input
+        list ``prepare_notifications`` sees) would silently bury
+        the user's typo'd-exclusion diagnostic under a busy run.
+        Plant two owners with broken refs (so cap=1 engages) plus
+        a typo'd directive; assert the cap-summary AND the
+        unmatched-directives notification both fire.
+        """
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_capbypass",
+            "on",
+            {"friendly_name": "RW: CapBypass", "id": "8989"},
+        )
+        config_dir = Path(hass.config.config_dir)
+        # Two distinct owners with broken refs -> two
+        # candidates for the per-owner cap.
+        (config_dir / "configuration.yaml").write_text(
+            "automation: !include automations.yaml\n"
+            "template: !include template.yaml\n",
+        )
+        (config_dir / "automations.yaml").write_text(
+            "- id: '6601'\n"
+            "  alias: RW CapAuto\n"
+            "  trigger: []\n"
+            "  action:\n"
+            "    - service: homeassistant.turn_on\n"
+            "      entity_id: light.cap_does_not_exist_a\n",
+        )
+        (config_dir / "template.yaml").write_text(
+            "- sensor:\n"
+            "    - name: BogusCapRef\n"
+            "      state: \"{{ states('sensor.cap_does_not_exist_b') }}\"\n",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_capbypass",
+                exclude_integrations=["typoed_capbypass_int"],
+                max_source_notifications=1,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        prefix = (
+            "blueprint_toolkit_reference_watchdog__automation.rw_capbypass__"
+        )
+        per_owner = [nid for nid in notifs if nid.startswith(f"{prefix}owner_")]
+        cap_id = f"{prefix}cap"
+        unmatched_id = f"{prefix}unmatched_directives"
+        # Cap engaged: only one per-owner fired.
+        assert len(per_owner) == 1, (
+            f"expected exactly 1 per-owner notif under cap=1; "
+            f"got {sorted(per_owner)}"
+        )
+        # Cap-summary fires alongside.
+        assert cap_id in notifs
+        # Unmatched-directives notification still surfaces.
+        assert unmatched_id in notifs, (
+            f"unmatched-directives notif suppressed by cap; "
+            f"got {sorted(notifs.keys())}"
+        )
+        body = notifs[unmatched_id]["message"]
+        assert "typoed_capbypass_int" in body
+
+    async def test_customize_exclude_does_not_false_flag(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """``exclude_entities`` is also documented as silencing
+        customize.yaml entries (the YAML key IS the entity_id).
+        Regression for the customize-branch ``seen_entity_refs``
+        gap: if the customize key didn't end up in
+        ``seen_entity_refs``, the user's exclusion would
+        false-flag as "no entity matches".
+        """
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_customize",
+            "on",
+            {"friendly_name": "RW: Customize", "id": "5555"},
+        )
+        config_dir = Path(hass.config.config_dir)
+        (config_dir / "configuration.yaml").write_text(
+            "homeassistant:\n  customize: !include customize.yaml\n",
+        )
+        (config_dir / "customize.yaml").write_text(
+            "sensor.removed_in_customize:\n  friendly_name: Old Name\n",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_customize",
+                exclude_entities=["sensor.removed_in_customize"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_customize__unmatched_directives"
+        )
+        notifs = _async_get_or_create_notifications(hass)
+        if notif_id in notifs:
+            body = notifs[notif_id]["message"]
+            assert "sensor.removed_in_customize" not in body, (
+                f"customize-key suppression false-flagged: {body!r}"
+            )
+
+    async def test_broken_ref_suppression_does_not_false_flag(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """``exclude_entities`` is documented as silencing broken
+        reference findings (target side). The value used to silence
+        a broken ref is by definition NOT a registered entity --
+        the validator must NOT flag it as "no entity matches".
+
+        Plants a broken reference in a real automations.yaml,
+        adds the broken target to ``exclude_entities``, asserts
+        no unmatched-directives notification fires.
+        """
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_brokenref",
+            "on",
+            {"friendly_name": "RW: BrokenRef", "id": "7777"},
+        )
+        config_dir = Path(hass.config.config_dir)
+        (config_dir / "configuration.yaml").write_text(
+            "automation: !include automations.yaml\n",
+        )
+        (config_dir / "automations.yaml").write_text(
+            "- id: '7777'\n"
+            "  alias: RW BrokenRef\n"
+            "  trigger: []\n"
+            "  action:\n"
+            "    - service: homeassistant.turn_on\n"
+            "      entity_id: light.does_not_exist\n",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_brokenref",
+                exclude_entities=["light.does_not_exist"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_brokenref__unmatched_directives"
+        )
+        notifs = _async_get_or_create_notifications(hass)
+        # The unmatched-directives notification spec is always
+        # dispatched, but it's inactive (auto-dismiss) when there
+        # are no unmatched entries -- so it shouldn't appear in the
+        # active set.
+        if notif_id in notifs:
+            body = notifs[notif_id]["message"]
+            assert "light.does_not_exist" not in body, (
+                f"broken-ref suppression false-flagged: {body!r}"
+            )
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

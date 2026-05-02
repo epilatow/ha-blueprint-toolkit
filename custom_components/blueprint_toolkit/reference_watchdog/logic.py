@@ -132,10 +132,15 @@ import jinja2
 import jinja2.nodes
 
 from ..helpers import (
+    JoinedRegexLine,
     PersistentNotification,
+    UnmatchedDirective,
     matches_pattern,
     md_escape,
     prepare_notifications,
+    validate_directives_item,
+    validate_directives_path,
+    validate_directives_regex,
 )
 
 _JINJA_ENV = jinja2.Environment(autoescape=False)
@@ -505,6 +510,15 @@ class OwnerResult:
     refs_disabled: int
     refs_broken: int
     refs_service_skipped: int
+    # Every entity-kind ref value the walker emitted for
+    # this owner before the user-target exclusion filter
+    # ran. Consumed by ``_validate_rw_directives`` so an
+    # ``exclude_entities`` entry the user added to silence
+    # a known-broken ref doesn't false-flag as "no entity
+    # matches" -- the broken value is by definition not in
+    # the surviving findings list, but it's a legitimate
+    # exclusion target.
+    seen_entity_refs: frozenset[str] = field(default_factory=frozenset)
     # Stamped at construction time (in
     # ``_build_owner_result``) from ``Config.instance_id``
     # so ``to_notification`` can hand the dispatcher the
@@ -1303,6 +1317,17 @@ class _OwnerStats:
     refs_disabled: int = 0
     refs_broken: int = 0
     refs_service_skipped: int = 0
+    # Every entity-kind ref value the walker emitted for
+    # this owner, captured BEFORE the user-target exclusion
+    # filter and BEFORE the negative-truth-set service
+    # filter. Fed to ``_validate_rw_directives`` so
+    # ``exclude_entities`` / ``exclude_entity_id_regex``
+    # don't false-flag against values the user is
+    # intentionally suppressing -- the ref value the user
+    # excluded by definition isn't in the surviving
+    # findings list, but it WAS seen and is a legitimate
+    # exclusion target.
+    seen_entity_refs: set[str] = field(default_factory=set)
 
 
 def _classify_ref_origin(ref: Ref) -> str:
@@ -1351,6 +1376,14 @@ def _collect_findings(
     if owner.integration == "customize" and isinstance(tree, dict):
         for eid_key, _attrs in tree.items():
             eid = str(eid_key)
+            # Capture every customize key as a seen entity
+            # ref BEFORE the user-target exclusion runs --
+            # the canonical reason to keep an
+            # ``exclude_entities`` entry around is
+            # silencing a known-broken customize key, and
+            # the validator must consider that key a
+            # legitimate exclusion target.
+            stats.seen_entity_refs.add(eid)
             if _is_entity_excluded(
                 eid,
                 config.exclude_entities,
@@ -1383,6 +1416,13 @@ def _collect_findings(
         seen.add(key)
 
         origin = _classify_ref_origin(ref)
+
+        # Capture the entity-kind ref value before any
+        # filter so the directive validator can see what
+        # the user could legitimately be suppressing
+        # (broken refs included).
+        if ref.kind == "entity":
+            stats.seen_entity_refs.add(ref.value)
 
         # Drop entity-kind refs from the sniff and jinja
         # passes whose value matches a registered service
@@ -1608,6 +1648,7 @@ def _build_owner_result(
         refs_disabled=stats.refs_disabled,
         refs_broken=stats.refs_broken,
         refs_service_skipped=stats.refs_service_skipped,
+        seen_entity_refs=frozenset(stats.seen_entity_refs),
         instance_id=config.instance_id,
     )
 
@@ -2410,6 +2451,33 @@ def _enumerate_json_sources(
 
 
 @dataclass
+class DirectiveInputs:
+    """Per-instance include / exclude directive inputs for RW.
+
+    Threaded into ``run_evaluation`` so the directive
+    validation runs alongside the scan in the executor
+    rather than on the event loop. ``integration_candidates``
+    is built by the handler from the live entity registry +
+    RW's synthetic adapter labels (loop-only data) and
+    handed in pre-frozen.
+
+    ``enabled`` mirrors the ``validate_includes_excludes``
+    blueprint toggle. When ``False``, ``run_evaluation``
+    skips the validation calls entirely and returns an
+    empty ``unmatched_directives`` list (so the dispatcher
+    still emits the inactive notification spec that
+    dismisses any prior unmatched entry).
+    """
+
+    enabled: bool
+    integration_candidates: frozenset[str]
+    exclude_integrations: list[str]
+    exclude_entities: list[str]
+    exclude_paths: list[str]
+    exclude_entity_id_regex_lines: list[JoinedRegexLine]
+
+
+@dataclass
 class EvaluationResult:
     """Full evaluation result returned from ``run_evaluation``.
 
@@ -2438,6 +2506,114 @@ class EvaluationResult:
     refs_service_skipped: int
     source_orphan_count: int
     source_orphan_candidates: int
+    # Every source path the scanner saw this run (included
+    # + excluded), in discovery order. The directive
+    # validator runs the user's ``exclude_paths`` globs
+    # against this set to flag patterns that match no path
+    # this run -- i.e. likely-stale entries.
+    paths_walked: list[str] = field(default_factory=list)
+    # Include / exclude directives that bound to no live
+    # candidate this run. Empty when the
+    # ``validate_includes_excludes`` toggle is off OR every
+    # directive matched something.
+    unmatched_directives: list[UnmatchedDirective] = field(
+        default_factory=list,
+    )
+
+
+def _validate_rw_directives(
+    inputs: DirectiveInputs,
+    truth_set: TruthSet,
+    paths_walked: list[str],
+    results: list[OwnerResult],
+) -> list[UnmatchedDirective]:
+    """Compose the per-category validators into RW's unmatched list.
+
+    Pure: takes the candidate sets the handler assembled
+    from the live truth set + the paths the scanner walked
+    + the per-owner results from this run, returns the
+    unmatched bullets in the canonical order
+    (integrations, entities, paths, regexes).
+
+    The entity-side candidate set unions
+    ``truth_set.entity_ids`` (registered entities, which
+    catches source-orphan suppression cases) with every
+    ref value AND owner entity_id seen this run -- because
+    ``exclude_entities`` and ``exclude_entity_id_regex``
+    are documented as silencing broken references too,
+    where by definition the value is NOT in the registry.
+    A user excluding ``sensor.does_not_exist`` to silence
+    a known-broken ref should not get a false "no entity
+    matches" warning back.
+
+    Cross-handler note: DW and EDW build their candidate
+    sets in the handler and thread them through
+    ``DirectiveInputs``. RW's path differs because (1)
+    ``truth_set.entity_ids`` already enumerates the full
+    registered set without the integration filter, so the
+    handler-side broadening DW/EDW need isn't needed here,
+    and (2) the entity-side candidates need to union the
+    per-owner ``seen_entity_refs`` collected during the
+    walk, which only exists post-evaluation.
+    """
+    if not inputs.enabled:
+        return []
+
+    entity_candidates: set[str] = set(truth_set.entity_ids)
+    for r in results:
+        if r.owner.entity_id:
+            entity_candidates.add(r.owner.entity_id)
+        # ``seen_entity_refs`` carries every entity-kind
+        # ref the walker emitted for this owner BEFORE the
+        # user-target exclusion ran -- so values the user
+        # is intentionally suppressing (broken-ref values)
+        # show up here even though the surviving findings
+        # list never contains them.
+        entity_candidates.update(r.seen_entity_refs)
+    entity_candidates_frozen = frozenset(entity_candidates)
+
+    out: list[UnmatchedDirective] = []
+    out.extend(
+        validate_directives_item(
+            field="exclude_integrations",
+            directives=inputs.exclude_integrations,
+            candidates=inputs.integration_candidates,
+            reason="unknown integration",
+        ),
+    )
+    out.extend(
+        validate_directives_item(
+            field="exclude_entities",
+            directives=inputs.exclude_entities,
+            candidates=entity_candidates_frozen,
+            reason="no entity matches",
+        ),
+    )
+    out.extend(
+        validate_directives_path(
+            field="exclude_paths",
+            directives=inputs.exclude_paths,
+            candidates=frozenset(paths_walked),
+        ),
+    )
+    out.extend(
+        validate_directives_regex(
+            field="exclude_entity_id_regex",
+            lines=inputs.exclude_entity_id_regex_lines,
+            candidates=entity_candidates_frozen,
+        ),
+    )
+    return out
+
+
+_DISABLED_DIRECTIVES = DirectiveInputs(
+    enabled=False,
+    integration_candidates=frozenset(),
+    exclude_integrations=[],
+    exclude_entities=[],
+    exclude_paths=[],
+    exclude_entity_id_regex_lines=[],
+)
 
 
 def run_evaluation(
@@ -2446,6 +2622,7 @@ def run_evaluation(
     truth_set: TruthSet,
     exclude_paths_list: list[str],
     max_notifications: int,
+    directive_inputs: DirectiveInputs | None = None,
 ) -> EvaluationResult:
     """Run the full evaluation pipeline.
 
@@ -2556,12 +2733,22 @@ def run_evaluation(
     refs_jinja = sum(r.refs_jinja for r in results)
     refs_sniff = sum(r.refs_sniff for r in results)
     refs_service_skipped = sum(r.refs_service_skipped for r in results)
+    paths_walked = [src.path for src in all_sources]
+    unmatched_directives = _validate_rw_directives(
+        directive_inputs
+        if directive_inputs is not None
+        else _DISABLED_DIRECTIVES,
+        truth_set,
+        paths_walked,
+        results,
+    )
 
     return EvaluationResult(
         results=results,
         notifications=notifications,
         paths_included=len(included),
         paths_excluded=paths_excluded,
+        paths_walked=paths_walked,
         owners_total=owners_total,
         owners_with_refs=owners_with_refs,
         owners_without_refs=owners_without_refs,
@@ -2577,4 +2764,5 @@ def run_evaluation(
         refs_service_skipped=refs_service_skipped,
         source_orphan_count=len(orphans),
         source_orphan_candidates=source_orphan_candidates,
+        unmatched_directives=unmatched_directives,
     )

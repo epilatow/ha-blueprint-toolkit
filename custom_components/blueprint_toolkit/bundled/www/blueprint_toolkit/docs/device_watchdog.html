@@ -126,6 +126,10 @@ the blueprint once per check)</li>
 <td>Cap on per-device notifications. Default 10. 0 = unlimited.</td>
 </tr>
 <tr>
+<td>Validate include / exclude directives</td>
+<td>Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See <strong>Unmatched include / exclude directives</strong> below.</td>
+</tr>
+<tr>
 <td>Debug logging</td>
 <td>Log debug info to HA logs</td>
 </tr>
@@ -143,6 +147,18 @@ evaluation runs. This is because each run re-creates all active notifications
 all creates happen within milliseconds, the panel's display order is
 effectively random. The same devices are shown -- only the panel ordering
 varies.</p>
+<h3>Unmatched include / exclude directives</h3>
+<p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
+include / exclude entry is checked against the live truth set after each scan.
+Anything that doesn't bind -- a typo'd integration name like <code>zwavejs</code> instead
+of <code>zwave_js</code>, a regex line in <strong>Device name exclude regex</strong> or <strong>Entity ID
+exclude regex</strong> that catches no current device or entity -- shows up in a
+single &quot;Unmatched include / exclude directives&quot; notification with one bullet
+per offending entry, the field it came from, and a short reason. Fix the typo
+or remove the stale entry and the notification clears on the next scan. The
+notification is informational, not a config error. Disable the toggle to skip
+the check; any prior unmatched-directives notification dismisses on the next
+scan.</p>
 <h2>Developer notes</h2>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to
@@ -161,6 +177,9 @@ States to find it.</p>
 <li><code>device_issues</code>: Devices with issues</li>
 <li><code>entity_issues</code>: Entities with issues</li>
 <li><code>device_stale_issues</code>: Devices flagged as stale</li>
+<li><code>unmatched_directives</code>: Include / exclude directives that bound to zero live
+candidates this run (zero unless <strong>Validate include / exclude directives</strong>
+surfaced something)</li>
 </ul>
 <h3>Debug logging</h3>
 <p>Enable the <strong>Debug Logging</strong> toggle in the blueprint. Debug output appears in
@@ -168,7 +187,8 @@ States to find it.</p>
 custom components).</p>
 <p>Example output for an automation named &quot;Device Watchdog&quot;:</p>
 <pre><code class="language-text">[DW: Device Watchdog] integrations=12 devices=45
-  entities=320 device_issues=2 entity_issues=5
+  entities=320 device_issues=2 entity_issues=5 stale=1
+  unmatched_directives=0
 </code></pre>
 </body>
 </html>

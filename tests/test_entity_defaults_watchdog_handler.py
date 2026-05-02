@@ -276,6 +276,7 @@ def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
         "exclude_entity_name_regex_raw": "",
         "check_interval_minutes_raw": 5,
         "max_device_notifications_raw": 0,
+        "validate_includes_excludes_raw": True,
         "debug_logging_raw": False,
     }
     payload.update(overrides)

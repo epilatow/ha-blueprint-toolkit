@@ -134,6 +134,10 @@ integrations</li>
 <td>Per-owner notification cap. Default 10. 0 = unlimited. The source-orphan summary is always emitted separately and is not subject to this cap.</td>
 </tr>
 <tr>
+<td>Validate include / exclude directives</td>
+<td>When enabled (default), each include / exclude directive is checked against the live truth set after every scan. Typo'd integration names, removed entities, stale path globs, and regex lines that catch nothing surface in a single per-instance &quot;Unmatched include / exclude directives&quot; notification that clears automatically when the typo / stale entry is fixed. Disable to skip the check; any prior unmatched-directives notification dismisses on the next scan.</td>
+</tr>
+<tr>
 <td>Debug logging</td>
 <td>Log a warning-level stat line on every evaluation.</td>
 </tr>
@@ -306,6 +310,20 @@ evaluation runs. Each run re-creates active notifications (to update content
 if findings changed), which updates their timestamps. Since all creates happen
 within milliseconds, the panel's display order is effectively random. The same
 owners are shown -- only the panel ordering varies.</p>
+<h3>Unmatched include / exclude directives</h3>
+<p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
+exclusion entry is checked against the live truth set after the scan
+completes. Anything that doesn't bind -- a typo'd integration name like
+<code>zwavejs</code> instead of <code>zwave_js</code>, a <code>sensor.removed_thing</code> you forgot to clean
+up after deleting the entity, an <code>*.yml</code> glob in <strong>Exclude paths</strong> that
+matches no scanned file, a regex line that catches nothing -- shows up in a
+single &quot;Unmatched include / exclude directives&quot; notification with one bullet
+per offending entry, the field it came from, and a short reason. Fix the typo
+or remove the stale entry and the notification clears on the next scan. The
+notification is informational, not a config error, so it sits alongside the
+per-source findings in the notification panel rather than blocking the scan.
+Disabling the toggle skips the check and dismisses any prior
+unmatched-directives notification on the next scan.</p>
 <h2>Developer notes</h2>
 <h3>Detection mechanisms</h3>
 <p>Three complementary mechanisms run in parallel over every parsed source tree.
@@ -434,6 +452,10 @@ blueprint input would surface as a broken-entity false positive.</p>
 <td><code>source_orphan_candidates</code></td>
 <td>Registry entries eligible for orphan evaluation (<code>config_entry_id=null</code>, platform not in the runtime-excluded list). <code>source_orphan_count</code> is always a subset.</td>
 </tr>
+<tr>
+<td><code>unmatched_directives</code></td>
+<td>Include / exclude directives that bound to zero live candidates this run (zero unless <strong>Validate include / exclude directives</strong> surfaced something)</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Invariants:</strong></p>
@@ -553,7 +575,7 @@ custom components).</p>
 <p>Example output for an automation named &quot;Reference Watchdog&quot;:</p>
 <pre><code class="language-text">[RW: Reference Watchdog] owners=338 with_issues=43
   findings=85 refs=819 (struct=641 jinja=59 sniff=119
-  svc_skipped=13) orphans=9/184
+  svc_skipped=13) orphans=9/184 unmatched_directives=0
 </code></pre>
 <p><code>orphans=9/184</code> means 9 of 184 orphan-eligible registry entries were flagged
 as source orphans.</p>

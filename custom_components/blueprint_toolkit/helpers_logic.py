@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
@@ -267,10 +268,49 @@ def matches_pattern(text: str, pattern: str) -> bool:
         return False
 
 
+@dataclass
+class JoinedRegexLine:
+    """One valid regex line surfaced from a multi-line blueprint input.
+
+    ``line_number`` is 1-indexed against the original raw
+    string (counting empty / whitespace-only lines so the
+    number lines up with what the user sees in their
+    blueprint editor). ``raw`` is the stripped pattern
+    text; ``compiled`` is the corresponding
+    ``re.Pattern`` so per-line "matched no candidates"
+    checks can run without re-compiling.
+    """
+
+    line_number: int
+    raw: str
+    compiled: re.Pattern[str]
+
+
+@dataclass
+class JoinedRegexResult:
+    """Result of parsing + validating a multi-line regex input.
+
+    ``joined`` is the pipe-joined alternation of every
+    valid line (empty string when no valid lines remain),
+    suitable for handing to ``re.search`` /
+    ``matches_pattern``. ``errors`` is the list of
+    config-error bullets for invalid lines (caller appends
+    these to its argparse errors list). ``lines`` exposes
+    each valid line individually -- the per-line
+    attribution that ``validate_directives`` needs to flag
+    "regex matched no candidates" against the specific
+    offending line rather than the whole alternation.
+    """
+
+    joined: str
+    errors: list[str]
+    lines: list[JoinedRegexLine]
+
+
 def validate_and_join_regex_patterns(
     raw: str,
     field_name: str,
-) -> tuple[str, list[str]]:
+) -> JoinedRegexResult:
     """Split a multi-line regex-list input, validate, and join with ``|``.
 
     Blueprint inputs that accept "one regex per line"
@@ -293,35 +333,45 @@ def validate_and_join_regex_patterns(
       exclude every entity / device / id, defeating the
       purpose of the exclusion list.
 
-    Returns ``(joined_pattern, errors)``. ``joined_pattern``
-    is the pipe-joined alternation of every valid line
-    (empty string when no valid lines remain). ``errors``
-    is a list of ``"<field_name>: \"<line>\": <reason>"``
-    strings the caller can append to its argparse errors
-    list.
+    Returns a ``JoinedRegexResult`` with ``.joined`` (the
+    pipe-joined alternation), ``.errors`` (config-error
+    bullets the caller appends to its argparse errors
+    list), and ``.lines`` (per-valid-line tracking with
+    1-indexed line numbers and pre-compiled patterns,
+    consumed by ``validate_directives`` for the
+    "matched no candidates" check).
     """
 
-    lines = [line.strip() for line in (raw or "").splitlines()]
-    valid: list[str] = []
+    raw_lines = (raw or "").splitlines()
+    valid_lines: list[JoinedRegexLine] = []
     errors: list[str] = []
-    for line in lines:
-        if not line:
+    for idx, raw_line in enumerate(raw_lines, start=1):
+        # Use the line content verbatim. Stripping would
+        # silently rewrite the user's pattern -- a typo'd
+        # leading or trailing space would compile to a
+        # different regex than what the user wrote, AND the
+        # validator would measure against the rewritten
+        # pattern, hiding the typo from both surfaces.
+        if not raw_line.strip():
             continue
         try:
-            compiled = re.compile(line)
+            compiled = re.compile(raw_line)
         except re.error as exc:
-            errors.append(f'{field_name}: "{line}": {exc}')
+            errors.append(f'{field_name}: "{raw_line}": {exc}')
             continue
         if compiled.match(""):
             errors.append(
-                f'{field_name}: "{line}": pattern matches empty string '
+                f'{field_name}: "{raw_line}": pattern matches empty string '
                 "(would exclude everything; tighten the pattern -- e.g. "
                 "anchor with ``^...$`` or drop the ``.*`` / ``?`` / "
                 "trailing alternation that lets it match empty)",
             )
             continue
-        valid.append(line)
-    return "|".join(valid), errors
+        valid_lines.append(
+            JoinedRegexLine(line_number=idx, raw=raw_line, compiled=compiled),
+        )
+    joined = "|".join(line.raw for line in valid_lines)
+    return JoinedRegexResult(joined=joined, errors=errors, lines=valid_lines)
 
 
 @dataclass
@@ -405,6 +455,159 @@ def make_config_error_notification(
         notification_id=notif_id,
         title="Config Error",
         message=message,
+        instance_id=instance_id,
+    )
+
+
+@dataclass(frozen=True)
+class UnmatchedDirective:
+    """One include / exclude directive that matched nothing live.
+
+    Emitted by ``validate_directives`` when a user-supplied
+    integration name, entity ID, file glob, or regex line
+    didn't intersect with the live truth-set candidates the
+    handler assembled. Pure data: ``field`` is the
+    blueprint input name (e.g. ``"exclude_integrations"``)
+    so the user can find the offending row in the
+    blueprint editor; ``value`` is the directive as
+    supplied (or the regex line text); ``reason`` is the
+    canonical short hint shown alongside in the
+    notification body. ``line_number`` is set for
+    regex-derived bullets (so the notif body can render
+    "line 3") and ``None`` for everything else (where the
+    field name + value already pin the row).
+    """
+
+    field: str
+    value: str
+    reason: str
+    line_number: int | None = None
+
+
+def validate_directives_item(
+    *,
+    field: str,
+    directives: list[str],
+    candidates: AbstractSet[str],
+    reason: str,
+) -> list[UnmatchedDirective]:
+    """Membership-check one directive list against a candidate set.
+
+    For include / exclude inputs whose values are exact
+    string identifiers (integration names, entity IDs).
+    Any directive not in ``candidates`` becomes an
+    ``UnmatchedDirective`` with the supplied ``field`` and
+    ``reason``. Order of returned bullets follows the
+    order of ``directives`` so the body the user sees is
+    deterministic.
+    """
+    return [
+        UnmatchedDirective(field=field, value=value, reason=reason)
+        for value in directives
+        if value not in candidates
+    ]
+
+
+def validate_directives_path(
+    *,
+    field: str,
+    directives: list[str],
+    candidates: AbstractSet[str],
+    reason: str = "no path matches",
+) -> list[UnmatchedDirective]:
+    """fnmatch-check a list of path globs against the candidate set.
+
+    Each directive is an fnmatch-style glob; an
+    ``UnmatchedDirective`` is emitted for any glob that
+    matches no path in ``candidates``.
+    """
+    import fnmatch  # noqa: PLC0415
+
+    return [
+        UnmatchedDirective(field=field, value=value, reason=reason)
+        for value in directives
+        if not any(fnmatch.fnmatch(p, value) for p in candidates)
+    ]
+
+
+def validate_directives_regex(
+    *,
+    field: str,
+    lines: list[JoinedRegexLine],
+    candidates: AbstractSet[str],
+    reason: str = "regex matched no candidates",
+) -> list[UnmatchedDirective]:
+    """Per-line regex check against the candidate set.
+
+    ``lines`` is the per-line tracking from
+    ``validate_and_join_regex_patterns``. Each line whose
+    compiled pattern doesn't match any candidate becomes
+    an ``UnmatchedDirective`` with ``value`` carrying the
+    raw line text and ``line_number`` set so the
+    notification body can render "line 3" and the user can
+    find the offending row in a multi-line input.
+    """
+    return [
+        UnmatchedDirective(
+            field=field,
+            value=line.raw,
+            reason=reason,
+            line_number=line.line_number,
+        )
+        for line in lines
+        if not any(line.compiled.search(c) for c in candidates)
+    ]
+
+
+def make_unmatched_directives_notification(
+    *,
+    service: str,
+    instance_id: str,
+    unmatched: list[UnmatchedDirective],
+) -> PersistentNotification:
+    """Build the per-instance unmatched-directives spec.
+
+    Empty ``unmatched`` returns an inactive spec keyed to
+    the same notification ID, so a successful validation
+    run dismisses any prior unmatched-directives
+    notification automatically -- handlers can dispatch
+    this spec on every run without branching.
+
+    Notification ID:
+    ``blueprint_toolkit_{service}__{instance_id}__unmatched_directives``.
+    Distinct slot from the config-error notification --
+    "directive doesn't match anything" is informational
+    config staleness, not a structural argparse failure,
+    and the user clears each independently.
+
+    Body shape: a markdown bulleted list of
+    ``- <field>: "<value>" (<reason>)``, with each
+    user-controlled value ``md_escape``-d so stray ``[``
+    / ``]`` / ``\\`` in directive text can't corrupt the
+    rendering.
+    """
+    notif_id = (
+        f"blueprint_toolkit_{service}__{instance_id}__unmatched_directives"
+    )
+    if not unmatched:
+        return PersistentNotification(
+            active=False,
+            notification_id=notif_id,
+            title="",
+            message="",
+            instance_id=instance_id,
+        )
+    bullets: list[str] = []
+    for d in unmatched:
+        loc = f" (line {d.line_number})" if d.line_number is not None else ""
+        bullets.append(
+            f'- {md_escape(d.field)}{loc}: "{md_escape(d.value)}" ({d.reason})',
+        )
+    return PersistentNotification(
+        active=True,
+        notification_id=notif_id,
+        title="Unmatched include / exclude directives",
+        message="\n".join(bullets),
         instance_id=instance_id,
     )
 
@@ -740,8 +943,11 @@ __all__ = [
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
     "IssueNotification",
+    "JoinedRegexLine",
+    "JoinedRegexResult",
     "LifecycleMutators",
     "PersistentNotification",
+    "UnmatchedDirective",
     "device_header_line",
     "format_notification",
     "format_timestamp",
@@ -749,6 +955,7 @@ __all__ = [
     "instance_state_entity_id",
     "make_config_error_notification",
     "make_emit_config_error",
+    "make_unmatched_directives_notification",
     "matches_pattern",
     "md_escape",
     "notification_prefix",
@@ -759,4 +966,7 @@ __all__ = [
     "spec_bucket",
     "validate_and_join_regex_patterns",
     "validate_controlled_entity_domains",
+    "validate_directives_item",
+    "validate_directives_path",
+    "validate_directives_regex",
 ]

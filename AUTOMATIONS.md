@@ -177,12 +177,55 @@ Notification + formatting:
   state-entity IDs).
 - `matches_pattern(text, pattern)` -- case-insensitive substring or regex
   pattern test; safe on bad regex (returns False).
-- `validate_and_join_regex_patterns(field, raw)` -- the canonical multi-line
-  regex parser for blueprint fields with
-  `selector: text: { multiline: true }`. Splits on newlines, validates each
-  pattern, ORs them, rejects empty-matching patterns. Use for every regex-list
+- `validate_and_join_regex_patterns(raw, field_name)` -- the canonical
+  multi-line regex parser for blueprint fields with
+  `selector: text: { multiline: true }`. Returns a `JoinedRegexResult`
+  (`.joined` -- pipe-joined alternation; `.errors` -- config-error bullets the
+  caller appends to its argparse errors list; `.lines` -- per-valid-line
+  tracking with `(line_number, raw, compiled)`). Use for every regex-list
   input -- a naive single `re.compile(raw)` substitute silently fails on
-  multi-line input.
+  multi-line input. The `.lines` field feeds `validate_directives_regex` for
+  per-line "matched no candidates" attribution.
+- `JoinedRegexResult` / `JoinedRegexLine` (dataclasses) -- shapes returned by
+  `validate_and_join_regex_patterns`. Re-exported for handler typing.
+
+Directive validation (watchdogs):
+
+- `validate_directives_item(*, field, directives, candidates, reason)` --
+  membership-check helper for include / exclude inputs whose values are exact
+  string identifiers (integration names, entity IDs). Each directive not in
+  `candidates` becomes an `UnmatchedDirective` with the supplied `field` and
+  `reason`.
+
+- `validate_directives_path(*, field, directives, candidates, reason=...)` --
+  fnmatch-style glob check against a candidate set; flags any glob that
+  matches no path. Default reason: `"no path matches"`.
+
+- `validate_directives_regex(*, field, lines, candidates, reason=...)` --
+  per-line regex check; flags any line whose compiled pattern doesn't match a
+  candidate. Carries `UnmatchedDirective.line_number` so the body can render
+  "line 3". Default reason: `"regex matched no candidates"`.
+
+- `UnmatchedDirective` (frozen dataclass) -- one bullet for the unmatched-
+  directives notification. Fields: `field`, `value`, `reason`, `line_number`
+  (set for regex-derived bullets so the body can render "line 3" for
+  multi-line regex inputs).
+
+- `make_unmatched_directives_notification(*, service, instance_id, unmatched)`
+  -- spec builder. Empty list -> inactive spec keyed to the same notification
+  ID, so handlers dispatch unconditionally and the toggle-off / no-unmatched
+  paths both auto-clear prior notifications.
+
+Per-handler logic modules compose these helpers in their own
+`_validate_<service>_directives` function called from `run_evaluation`,
+keeping the orchestration alongside the rest of the watchdog's pure evaluation
+logic. The handler passes only the user-supplied directive lists plus the
+enabled toggle, via the per-handler `DirectiveInputs` dataclass. The validator
+derives its candidate sets from the same data the actual exclusion code
+operates on -- the `devices` list, the `deviceless_entities` list,
+`truth_set.entity_ids`, `paths_walked`, etc. -- so the "matches no candidates"
+signal stays aligned with what the watchdog actually scans: a regex line gets
+flagged as unmatched precisely when it wouldn't filter anything.
 
 Notifications:
 

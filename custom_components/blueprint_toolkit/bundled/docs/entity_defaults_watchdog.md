@@ -42,18 +42,19 @@ resolved.
 
 ## Configuration
 
-| Parameter                 | Description                                                                                                                                                                                                         |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drift checks              | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), or any combination. Empty means all.                                                                                       |
-| Include integrations      | Integration IDs to check. Empty means all integrations. Applies to device-backed entities and to registry-backed deviceless entries (e.g. `template`, `rachio`). State-only entities have no platform to filter on. |
-| Exclude integrations      | Integration IDs to skip even if included. Same scope as Include integrations.                                                                                                                                       |
-| Device name exclude regex | Skip devices whose name matches. One pattern per line.                                                                                                                                                              |
-| Exclude entities          | Specific entities to exclude from all checks.                                                                                                                                                                       |
-| Entity ID exclude regex   | Skip entities whose ID matches. One pattern per line.                                                                                                                                                               |
-| Entity name exclude regex | Skip entities whose name matches. One pattern per line.                                                                                                                                                             |
-| Check interval (minutes)  | Minutes between drift evaluations.                                                                                                                                                                                  |
-| Max device notifications  | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                                                                         |
-| Debug Logging             | Log debug info to HA logs.                                                                                                                                                                                          |
+| Parameter                             | Description                                                                                                                                                                                                         |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), or any combination. Empty means all.                                                                                       |
+| Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities and to registry-backed deviceless entries (e.g. `template`, `rachio`). State-only entities have no platform to filter on. |
+| Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations.                                                                                                                                       |
+| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                              |
+| Exclude entities                      | Specific entities to exclude from all checks.                                                                                                                                                                       |
+| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                                                                               |
+| Entity name exclude regex             | Skip entities whose name matches. One pattern per line.                                                                                                                                                             |
+| Check interval (minutes)              | Minutes between drift evaluations.                                                                                                                                                                                  |
+| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                                                                         |
+| Validate include / exclude directives | Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.                                       |
+| Debug Logging                         | Log debug info to HA logs.                                                                                                                                                                                          |
 
 See the blueprint UI for default values.
 
@@ -179,9 +180,9 @@ entity's editor. Registry-backed entries from other integrations show the
 friendly name in plain text followed by the owning integration's name as a
 link to its config page -- scan the integration column to see when several
 flagged entities share a single source (e.g. five rows all tagged
-`-  integration rachio`) and can be suppressed together via
-**Exclude integrations**. State-only entities (YAML blocks without `unique_id:`)
-have no owning integration, so they show a nudge to add one instead.
+`-  integration rachio`) and can be suppressed together via **Exclude
+integrations**. State-only entities (YAML blocks without `unique_id:`) have no
+owning integration, so they show a nudge to add one instead.
 
 **Stale collision suffixes** -- entities whose ID ends in `_N` (N >= 2) but no
 un-suffixed or lower-`_N` peer exists:
@@ -223,6 +224,21 @@ intentionally customized names or IDs:
 - **Entity name exclude regex**: match entity names by pattern.
 - **Device name exclude regex**: skip entire devices by name.
 
+### Unmatched include / exclude directives
+
+When **Validate include / exclude directives** is enabled (default), every
+include / exclude entry is checked against the live truth set after each scan.
+Anything that doesn't bind -- a typo'd integration name like `zwavejs` instead
+of `zwave_js`, an `Exclude entities` entry for an entity that no longer
+exists, or a regex line in any of the **Device name** / **Entity ID** /
+**Entity name** exclude fields that catches no current row -- shows up in a
+single "Unmatched include / exclude directives" notification with one bullet
+per offending entry, the field it came from, and a short reason. Fix the typo
+or remove the stale entry and the notification clears on the next scan. The
+notification is informational, not a config error. Disable the toggle to skip
+the check; any prior unmatched-directives notification dismisses on the next
+scan.
+
 ## Developer notes
 
 ### Entity attributes
@@ -249,6 +265,9 @@ Tools > States to find it.
 - `deviceless_drift`: Deviceless entities flagged as drifted (excludes
   stale-suffix cases)
 - `deviceless_stale`: Deviceless entities with stale collision suffixes
+- `unmatched_directives`: Include / exclude directives that bound to zero live
+  candidates this run (zero unless **Validate include / exclude directives**
+  surfaced something)
 
 ### Debug logging
 
@@ -261,5 +280,6 @@ Example output for an automation named "Entity Defaults Watchdog":
 ```text
 [EDW: Entity Defaults Watchdog] integrations=12
   devices=45 entities=320 device_issues=2
-  entity_issues=5
+  entity_issues=5 deviceless_drift=3 deviceless_stale=0
+  unmatched_directives=0
 ```

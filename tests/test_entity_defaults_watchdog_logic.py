@@ -26,6 +26,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     DeviceEntry,
     DeviceInfo,
     DevicelessEntityInfo,
+    DirectiveInputs,
     DriftDetail,
     EntityDriftInfo,
     _build_notification_message,
@@ -37,6 +38,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     _evaluate_deviceless,
     _is_excluded,
     _matches_with_collision_suffix,
+    _validate_edw_directives,
     evaluate_devices,
 )
 
@@ -1290,6 +1292,140 @@ class TestEvaluateDeviceless:
         result = _evaluate_deviceless(cfg, entities, peers)
         assert result.has_issue is False
         assert result.entities_excluded == 1
+
+
+class TestValidateEdwDirectives:
+    """Direct tests against ``_validate_edw_directives`` -- the
+    handler builds candidate sets from the FULL registries (not
+    the post-include/exclude-integration set) and threads them
+    through ``DirectiveInputs``. The validator should report a
+    regex as matched whenever its pattern matches anything the
+    handler hands over, even if the actual exclusion code's
+    integration filter would have pruned the match.
+    """
+
+    @staticmethod
+    def _di(
+        *,
+        entity_id_regex: str = "",
+        device_name_regex: str = "",
+        entity_name_regex: str = "",
+        entity_id_candidates: frozenset[str] = frozenset(),
+        device_name_candidates: frozenset[str] = frozenset(),
+        entity_name_candidates: frozenset[str] = frozenset(),
+        all_registered_entity_ids: frozenset[str] = frozenset(),
+        exclude_entities: list[str] | None = None,
+        include_integrations: list[str] | None = None,
+        exclude_integrations: list[str] | None = None,
+    ) -> DirectiveInputs:
+        return DirectiveInputs(
+            enabled=True,
+            include_integrations=include_integrations or [],
+            exclude_integrations=exclude_integrations or [],
+            exclude_entities=exclude_entities or [],
+            all_registered_entity_ids=all_registered_entity_ids,
+            exclude_device_name_regex_lines=helpers.validate_and_join_regex_patterns(
+                device_name_regex,
+                "exclude_device_name_regex",
+            ).lines,
+            exclude_entity_id_regex_lines=helpers.validate_and_join_regex_patterns(
+                entity_id_regex,
+                "exclude_entity_id_regex",
+            ).lines,
+            exclude_entity_name_regex_lines=helpers.validate_and_join_regex_patterns(
+                entity_name_regex,
+                "exclude_entity_name_regex",
+            ).lines,
+            device_name_candidates=device_name_candidates,
+            entity_id_candidates=entity_id_candidates,
+            entity_name_candidates=entity_name_candidates,
+        )
+
+    def test_entity_id_regex_matches_broad_candidate_set(self) -> None:
+        # Bug-fix coverage: a regex matching an entity in
+        # the broad candidate set is NOT flagged unmatched
+        # even if the entity's integration is in
+        # ``exclude_integrations``. EDW's handler sources
+        # ``entity_id_candidates`` from the FULL registry.
+        di = self._di(
+            entity_id_regex=r"sensor\.foo_.+",
+            entity_id_candidates=frozenset(
+                {"sensor.foo_bar", "sensor.unrelated"}
+            ),
+            exclude_integrations=["foo_integration"],
+        )
+        out = _validate_edw_directives(di, all_integrations=["foo_integration"])
+        assert not [u for u in out if u.field == "exclude_entity_id_regex"], out
+
+    def test_entity_id_regex_unmatched_when_no_candidate_matches(
+        self,
+    ) -> None:
+        di = self._di(
+            entity_id_regex=r"^xyz_no_entity_matches$",
+            entity_id_candidates=frozenset({"sensor.foo", "sensor.bar"}),
+        )
+        out = _validate_edw_directives(di, all_integrations=[])
+        unmatched = [u for u in out if u.field == "exclude_entity_id_regex"]
+        assert len(unmatched) == 1
+        assert unmatched[0].value == r"^xyz_no_entity_matches$"
+
+    def test_leading_space_regex_is_unmatched(self) -> None:
+        # Bug-2 coverage at the EDW layer: the helper
+        # preserves leading whitespace verbatim, so a
+        # typo'd "  _audio_input_format$" line compiles to
+        # a pattern requiring a literal space and matches
+        # no real entity_id.
+        di = self._di(
+            entity_id_regex=" _audio_input_format$",
+            entity_id_candidates=frozenset(
+                {
+                    "sensor.kitchen_sonos_audio_input_format",
+                    "sensor.living_room_sonos_audio_input_format",
+                }
+            ),
+        )
+        out = _validate_edw_directives(di, all_integrations=[])
+        unmatched = [u for u in out if u.field == "exclude_entity_id_regex"]
+        assert len(unmatched) == 1
+        assert unmatched[0].value == " _audio_input_format$"
+
+    def test_entity_name_regex_uses_candidate_set(self) -> None:
+        di = self._di(
+            entity_name_regex=r"^Loft Humidifier ",
+            entity_name_candidates=frozenset(
+                {"Loft Humidifier Power", "Kitchen Sonos"}
+            ),
+        )
+        out = _validate_edw_directives(di, all_integrations=[])
+        assert not [u for u in out if u.field == "exclude_entity_name_regex"], (
+            out
+        )
+
+    def test_device_name_regex_uses_candidate_set(self) -> None:
+        di = self._di(
+            device_name_regex=r"^Kitchen Sonos$",
+            device_name_candidates=frozenset(
+                {"Kitchen Sonos", "Loft Humidifier"}
+            ),
+        )
+        out = _validate_edw_directives(di, all_integrations=[])
+        assert not [u for u in out if u.field == "exclude_device_name_regex"], (
+            out
+        )
+
+    def test_exclude_entities_uses_all_registered_entity_ids(self) -> None:
+        # ``exclude_entities`` measures against the full
+        # registry-id set so users can suppress entities
+        # outside the include/exclude_integration scope
+        # without false-flag.
+        di = self._di(
+            exclude_entities=["sensor.out_of_scope_but_real"],
+            all_registered_entity_ids=frozenset(
+                {"sensor.out_of_scope_but_real", "sensor.something_else"}
+            ),
+        )
+        out = _validate_edw_directives(di, all_integrations=[])
+        assert not [u for u in out if u.field == "exclude_entities"], out
 
 
 class TestCodeQuality(CodeQualityBase):
