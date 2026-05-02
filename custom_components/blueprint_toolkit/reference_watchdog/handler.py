@@ -402,8 +402,8 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
         domains.add(eid.split(".", 1)[0])
 
     # Service registry -- negative truth set that filters
-    # sniff matches that look like entity IDs but are
-    # actually registered services.
+    # sniff- and jinja-emitted entity-kind refs whose value
+    # names a registered service rather than an entity.
     services = hass.services.async_services()
     for dom, svcs in services.items():
         for svc_name in svcs:

@@ -271,17 +271,28 @@ class TestWalkTree:
         assert values == ["light.a", "light.b"]
 
     def test_nested_target_block(self) -> None:
+        # Sniff IS enabled under `action:` -- so the
+        # service name reaches the sniff path and is
+        # emitted as an entity ref. The negative truth
+        # set in `_collect_findings` then drops it.
         tree: dict[str, object] = {
             "action": "light.turn_on",
             "target": {"entity_id": "light.foo"},
         }
         refs = list(_walk_tree(tree, [], {"light"}))
         values = [r.value for r in refs]
-        # Sniff is disabled under `action:` so the service
-        # name should never appear.
-        assert "light.turn_on" not in values
-        # Structural walk emits light.foo from target
+        assert "light.turn_on" in values
         assert "light.foo" in values
+        # Higher-level outcome: the sniff-emitted service
+        # name produces no Finding because the negative
+        # truth set suppresses it.
+        owner = Owner(source_file="x.yaml", friendly_name="t")
+        ts = _ts(
+            entity_ids={"light.foo"},
+            service_names={"light.turn_on"},
+        )
+        findings, _ = _collect_findings(_config(), owner, tree, ts)
+        assert findings == []
 
     def test_sniff_finds_blueprint_input(self) -> None:
         # A key name that isn't in _ENTITY_KEYS but holds a
@@ -305,15 +316,34 @@ class TestWalkTree:
         jinja_refs = [r for r in refs if r.context.startswith("jinja:")]
         assert len(jinja_refs) == 1
 
-    def test_sniff_disabled_under_service_key(self) -> None:
+    def test_service_value_sniffed_then_filtered_via_service_names(
+        self,
+    ) -> None:
+        # Service-keyed string values DO get sniffed (so a
+        # broken `service: script.foo` can be flagged), and
+        # the negative truth set in `_collect_findings`
+        # drops the ref when the value is a real service.
         tree: dict[str, object] = {
             "service": "light.turn_on",
             "target": {"entity_id": "light.foo"},
         }
         refs = list(_walk_tree(tree, [], {"light"}))
         values = [r.value for r in refs]
-        assert "light.turn_on" not in values
+        assert "light.turn_on" in values
         assert "light.foo" in values
+        owner = Owner(source_file="x.yaml", friendly_name="t")
+        ts = _ts(
+            entity_ids={"light.foo"},
+            service_names={"light.turn_on"},
+        )
+        findings, stats = _collect_findings(
+            _config(),
+            owner,
+            tree,
+            ts,
+        )
+        assert findings == []
+        assert stats.refs_service_skipped == 1
 
     def test_sniff_disabled_under_ref_key_subtree(self) -> None:
         # Entity at an _ENTITY_KEYS value should emit once
@@ -987,6 +1017,248 @@ class TestCollectFindings:
         assert findings == []
         assert stats.refs_total == 1
         assert stats.refs_valid == 1
+
+
+class TestServiceRefValidation:
+    """Validate literal ``service:`` / ``action:`` values.
+
+    Pins the post-fix behavior where service-keyed string
+    values reach the sniff path and a broken
+    ``service: script.does_not_exist`` surfaces as a
+    broken-entity finding, while real registered service
+    names get suppressed by the negative truth set.
+    """
+
+    def _owner(self) -> Owner:
+        return Owner(source_file="x.yaml", friendly_name="t")
+
+    def test_broken_service_flags_as_broken_entity(self) -> None:
+        tree: dict[str, object] = {
+            "service": "script.does_not_exist",
+        }
+        ts = _ts(extra_domains={"script"})
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert len(findings) == 1
+        assert findings[0].ref.value == "script.does_not_exist"
+        assert findings[0].ref.kind == "entity"
+        assert findings[0].ref.context.startswith("sniff:")
+        assert stats.refs_broken == 1
+
+    def test_real_service_does_not_flag(self) -> None:
+        tree: dict[str, object] = {
+            "service": "notify.mobile_app_alice",
+        }
+        ts = _ts(
+            service_names={"notify.mobile_app_alice"},
+            extra_domains={"notify"},
+        )
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert findings == []
+        assert stats.refs_service_skipped == 1
+
+    def test_real_script_does_not_flag(self) -> None:
+        # script.exists is a real script -- both the entity
+        # and the service exist. Sniff emits an entity ref
+        # which validates against entity_ids.
+        tree: dict[str, object] = {
+            "service": "script.exists",
+        }
+        ts = _ts(entity_ids={"script.exists"})
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert findings == []
+        assert stats.refs_valid == 1
+
+    def test_list_form_mixed_validity(self) -> None:
+        tree: dict[str, object] = {
+            "service": ["script.exists", "script.does_not_exist"],
+        }
+        ts = _ts(entity_ids={"script.exists"})
+        findings, _ = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert len(findings) == 1
+        assert findings[0].ref.value == "script.does_not_exist"
+
+    def test_action_keyword_broken(self) -> None:
+        # HA's newer `action:` keyword is conceptually a
+        # service-call key, same as `service:`. Pin parity
+        # between the two so the broken-ref behavior at
+        # `action:` matches `service:` end-to-end.
+        tree: dict[str, object] = {
+            "action": "script.does_not_exist",
+        }
+        ts = _ts(extra_domains={"script"})
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert len(findings) == 1
+        assert findings[0].ref.value == "script.does_not_exist"
+        assert stats.refs_broken == 1
+
+    def test_action_keyword_real_service_suppressed(self) -> None:
+        tree: dict[str, object] = {
+            "action": "notify.mobile_app_alice",
+        }
+        ts = _ts(
+            service_names={"notify.mobile_app_alice"},
+            extra_domains={"notify"},
+        )
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert findings == []
+        assert stats.refs_service_skipped == 1
+
+    def test_service_template_keyword_broken(self) -> None:
+        # The legacy `service_template:` keyword names the
+        # same construct as `service:`; pin parity for
+        # broken refs so a typo'd template service still
+        # surfaces.
+        tree: dict[str, object] = {
+            "service_template": "script.does_not_exist",
+        }
+        ts = _ts(extra_domains={"script"})
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert len(findings) == 1
+        assert findings[0].ref.value == "script.does_not_exist"
+        assert stats.refs_broken == 1
+
+    def test_jinja_no_constants_does_not_flag(self) -> None:
+        # Concatenated jinja yields no constant -- no
+        # extraction, no sniff (regex rejects literal `{{`).
+        tree: dict[str, object] = {
+            "service": '{{ "script." + name }}',
+        }
+        ts = _ts(extra_domains={"script"})
+        findings, _ = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert findings == []
+
+    def test_jinja_with_real_service_constant_suppressed(self) -> None:
+        # Pre-existing latent bug exposed by the sniff path:
+        # jinja AST extraction emits the constant
+        # ``script.turn_on`` with origin ``"jinja"``. The
+        # generalized truth-set filter (no longer gated on
+        # origin) drops it.
+        tree: dict[str, object] = {
+            "service": '{{ "script.turn_on" }}',
+        }
+        ts = _ts(
+            service_names={"script.turn_on"},
+            extra_domains={"script"},
+        )
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert findings == []
+        assert stats.refs_service_skipped == 1
+
+    def test_universal_turn_on_with_target(self) -> None:
+        # `light.turn_on` is a real service, target
+        # entity_id is broken. Exactly one finding -- for
+        # the broken target -- and no double-flag for the
+        # service name.
+        tree: dict[str, object] = {
+            "service": "light.turn_on",
+            "target": {"entity_id": "light.does_not_exist"},
+        }
+        ts = _ts(
+            service_names={"light.turn_on"},
+            extra_domains={"light"},
+        )
+        findings, _ = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert len(findings) == 1
+        assert findings[0].ref.value == "light.does_not_exist"
+
+    def test_structural_entity_id_slot_still_flags_service_typo(
+        self,
+    ) -> None:
+        # Pre-fix this case was caught via the structural
+        # walk because the truth-set filter only fired for
+        # sniff-origin refs. The narrowed filter (sniff +
+        # jinja, NOT structural) keeps the same guarantee:
+        # a service name typed into the `entity_id:` slot
+        # is a real config bug, and the structural keys
+        # carry the contract that their values are entities,
+        # so the negative truth set MUST NOT silence it.
+        tree: dict[str, object] = {
+            "entity_id": "light.turn_on",
+        }
+        ts = _ts(
+            service_names={"light.turn_on"},
+            extra_domains={"light"},
+        )
+        findings, stats = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert len(findings) == 1
+        assert findings[0].ref.value == "light.turn_on"
+        assert findings[0].ref.kind == "entity"
+        assert stats.refs_broken == 1
+        assert stats.refs_service_skipped == 0
+
+    def test_domain_not_in_truth_set_does_not_flag(self) -> None:
+        # Pinned acceptable limitation: the sniff regex
+        # only matches domains that appear in
+        # truth_set.domains, which is seeded from existing
+        # entity_ids. A `service: pyscript.run_thing` call
+        # in an environment with no pyscript.* entities
+        # yields no ref and no finding -- intentional.
+        tree: dict[str, object] = {
+            "service": "pyscript.run_thing",
+        }
+        ts = _ts()  # no pyscript entities -> domain absent
+        findings, _ = _collect_findings(
+            _config(),
+            self._owner(),
+            tree,
+            ts,
+        )
+        assert findings == []
 
 
 # -- Notification body formatting -----------------------

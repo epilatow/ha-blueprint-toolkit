@@ -445,6 +445,83 @@ class TestServiceLayerScan:
             "Automation: [RW: Finding](/config/automation/edit/9999)\n",
         ), f"missing automation-link prefix; body was: {body[:200]!r}"
 
+    async def test_broken_service_call_surfaces_in_owner_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """A broken ``service: script.<name>`` in
+        ``automations.yaml`` reaches the sniff path,
+        bypasses the negative truth set (no such service
+        registered), and surfaces in the owner's
+        ``Broken entity references`` section. Covers both
+        the literal-string form and the list-form.
+        """
+        await _setup_integration(hass)
+        # An automation entity is required so RW's owner-
+        # builder can resolve a friendly name.
+        hass.states.async_set(
+            "automation.rw_broken_service",
+            "on",
+            {
+                "friendly_name": "RW: BrokenService",
+                "id": "8888",
+            },
+        )
+        # Seed at least one ``script.*`` entity so the sniff
+        # regex's domain check fires for the broken refs.
+        hass.states.async_set(
+            "script.exists",
+            "off",
+            {"friendly_name": "Exists"},
+        )
+        config_dir = Path(hass.config.config_dir)
+        (config_dir / "automations.yaml").write_text(
+            "- id: '8888'\n"
+            "  alias: RW BrokenService\n"
+            "  trigger: []\n"
+            "  action:\n"
+            "    - service: script.does_not_exist\n"
+            "    - service:\n"
+            "        - script.also_missing\n"
+            "        - script.exists\n",
+        )
+        # configuration.yaml needs to include the
+        # automations file so RW's discovery picks it up.
+        (config_dir / "configuration.yaml").write_text(
+            "automation: !include automations.yaml\n",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(instance_id="automation.rw_broken_service"),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        owner_notifs = {
+            nid: spec
+            for nid, spec in notifs.items()
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_broken_service__owner_"
+            )
+        }
+        assert len(owner_notifs) >= 1, (
+            "expected owner notification for broken service refs; "
+            f"got {sorted(notifs.keys())}"
+        )
+        body = "\n".join(spec["message"] for spec in owner_notifs.values())
+        assert "script.does_not_exist" in body
+        assert "script.also_missing" in body
+        # The valid script in the list MUST NOT be flagged.
+        assert "script.exists" not in body
+
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "RW"

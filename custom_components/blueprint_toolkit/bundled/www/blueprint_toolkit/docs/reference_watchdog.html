@@ -248,8 +248,8 @@ integration or restart HA.</p>
 entities in the entity registry at all, so adding <code>plant</code> to <strong>Exclude
 integrations</strong> has no effect on them. To silence plant findings:</p>
 <ul>
-<li>Preferred: add <code>plants.yaml</code> to <strong>Exclude paths</strong> -- kills the whole
-scanner for that file</li>
+<li>Preferred: add <code>plants.yaml</code> to <strong>Exclude paths</strong> -- kills the whole scanner
+for that file</li>
 <li>Alternative: add <code>^sensor\.plant_sensor_</code> to <strong>Entity ID exclude regex</strong> --
 narrower, keeps scanning the file but suppresses specific broken sensor
 prefixes</li>
@@ -324,22 +324,28 @@ as a Jinja template. Constant string literals (<code>states('sensor.foo')</code>
 attribute chains (<code>states.sensor.foo</code>) are extracted and validated.
 Non-constant expressions (<code>states('sensor.' ~ name)</code>) are intentionally
 skipped.</li>
-<li><strong>String sniff.</strong> String leaves that are neither under a known
-<code>_ENTITY_KEYS</code> position nor inside a <code>_SERVICE_KEYS</code> subtree are checked
-against the entity-id regex with a domain filter. Catches blueprint inputs
-where the parent key name is custom (<code>controlled_entities</code>,
-<code>notification_service</code>).</li>
+<li><strong>String sniff.</strong> String leaves that aren't under a known <code>_ENTITY_KEYS</code>
+position are checked against the entity-id regex with a domain filter.
+Catches blueprint inputs where the parent key name is custom
+(<code>controlled_entities</code>, <code>notification_service</code>) and bare values under
+<code>service:</code> / <code>action:</code> / <code>service_template:</code> -- a typo'd
+<code>service: script.does_not_exist</code> surfaces as a broken-entity reference,
+while real registered service names are dropped by the truth set below.</li>
 </ol>
 <h3>Service-name negative truth set</h3>
 <p>HA service names and entity IDs share the same <code>domain.name</code> shape --
 <code>light.turn_on</code> is a service, <code>light.kitchen</code> is an entity. The string sniff
 can't distinguish them by syntax alone.</p>
 <p>The wrapper pulls HA's service registry (<code>hass.services.async_services()</code>)
-into <code>TruthSet.service_names</code>. When a sniff-emitted reference matches a
-service name, the finding is dropped before it becomes a notification (tracked
-as <code>refs_service_skipped</code> for coverage reporting). Without this backstop,
-every <code>notification_service: notify.mobile_app_*</code> blueprint input would
-surface as a broken-entity false positive.</p>
+into <code>TruthSet.service_names</code>. When a sniff- or Jinja-emitted entity-kind
+reference matches a registered service name, the finding is dropped before it
+becomes a notification (tracked as <code>refs_service_skipped</code> for coverage
+reporting). The filter is gated on origin: structural emissions at known
+entity-key positions (<code>entity_id: light.turn_on</code>) are NOT suppressed, since
+those slots carry the contract that the value is meant to be an entity ID, so
+a service-name collision there is a real configuration typo worth surfacing.
+Without this backstop, every <code>notification_service: notify.mobile_app_*</code>
+blueprint input would surface as a broken-entity false positive.</p>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to
 <code>blueprint_toolkit.rw_&lt;slug&gt;_state</code>. Search for <code>blueprint_toolkit.rw_*</code> in
@@ -418,7 +424,7 @@ surface as a broken-entity false positive.</p>
 </tr>
 <tr>
 <td><code>refs_service_skipped</code></td>
-<td>Sniff hits dropped by the service-name negative truth set</td>
+<td>Sniff- and Jinja-emitted entity-kind refs whose value names a registered service (dropped by the negative truth set; structural emissions at entity-key slots are still flagged)</td>
 </tr>
 <tr>
 <td><code>source_orphan_count</code></td>
@@ -435,8 +441,8 @@ surface as a broken-entity false positive.</p>
 <li><code>owners_total = owners_with_refs + owners_without_refs</code></li>
 <li><code>owners_with_issues is a subset of owners_with_refs</code></li>
 <li><code>total_findings = broken_entity_count + broken_device_count + disabled_entity_count</code></li>
-<li><code>refs_total = refs_structural + refs_jinja + refs_sniff</code> (service-skipped
-sniff hits are not counted)</li>
+<li><code>refs_total = refs_structural + refs_jinja + refs_sniff</code> (sniff- and
+Jinja-origin service-skipped hits are not counted)</li>
 <li><code>paths_included + paths_excluded = paths considered</code></li>
 </ul>
 <h3>Source-orphan detection</h3>

@@ -47,10 +47,14 @@ tree:
    ``trigger_entities:``, ``notification_service:``).
 
    The sniff is explicitly disabled under ``_ENTITY_KEYS``
-   subtrees (the structural walk already emitted those)
-   and under ``_SERVICE_KEYS`` subtrees (values at
-   ``service:``/``action:`` keys are always service
-   names, not entity refs).
+   subtrees (the structural walk already emitted those).
+   Under HA service-call keys (``service`` / ``action`` /
+   ``service_template``) the sniff IS enabled: a literal
+   ``service: script.foo`` reaches the sniff path and
+   emits an entity ref. The negative truth set below
+   filters out the values that are real service names,
+   leaving genuinely-broken service references behind to
+   surface as broken-entity findings.
 
 Service-name negative truth set
 -------------------------------
@@ -63,10 +67,16 @@ syntax alone.
 The service wrapper pulls the service registry
 (``hass.services.async_services()``) and hands the full
 set of ``<domain>.<service>`` names to the logic module
-via ``TruthSet.service_names``. When a sniff-emitted ref
-matches an entry in that set, the ref is dropped before
-becoming a finding (tracked as ``refs_service_skipped``
-for coverage reporting). Without this backstop, every
+via ``TruthSet.service_names``. When a sniff- or jinja-
+emitted entity-kind ref matches an entry in that set, the
+ref is dropped before becoming a finding (tracked as
+``refs_service_skipped`` for coverage reporting). The
+filter is gated on origin: structural emissions at known
+entity-key positions like ``entity_id: light.turn_on`` are
+NOT suppressed -- the structural keys carry the contract
+that the value is meant to be an entity ID, so a
+collision with a service name is a real configuration
+typo worth flagging. Without this backstop, every
 ``notification_service: notify.mobile_app_foo`` blueprint
 input would surface as a broken-entity false positive.
 
@@ -231,13 +241,6 @@ _ENTITY_KEYS: frozenset[str] = frozenset(
 # Dict keys whose string values are HA device registry IDs. Values
 # here are validated against _DEVICE_ID_RE and the device truth set.
 _DEVICE_KEYS: frozenset[str] = frozenset(["device", "device_id", "devices"])
-
-# Dict keys whose string values are always HA service/action names
-# (e.g. "light.turn_on"), never entity IDs. The sniff pass is
-# disabled in subtrees under these keys so service names never get
-# misflagged as broken entity refs.
-_SERVICE_KEYS: frozenset[str] = frozenset(["service", "action"])
-
 
 # -- Dataclasses ---------------------------------------------------------
 
@@ -648,11 +651,18 @@ def _walk_tree(
 
     The ``sniff_strings`` flag is turned off when we
     recurse into a subtree that was already emitted
-    structurally (``_ENTITY_KEYS`` / ``_DEVICE_KEYS``) or
-    whose contents are always service names
-    (``_SERVICE_KEYS``). Without this flag we'd
-    double-count entity-ID values at known ref keys and
-    misflag service names as entity refs.
+    structurally (``_ENTITY_KEYS`` / ``_DEVICE_KEYS``) so
+    we don't double-count entity-ID values at known ref
+    keys.
+
+    Values under HA service-call keys (``service`` /
+    ``action`` / ``service_template``) DO get sniffed --
+    a literal ``service: script.foo`` will sniff-emit a
+    Ref(kind="entity", value="script.foo"). The negative
+    truth set in ``_collect_findings`` then drops the ref
+    if the value matches a registered service name (so
+    ``service: notify.mobile_app_alice`` doesn't flag),
+    leaving only genuinely-broken references behind.
     """
     out: list[Ref] = []
     if isinstance(node, dict):
@@ -677,7 +687,7 @@ def _walk_tree(
                         known_domains,
                     ),
                 )
-            if key in _ENTITY_KEYS | _DEVICE_KEYS | _SERVICE_KEYS:
+            if key in _ENTITY_KEYS | _DEVICE_KEYS:
                 if isinstance(v, (dict, list)):
                     out.extend(
                         _walk_tree(
@@ -1324,10 +1334,11 @@ def _collect_findings(
     trigger and a condition) intentionally produces
     separate findings -- each shows *where* the broken
     reference appears. Applies the
-    service-name negative truth set (drops sniff hits
-    that are registered HA services). Applies the
-    unified ``exclude_entities``/``exclude_entity_id_regex``
-    on the target side.
+    service-name negative truth set (drops sniff- and
+    jinja-emitted entity-kind refs whose value names a
+    registered HA service). Applies the unified
+    ``exclude_entities`` / ``exclude_entity_id_regex`` on
+    the target side.
     """
     findings: list[Finding] = []
     stats = _OwnerStats()
@@ -1373,12 +1384,22 @@ def _collect_findings(
 
         origin = _classify_ref_origin(ref)
 
-        # Drop sniff matches that are actually service
-        # names (negative truth set). Counted separately
-        # so the stat line can show the filter working.
+        # Drop entity-kind refs from the sniff and jinja
+        # passes whose value matches a registered service
+        # name (negative truth set). ``sniff`` catches bare
+        # ``service: notify.foo`` strings; ``jinja`` catches
+        # constants extracted from template expressions like
+        # ``service: '{{ "script.turn_on" }}'``. Structural
+        # emissions are intentionally NOT filtered: a
+        # service name appearing under a known entity-key
+        # position (``entity_id: light.turn_on``) is a real
+        # configuration typo worth surfacing, and the
+        # structural keys carry the contract that the value
+        # is meant to be an entity ID. Counted separately so
+        # the stat line can show the filter working.
         if (
-            origin == "sniff"
-            and ref.kind == "entity"
+            ref.kind == "entity"
+            and origin in {"sniff", "jinja"}
             and ref.value in truth_set.service_names
         ):
             stats.refs_service_skipped += 1

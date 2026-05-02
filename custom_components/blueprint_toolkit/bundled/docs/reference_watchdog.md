@@ -71,12 +71,12 @@ See the blueprint UI for default values.
 
 Three exclusion axes, each for a specific purpose:
 
-| Want to silence                                        | Use                      |
-| ------------------------------------------------------ | ------------------------ |
-| A specific file (e.g. `plants.yaml`, an old dashboard) | Exclude paths            |
-| All config entries from an integration (e.g. `hacs`)   | Exclude integrations     |
-| A specific entity ID you don't want flagged            | Exclude entities         |
-| A family of entity IDs matching a pattern              | Entity ID exclude regex  |
+| Want to silence                                        | Use                     |
+| ------------------------------------------------------ | ----------------------- |
+| A specific file (e.g. `plants.yaml`, an old dashboard) | Exclude paths           |
+| All config entries from an integration (e.g. `hacs`)   | Exclude integrations    |
+| A specific entity ID you don't want flagged            | Exclude entities        |
+| A family of entity IDs matching a pattern              | Entity ID exclude regex |
 
 **Rule of thumb:** by file -> paths. By config entry domain -> integrations.
 By entity -> entities.
@@ -145,8 +145,8 @@ Some legacy YAML integrations -- notably `plant` -- don't register their
 entities in the entity registry at all, so adding `plant` to **Exclude
 integrations** has no effect on them. To silence plant findings:
 
-- Preferred: add `plants.yaml` to **Exclude paths** -- kills the whole
-  scanner for that file
+- Preferred: add `plants.yaml` to **Exclude paths** -- kills the whole scanner
+  for that file
 - Alternative: add `^sensor\.plant_sensor_` to **Entity ID exclude regex** --
   narrower, keeps scanning the file but suppresses specific broken sensor
   prefixes
@@ -180,10 +180,10 @@ runtime state and don't have a file-based definer.
 
 To silence specific findings:
 
-| Want to silence                        | Use                     |
-| -------------------------------------- | ----------------------- |
-| A single orphan you want to keep       | Exclude entities        |
-| A family of orphans matching a pattern | Exclude entity regex    |
+| Want to silence                        | Use                  |
+| -------------------------------------- | -------------------- |
+| A single orphan you want to keep       | Exclude entities     |
+| A family of orphans matching a pattern | Exclude entity regex |
 
 There's no per-platform silencing toggle -- the full set of known UI-helper
 storage files (`input_boolean`, `input_number`, `input_text`, `input_select`,
@@ -220,11 +220,13 @@ stat attributes.
    attribute chains (`states.sensor.foo`) are extracted and validated.
    Non-constant expressions (`states('sensor.' ~ name)`) are intentionally
    skipped.
-3. **String sniff.** String leaves that are neither under a known
-   `_ENTITY_KEYS` position nor inside a `_SERVICE_KEYS` subtree are checked
-   against the entity-id regex with a domain filter. Catches blueprint inputs
-   where the parent key name is custom (`controlled_entities`,
-   `notification_service`).
+3. **String sniff.** String leaves that aren't under a known `_ENTITY_KEYS`
+   position are checked against the entity-id regex with a domain filter.
+   Catches blueprint inputs where the parent key name is custom
+   (`controlled_entities`, `notification_service`) and bare values under
+   `service:` / `action:` / `service_template:` -- a typo'd
+   `service: script.does_not_exist` surfaces as a broken-entity reference,
+   while real registered service names are dropped by the truth set below.
 
 ### Service-name negative truth set
 
@@ -233,11 +235,15 @@ HA service names and entity IDs share the same `domain.name` shape --
 can't distinguish them by syntax alone.
 
 The wrapper pulls HA's service registry (`hass.services.async_services()`)
-into `TruthSet.service_names`. When a sniff-emitted reference matches a
-service name, the finding is dropped before it becomes a notification (tracked
-as `refs_service_skipped` for coverage reporting). Without this backstop,
-every `notification_service: notify.mobile_app_*` blueprint input would
-surface as a broken-entity false positive.
+into `TruthSet.service_names`. When a sniff- or Jinja-emitted entity-kind
+reference matches a registered service name, the finding is dropped before it
+becomes a notification (tracked as `refs_service_skipped` for coverage
+reporting). The filter is gated on origin: structural emissions at known
+entity-key positions (`entity_id: light.turn_on`) are NOT suppressed, since
+those slots carry the contract that the value is meant to be an entity ID, so
+a service-name collision there is a real configuration typo worth surfacing.
+Without this backstop, every `notification_service: notify.mobile_app_*`
+blueprint input would surface as a broken-entity false positive.
 
 ### Entity attributes
 
@@ -245,35 +251,35 @@ After each evaluation, attributes are written to
 `blueprint_toolkit.rw_<slug>_state`. Search for `blueprint_toolkit.rw_*` in
 **Developer Tools > States** to find it.
 
-| Attribute                  | Meaning                                                                                                                                                        |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `last_run`                 | ISO timestamp of the most recent successful evaluation                                                                                                         |
-| `runtime`                  | Wall-clock seconds the evaluation took                                                                                                                         |
-| `paths_included`           | Source files actually scanned (after **Exclude paths** filtering)                                                                                              |
-| `paths_excluded`           | Source files skipped by **Exclude paths**                                                                                                                      |
-| `owners_total`             | Total owners discovered across scanned sources (including owners with zero refs)                                                                               |
-| `owners_with_refs`         | Owners where at least one reference was detected                                                                                                               |
-| `owners_without_refs`      | Owners scanned but no references detected -- surfaces detection gaps                                                                                           |
-| `owners_with_issues`       | Owners with at least one broken-or-disabled finding                                                                                                            |
-| `total_findings`           | Broken-or-disabled findings across all owners                                                                                                                  |
-| `broken_entity_count`      | Findings where the target entity is missing from the registry + states                                                                                         |
-| `broken_device_count`      | Findings where the target device ID is missing                                                                                                                 |
-| `disabled_entity_count`    | Findings where the target exists but is disabled (only populated when **Check disabled entities** is enabled)                                                  |
-| `refs_total`               | All references detected (valid + broken + disabled)                                                                                                            |
-| `refs_structural`          | References found via the `_ENTITY_KEYS` structural walk                                                                                                        |
-| `refs_jinja`               | References found via the Jinja AST extraction pass                                                                                                             |
-| `refs_sniff`               | References found via the string sniff pass                                                                                                                     |
-| `refs_service_skipped`     | Sniff hits dropped by the service-name negative truth set                                                                                                      |
-| `source_orphan_count`      | Source orphans detected this run                                                                                                                               |
-| `source_orphan_candidates` | Registry entries eligible for orphan evaluation (`config_entry_id=null`, platform not in the runtime-excluded list). `source_orphan_count` is always a subset. |
+| Attribute                  | Meaning                                                                                                                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `last_run`                 | ISO timestamp of the most recent successful evaluation                                                                                                                           |
+| `runtime`                  | Wall-clock seconds the evaluation took                                                                                                                                           |
+| `paths_included`           | Source files actually scanned (after **Exclude paths** filtering)                                                                                                                |
+| `paths_excluded`           | Source files skipped by **Exclude paths**                                                                                                                                        |
+| `owners_total`             | Total owners discovered across scanned sources (including owners with zero refs)                                                                                                 |
+| `owners_with_refs`         | Owners where at least one reference was detected                                                                                                                                 |
+| `owners_without_refs`      | Owners scanned but no references detected -- surfaces detection gaps                                                                                                             |
+| `owners_with_issues`       | Owners with at least one broken-or-disabled finding                                                                                                                              |
+| `total_findings`           | Broken-or-disabled findings across all owners                                                                                                                                    |
+| `broken_entity_count`      | Findings where the target entity is missing from the registry + states                                                                                                           |
+| `broken_device_count`      | Findings where the target device ID is missing                                                                                                                                   |
+| `disabled_entity_count`    | Findings where the target exists but is disabled (only populated when **Check disabled entities** is enabled)                                                                    |
+| `refs_total`               | All references detected (valid + broken + disabled)                                                                                                                              |
+| `refs_structural`          | References found via the `_ENTITY_KEYS` structural walk                                                                                                                          |
+| `refs_jinja`               | References found via the Jinja AST extraction pass                                                                                                                               |
+| `refs_sniff`               | References found via the string sniff pass                                                                                                                                       |
+| `refs_service_skipped`     | Sniff- and Jinja-emitted entity-kind refs whose value names a registered service (dropped by the negative truth set; structural emissions at entity-key slots are still flagged) |
+| `source_orphan_count`      | Source orphans detected this run                                                                                                                                                 |
+| `source_orphan_candidates` | Registry entries eligible for orphan evaluation (`config_entry_id=null`, platform not in the runtime-excluded list). `source_orphan_count` is always a subset.                   |
 
 **Invariants:**
 
 - `owners_total = owners_with_refs + owners_without_refs`
 - `owners_with_issues is a subset of owners_with_refs`
 - `total_findings = broken_entity_count + broken_device_count + disabled_entity_count`
-- `refs_total = refs_structural + refs_jinja + refs_sniff` (service-skipped
-  sniff hits are not counted)
+- `refs_total = refs_structural + refs_jinja + refs_sniff` (sniff- and
+  Jinja-origin service-skipped hits are not counted)
 - `paths_included + paths_excluded = paths considered`
 
 ### Source-orphan detection
