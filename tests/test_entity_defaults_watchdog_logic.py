@@ -32,7 +32,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     EntityDriftInfo,
     VisibleAliasedEntityFinding,
     VisibleAliasedEntityInfo,
-    _build_notification_message,
+    _build_device_notification_message,
     _build_visible_aliased_notification_message,
     _check_entity_drift,
     _check_id_enabled,
@@ -94,7 +94,6 @@ def _device(
     return DeviceInfo(
         de=DeviceEntry(
             id=device_id,
-            url=f"/config/devices/device/{device_id}",
             name=device_name,
             default_name=default_name,
             integration_entities=ie,
@@ -396,11 +395,11 @@ class TestBuildNotificationMessage:
                 expected_name="Temperature",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         body_lines = msg.split("\n")
         assert body_lines[0] == helpers.device_header_line(
             "Kitchen Sensor",
-            "/config/devices/device/abc",
+            "abc",
         )
         assert body_lines[1] == ""
 
@@ -415,7 +414,7 @@ class TestBuildNotificationMessage:
                 expected_name="Temperature",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "**Name overrides to clear:**" in msg
         assert '"Old Temp"' in msg
         assert '"Temperature"' not in msg
@@ -433,7 +432,7 @@ class TestBuildNotificationMessage:
                 has_redundant_prefix=True,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "**Name overrides with redundant" in msg
         assert "Kitchen Sensor" in msg
         assert "already adds" in msg
@@ -449,7 +448,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "**Non-default entity IDs:**" in msg
         assert "`sensor.old_battery`" in msg
         assert "Recreate entity IDs" in msg
@@ -467,7 +466,7 @@ class TestBuildNotificationMessage:
                 expected_name="New",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "**Name overrides to clear:**" in msg
         assert "**Non-default entity IDs:**" not in msg
 
@@ -489,7 +488,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "**Name overrides to clear:**" in msg
         assert "**Non-default entity IDs:**" in msg
         assert "Fix names before recreating IDs" in msg
@@ -505,7 +504,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "/config/devices/device/abc123" in msg
 
     def test_integrations_in_message(self) -> None:
@@ -521,7 +520,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "Integrations: enphase_envoy, zwave_js" in msg
 
     def test_no_integrations_omits_line(self) -> None:
@@ -535,7 +534,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "Integrations:" not in msg
 
     def test_name_overrides_to_set_section(
@@ -552,7 +551,7 @@ class TestBuildNotificationMessage:
                 recommended_override="Angle",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "**Name overrides to set:**" in msg
         assert 'set to "Angle"' in msg
         assert "legacy entities" in msg
@@ -568,7 +567,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "Recreate entity IDs" in msg
         assert "How to fix" not in msg
 
@@ -583,7 +582,7 @@ class TestBuildNotificationMessage:
                 expected_name="New",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "next check" in msg
 
     def test_device_name_with_brackets_is_escaped(self) -> None:
@@ -597,7 +596,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "[Sensor \\[foo\\]]" in msg
         assert "[Sensor [foo]]" not in msg
 
@@ -613,7 +612,7 @@ class TestBuildNotificationMessage:
                 expected_name=None,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert "Integrations: foo\\[bar\\]" in msg
 
     def test_current_name_is_escaped_in_name_clear(self) -> None:
@@ -627,7 +626,7 @@ class TestBuildNotificationMessage:
                 expected_name="ok",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert '"bad \\[name\\]"' in msg
 
     def test_redundant_section_escapes_names(self) -> None:
@@ -642,7 +641,7 @@ class TestBuildNotificationMessage:
                 has_redundant_prefix=True,
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert '"bad \\[a\\]"' in msg
         assert '"exp \\[b\\]"' in msg
         # Device name appears twice -- once in the header
@@ -662,7 +661,7 @@ class TestBuildNotificationMessage:
                 recommended_override="rec [override]",
             ),
         ]
-        msg = _build_notification_message(device, drifted)
+        msg = _build_device_notification_message(device, drifted)
         assert '"rec \\[override\\]"' in msg
 
 
@@ -1495,7 +1494,7 @@ class TestVisibleAliasedEvaluate:
         eids = {f.source_entity_id for f in result.findings}
         assert eids == {"switch.foo", "switch.bar"}
 
-    def test_finding_shape_carries_wrapper_and_settings_url(
+    def test_finding_shape_carries_wrapper_and_source_ids(
         self,
     ) -> None:
         cfg = _config()
@@ -1506,6 +1505,7 @@ class TestVisibleAliasedEvaluate:
                 wrapper_target_domain="fan",
                 source_friendly_name="Kitchen Fan",
                 source_device_id="dev_kitchen",
+                source_config_entry_id="ce_kitchen",
             ),
         ]
         result = _evaluate_visible_aliased_entities(cfg, infos)
@@ -1516,17 +1516,16 @@ class TestVisibleAliasedEvaluate:
         assert finding.wrapper_entity_id == "kitchen"
         assert finding.wrapper_target_domain == "fan"
         assert finding.source_friendly_name == "Kitchen Fan"
-        assert finding.source_settings_url == (
-            "/config/devices/device/dev_kitchen"
-        )
+        assert finding.source_device_id == "dev_kitchen"
+        assert finding.source_config_entry_id == "ce_kitchen"
 
-    def test_settings_url_falls_back_to_config_entry_when_no_device(
+    def test_finding_shape_carries_no_device_id_when_helper_backed(
         self,
     ) -> None:
         # Helper-backed switch_as_x sources can lack a
-        # device_id but carry a config_entry_id; URL helper
-        # routes to the entities-list filtered by the config
-        # entry in that case.
+        # device_id but carry a config_entry_id; the body
+        # builder routes to the deviceless link form in
+        # that case.
         cfg = _config()
         infos = [
             _vinfo(
@@ -1536,9 +1535,9 @@ class TestVisibleAliasedEvaluate:
             ),
         ]
         result = _evaluate_visible_aliased_entities(cfg, infos)
-        assert result.findings[0].source_settings_url == (
-            "/config/entities/?config_entry=cfg_input"
-        )
+        finding = result.findings[0]
+        assert finding.source_device_id is None
+        assert finding.source_config_entry_id == "cfg_input"
 
     def test_excluded_by_entity_id_list(self) -> None:
         cfg = _config(exclude_entity_ids=["switch.foo"])
@@ -1618,13 +1617,15 @@ class TestVisibleAliasedNotificationBody:
                 wrapper_entity_id="kitchen",
                 wrapper_target_domain="fan",
                 source_friendly_name="Kitchen Fan",
-                source_settings_url=("/config/devices/device/dev_kitchen"),
+                source_device_id="dev_kitchen",
+                source_config_entry_id="ce_kitchen",
             ),
         ]
         body = _build_visible_aliased_notification_message(findings)
         assert "`switch.kitchen`" in body
         assert "`fan.kitchen`" in body
-        assert "/config/devices/device/dev_kitchen" in body
+        assert "device=dev_kitchen" in body
+        assert "config_entry=ce_kitchen" in body
         # Body names switch_as_x so the user knows which
         # integration owns the wrapper, and lists voice
         # assistants as one of the surfaces where both
@@ -1639,7 +1640,8 @@ class TestVisibleAliasedNotificationBody:
                 wrapper_entity_id="foo",
                 wrapper_target_domain="fan",
                 source_friendly_name="Bad [Name]",
-                source_settings_url="/config/devices/device/dev_foo",
+                source_device_id="dev_foo",
+                source_config_entry_id="ce_foo",
             ),
         ]
         body = _build_visible_aliased_notification_message(findings)
@@ -1653,14 +1655,16 @@ class TestVisibleAliasedNotificationBody:
                 wrapper_entity_id="zeta",
                 wrapper_target_domain="fan",
                 source_friendly_name="Zeta",
-                source_settings_url="/config/devices/device/dev_zeta",
+                source_device_id="dev_zeta",
+                source_config_entry_id="ce_zeta",
             ),
             VisibleAliasedEntityFinding(
                 source_entity_id="switch.alpha",
                 wrapper_entity_id="alpha",
                 wrapper_target_domain="fan",
                 source_friendly_name="Alpha",
-                source_settings_url=("/config/devices/device/dev_alpha"),
+                source_device_id="dev_alpha",
+                source_config_entry_id="ce_alpha",
             ),
         ]
         body = _build_visible_aliased_notification_message(findings)

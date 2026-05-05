@@ -64,6 +64,7 @@ from ..helpers import (
     IssueNotification,
     PersistentNotification,
     automation_friendly_name,
+    device_link,
     entry_for_domain,
     make_config_error_notification,
     make_emit_config_error,
@@ -309,12 +310,10 @@ def _format_config_error(err: logic.ConfigError) -> str:
     location = md_escape(err.location)
     reason = md_escape(err.reason)
     if err.entity_id:
-        ref = md_escape(err.entity_id)
         if err.device_id:
-            return (
-                f"[`{ref}`](/config/devices/device/{err.device_id})"
-                f" (`{location}`): {reason}"
-            )
+            link = device_link(f"`{err.entity_id}`", err.device_id)
+            return f"{link} (`{location}`): {reason}"
+        ref = md_escape(err.entity_id)
         return f"`{ref}` (`{location}`): {reason}"
     return f"`{location}`: {reason}"
 

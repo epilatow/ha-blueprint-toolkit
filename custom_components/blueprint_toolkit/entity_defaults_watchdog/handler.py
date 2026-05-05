@@ -528,7 +528,6 @@ def _build_device_inputs(
             if dev_id not in device_map:
                 device_map[dev_id] = logic.DeviceEntry(
                     id=dev_id,
-                    url=f"/config/devices/device/{dev_id}",
                     name=device.name_by_user or device.name or "",
                     default_name=device.name or "",
                 )

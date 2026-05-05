@@ -175,10 +175,13 @@ Notification + formatting:
   notification body with a formatted prefix + suffix.
 - `md_escape(s)` -- escape `\\`, `[`, `]` for safe interpolation into
   notification bodies; apply to every user-controlled string.
-- `device_header_line(name, url)` -- render the canonical
-  `Device: [<name>](<url>)` header line used as the first body line of every
-  per-device watchdog notification (DW unavailable / stale, DW
-  disabled-diagnostics, EDW per-device drift).
+- `device_header_line(name, device_id)` -- render the canonical
+  `Device: [<name>](/config/devices/device/<device_id>)` header line used as
+  the first body line of every per-device watchdog notification (DW
+  unavailable / stale, DW disabled-diagnostics, EDW per-device drift).
+  Resolves the URL via `device_link` internally so the line shape stays
+  consistent with the URL-helper convention in the "URL generation" section
+  below.
 - `slugify(text)` -- derive an HA-safe slug from arbitrary text (used to build
   state-entity IDs).
 - `matches_pattern(text, pattern)` -- case-insensitive substring or regex
@@ -649,6 +652,40 @@ against that field).
   notification ID (e.g. `emit_config_error` against a fixed `__config_error`
   slot), so the call doesn't collateral-dismiss findings emitted by other
   categories.
+
+## URL generation
+
+Every URL emitted in a notification body, log line, or stored data field goes
+through a helper in `helpers.py`. No inline `f"/config/.../{x}"` templates --
+per-call-site URL guessing has shipped multiple regressions because HA's
+frontend routing doesn't accept the obvious entity-id-style filters.
+
+Two flavours of helper, both public:
+
+- **`*_link(name, ...)` wrappers** return markdown-ready `[name](url)` text,
+  with `name` `md_escape`d. Use this whenever the call site's output is a
+  notification-body link. Concrete helpers: `device_link`,
+  `device_entity_link`, `config_entry_link`, `domain_entities_link`,
+  `integration_link`, `automation_edit_link`, `script_edit_link`,
+  `dashboard_link`, plus `deviceless_entity_link` (a prose link plus
+  search-the-list instructions for entities that have no deep-linkable URL
+  form).
+- **`*_url(...)` raw URL functions** return just the URL string. Reserved for
+  the narrow cases that need a URL separated from its rendering -- e.g.
+  storing a URL on a dataclass for later assembly (`Owner.url_path` in RW), or
+  building a link whose visible text is a code-span (backtick-wrapped
+  entity_id) rather than an `md_escape`d friendly name.
+
+The `helpers_logic.py` "URL + link helpers" section enumerates the
+verified-working URL forms HA's frontend accepts and what each helper
+produces. When adding a new URL form: put both the raw `*_url` and the
+markdown-wrapping `*_link` in `helpers_logic.py`, re-export both from
+`helpers.py`, and use the `*_link` variant at call sites.
+
+Notable: HA's frontend has no entity-id URL filter -- a single deviceless
+entity can't be deep-linked to a one-row view. `deviceless_entity_link`
+returns prose with a link to `/config/entities/` plus "search for `<eid>`"
+instructions; that is the best the routing surface allows.
 
 ## Debug logging
 

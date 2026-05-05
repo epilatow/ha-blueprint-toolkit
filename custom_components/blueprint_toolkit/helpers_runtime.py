@@ -29,10 +29,10 @@ from .helpers_logic import (
     BlueprintHandlerSpec,
     CappableResult,
     PersistentNotification,
+    automation_edit_link,
     instance_id_for_config_error,
     instance_state_entity_id,
     make_config_error_notification,
-    md_escape,
     spec_bucket,
 )
 
@@ -93,9 +93,7 @@ def _automation_link_prefix(
     name, yaml_id = _instance_link_inputs(hass, instance_id)
     if name is None or yaml_id is None:
         return ""
-    return (
-        f"Automation: [{md_escape(name)}](/config/automation/edit/{yaml_id})\n"
-    )
+    return f"Automation: {automation_edit_link(name, yaml_id)}\n"
 
 
 def _automation_title_prefix(

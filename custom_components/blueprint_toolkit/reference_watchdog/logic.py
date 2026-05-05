@@ -136,9 +136,16 @@ from ..helpers import (
     JoinedRegexLine,
     PersistentNotification,
     UnmatchedDirective,
+    automation_edit_url,
+    config_entry_url,
+    dashboard_url,
+    domain_entities_url,
+    entities_dashboard_url,
+    integration_link,
     matches_pattern,
     md_escape,
     prepare_notifications,
+    script_edit_url,
     validate_directives_item,
     validate_directives_path,
     validate_directives_regex,
@@ -941,7 +948,7 @@ def _scan_automations(
         owner_eid = truth_set.entity_by_unique_id.get(
             ("automation", auto_id),
         )
-        url = f"/config/automation/edit/{auto_id}" if auto_id else None
+        url = automation_edit_url(auto_id) if auto_id else None
         owner = Owner(
             source_file=source.path,
             integration="automation",
@@ -982,7 +989,7 @@ def _scan_scripts(
             block_path=f"config-block[{i}]",
             friendly_name=friendly,
             entity_id=owner_eid,
-            url_path=f"/config/script/edit/{sid}",
+            url_path=script_edit_url(sid),
         )
         _owner_from_registry(owner, truth_set)
         owners.append((owner, body))
@@ -1180,11 +1187,7 @@ def _scan_config_entries(
         # from other integrations and have no owned entities,
         # so the URL would show an empty list.
         has_entities = entry_id in truth_set.config_entries_with_entities
-        url = (
-            f"/config/entities/?config_entry={entry_id}"
-            if has_entities
-            else None
-        )
+        url = config_entry_url(entry_id) if has_entities else None
 
         owner = Owner(
             source_file=source.path,
@@ -1553,8 +1556,7 @@ def _build_notification_body(
         # only the link-text portion.
         lines.append(
             "Integration: "
-            f"[{md_escape(owner.integration)}]"
-            f"(/config/integrations/integration/{owner.integration})"
+            + integration_link(owner.integration, owner.integration)
         )
 
     lines.append(f"File: `{owner.source_file}`")
@@ -2274,8 +2276,8 @@ def _orphan_url(platform: str) -> str:
     the user delete the registry entry.
     """
     if not platform:
-        return "/config/entities"
-    return f"/config/entities?domain={platform}"
+        return entities_dashboard_url()
+    return domain_entities_url(platform)
 
 
 def _build_source_orphans_notification(
@@ -2410,12 +2412,12 @@ def _enumerate_json_sources(
                             continue
                         dash_id = item.get("id", "")
                         if dash_id:
-                            url_path = item.get("url_path") or dash_id
+                            url_slug = item.get("url_path") or dash_id
                             dashboards_index[dash_id] = {
                                 "title": str(
                                     item.get("title") or dash_id,
                                 ),
-                                "url_path": f"/{url_path}",
+                                "url_path": dashboard_url(url_slug),
                             }
 
     try:
@@ -2436,7 +2438,7 @@ def _enumerate_json_sources(
             dash_id,
             {
                 "title": dash_id,
-                "url_path": f"/{dash_id}",
+                "url_path": dashboard_url(dash_id),
             },
         )
         sources.append(

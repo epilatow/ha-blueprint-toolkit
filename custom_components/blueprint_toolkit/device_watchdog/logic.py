@@ -22,7 +22,6 @@ class DeviceEntry:
     """
 
     id: str
-    url: str
 
     # Current device name. HA device registry
     # ``device.name_by_user`` (if set) or ``device.name``
@@ -234,7 +233,7 @@ def evaluate_diagnostics(
             )
             header = helpers.device_header_line(
                 device.de.name,
-                device.de.url,
+                device.de.id,
             )
             message = (
                 f"{header}\n\n"
@@ -342,7 +341,7 @@ def _build_notification_message(
 ) -> str:
     """Build the notification body for an unhealthy device."""
     lines: list[str] = [
-        helpers.device_header_line(device.de.name, device.de.url),
+        helpers.device_header_line(device.de.name, device.de.id),
         "",
     ]
     integrations = sorted(

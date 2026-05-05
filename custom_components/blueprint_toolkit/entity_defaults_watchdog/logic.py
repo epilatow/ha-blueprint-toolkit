@@ -23,7 +23,6 @@ class DeviceEntry:
     """
 
     id: str
-    url: str
 
     # Current device name. HA device registry
     # ``device.name_by_user`` (if set) or ``device.name``
@@ -237,8 +236,10 @@ class VisibleAliasedEntityInfo:
     source_friendly_name: str
     # Source's registry ``device_id`` / ``config_entry_id``
     # if set. Threaded into ``VisibleAliasedEntityFinding``
-    # so the notification body's link uses the canonical
-    # ``helpers.entity_settings_url`` selection.
+    # so the notification body picks ``device_entity_link``
+    # for device-attached sources or
+    # ``deviceless_entity_link`` for helper / template
+    # sources without a device.
     source_device_id: str | None = None
     source_config_entry_id: str | None = None
 
@@ -255,18 +256,19 @@ class VisibleAliasedEntityFinding:
     would either lose fields or pollute the deviceless
     schema with optional aliased-only fields.
 
-    ``source_settings_url`` is built via
-    ``helpers.entity_settings_url`` from the source's
-    ``device_id`` / ``config_entry_id`` (whichever is
-    present) so the notification body's link goes to a
-    URL HA's frontend actually serves.
+    ``source_device_id`` / ``source_config_entry_id`` are
+    threaded from ``VisibleAliasedEntityInfo`` so the body
+    picks ``device_entity_link`` (both set) or
+    ``deviceless_entity_link`` (neither set, or no
+    device_id) per-finding.
     """
 
     source_entity_id: str
     wrapper_entity_id: str
     wrapper_target_domain: str
     source_friendly_name: str
-    source_settings_url: str
+    source_device_id: str | None
+    source_config_entry_id: str | None
 
 
 @dataclass
@@ -563,7 +565,7 @@ def _check_entity_drift(
     )
 
 
-def _build_notification_message(
+def _build_device_notification_message(
     device: DeviceInfo,
     drifted: list[DriftDetail],
 ) -> str:
@@ -583,7 +585,7 @@ def _build_notification_message(
     is fixed.
     """
     lines: list[str] = [
-        helpers.device_header_line(device.de.name, device.de.url),
+        helpers.device_header_line(device.de.name, device.de.id),
         "",
     ]
     integrations = sorted(
@@ -782,7 +784,7 @@ def _evaluate_device(
         # Title carries just the per-device category; the
         # dispatcher prepends ``<automation_name>: ``.
         title = device.de.name
-        message = _build_notification_message(
+        message = _build_device_notification_message(
             device,
             drifted,
         )
@@ -840,14 +842,16 @@ def _deviceless_line_suffix(
     dom, obj_id = entity_id.split(".", 1)
     name = helpers.md_escape(friendly_name)
     if dom == "automation" and unique_id:
-        return f"[{name}](/config/automation/edit/{unique_id})"
+        return helpers.automation_edit_link(friendly_name, unique_id)
     if dom == "script":
-        return f"[{name}](/config/script/edit/{obj_id})"
+        return helpers.script_edit_link(friendly_name, obj_id)
     if from_registry and platform:
-        plat_label = helpers.md_escape(platform)
         if config_entry_id:
-            url = f"/config/integrations/integration/{platform}"
-            return f"{name}  -  integration [{plat_label}]({url})"
+            return (
+                f"{name}  -  integration "
+                f"{helpers.integration_link(platform, platform)}"
+            )
+        plat_label = helpers.md_escape(platform)
         return f"{name}  -  integration {plat_label}  -  YAML-configuration"
     return f"{name}  -  add `unique_id:` to make this entity manageable"
 
@@ -1023,16 +1027,24 @@ def _build_visible_aliased_notification_message(
         ),
     ]
     for f in sorted_findings:
-        name = helpers.md_escape(f.source_friendly_name)
         wrapper_eid = f"{f.wrapper_target_domain}.{f.wrapper_entity_id}"
+        if f.source_device_id and f.source_config_entry_id:
+            link = helpers.device_entity_link(
+                f.source_friendly_name,
+                device_id=f.source_device_id,
+                config_entry_id=f.source_config_entry_id,
+            )
+            cta = f'  Re-hide: open {link}, toggle "Visible" off.'
+        else:
+            link = helpers.deviceless_entity_link(
+                f.source_friendly_name,
+                f.source_entity_id,
+            )
+            cta = f'  Re-hide: open {link}, then toggle "Visible" off.'
         lines.append(
             f"- `{f.source_entity_id}` -> wrapped as `{wrapper_eid}`",
         )
-        lines.append(
-            f"  Re-hide: open [{name}]({f.source_settings_url}),"
-            f" click `{f.source_entity_id}`, toggle"
-            ' "Visible" off.',
-        )
+        lines.append(cta)
     lines.append("")
     lines.append(
         "Toggling visibility off in the UI sets"
@@ -1082,10 +1094,8 @@ def _evaluate_visible_aliased_entities(
                 wrapper_entity_id=info.wrapper_entity_id,
                 wrapper_target_domain=info.wrapper_target_domain,
                 source_friendly_name=info.source_friendly_name,
-                source_settings_url=helpers.entity_settings_url(
-                    device_id=info.source_device_id,
-                    config_entry_id=info.source_config_entry_id,
-                ),
+                source_device_id=info.source_device_id,
+                source_config_entry_id=info.source_config_entry_id,
             ),
         )
 

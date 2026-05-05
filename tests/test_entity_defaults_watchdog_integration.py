@@ -938,6 +938,8 @@ class TestVisibleAliasedScan:
         kitchen_device = dev_reg.async_get(source_entry.device_id)
         assert kitchen_device is not None
         device_id = kitchen_device.id
+        config_entry_id = source_entry.config_entry_id
+        assert config_entry_id is not None
 
         await hass.services.async_call(
             DOMAIN,
@@ -965,7 +967,8 @@ class TestVisibleAliasedScan:
         body: str = notifs[notif_id]["message"]
         assert "`switch.kitchen`" in body
         assert "`fan.kitchen`" in body
-        assert f"/config/devices/device/{device_id}" in body
+        assert f"device={device_id}" in body
+        assert f"config_entry={config_entry_id}" in body
 
     async def test_hidden_source_no_notification(
         self,

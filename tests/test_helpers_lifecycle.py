@@ -564,7 +564,7 @@ class TestDeviceHeaderLine:
     def test_renders_canonical_shape(self) -> None:
         line = helpers.device_header_line(
             "Front Door Lock",
-            "/config/devices/device/abc123",
+            "abc123",
         )
         assert line == (
             "Device: [Front Door Lock](/config/devices/device/abc123)"
@@ -577,7 +577,7 @@ class TestDeviceHeaderLine:
         # markdown stays safe.
         line = helpers.device_header_line(
             "Sensor [foo]",
-            "/config/devices/device/x",
+            "x",
         )
         assert "[Sensor \\[foo\\]]" in line
         assert "[Sensor [foo]]" not in line

@@ -166,7 +166,7 @@ by `platform` (e.g. `utility_meter`, `input_boolean`, `automation`); larger
 groups are shown first. Disabled entities are tagged *(disabled)* next to the
 link.
 
-Each orphan links to `/config/entities?domain=<platform>` -- HA's entities
+Each orphan links to `/config/entities/?domain=<platform>` -- HA's entities
 page filtered to that integration's rows. Find your orphan in the narrowed
 list, click it to open the settings dialog, and click Delete.
 

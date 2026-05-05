@@ -2659,14 +2659,14 @@ class TestFindSourceOrphans:
 class TestOrphanUrl:
     def test_platform_becomes_domain_filter(self) -> None:
         assert _orphan_url("utility_meter") == (
-            "/config/entities?domain=utility_meter"
+            "/config/entities/?domain=utility_meter"
         )
         assert _orphan_url("input_boolean") == (
-            "/config/entities?domain=input_boolean"
+            "/config/entities/?domain=input_boolean"
         )
 
     def test_empty_platform_falls_back_to_entities_page(self) -> None:
-        assert _orphan_url("") == "/config/entities"
+        assert _orphan_url("") == "/config/entities/"
 
 
 class TestBuildSourceOrphansNotification:
@@ -2712,8 +2712,8 @@ class TestBuildSourceOrphansNotification:
         # accepts ?domain=<integration> but not
         # ?search=<entity_id>, so we land the user on the
         # narrowed integration list.
-        assert "/config/entities?domain=input_boolean" in notif.message
-        assert "/config/entities?domain=utility_meter" in notif.message
+        assert "/config/entities/?domain=input_boolean" in notif.message
+        assert "/config/entities/?domain=utility_meter" in notif.message
         # Entity_id itself still appears in the link text
         # so the user can spot it in the filtered list.
         assert "`input_boolean.tec_test_disable`" in notif.message

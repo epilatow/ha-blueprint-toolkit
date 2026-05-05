@@ -198,7 +198,217 @@ def md_escape(s: str) -> str:
     )
 
 
-def device_header_line(name: str, url: str) -> str:
+###############################################################
+# URL + link helpers
+#
+# HA's frontend exposes a small handful of URL forms that
+# actually navigate the user somewhere useful. None of them
+# accept ``entity_id`` directly -- the only entity-id
+# deep-link in HA's UI is opened via JavaScript (more-info /
+# settings dialog), not URL navigation. See
+# ``AUTOMATIONS.md`` "URL generation" for the full survey.
+#
+# The verified-working forms used by handlers in this
+# integration:
+#
+# - ``/config/devices/device/<device_id>``
+#       device panel listing the device's entities.
+# - ``/config/entities/?device=<d>&config_entry=<c>``
+#       entities table filtered to one device's entities
+#       from one config entry. The narrowest entity-list
+#       deep-link possible (excludes wrappers from other
+#       integrations like ``switch_as_x`` even when they
+#       share the device).
+# - ``/config/entities/?config_entry=<id>``
+#       entities table filtered to one config entry's
+#       entities.
+# - ``/config/entities/?domain=<platform>``
+#       entities table filtered to one platform.
+# - ``/config/entities/``
+#       bare entities table (no filter).
+# - ``/config/integrations/integration/<integration>``
+#       per-integration page.
+# - ``/config/automation/edit/<id>``
+#       automation editor.
+# - ``/config/script/edit/<unique_id>``
+#       script editor.
+#
+# The ``*_url(...)`` functions below return raw URL strings.
+# Most call sites should use the matching public
+# ``*_link(name, ...)`` wrapper instead, which returns
+# markdown-ready ``[name](url)`` text with the name
+# ``md_escape``-d. The raw URL functions are public for the
+# narrow cases that need them: storing a URL on a dataclass
+# for later assembly, or building a link whose visible text
+# is a code-span (backtick-wrapped entity_id) rather than a
+# friendly name. Both happen in RW.
+#
+# Putting all URL templating in one place means a future
+# routing change only requires updating one function, and
+# per-call-site URL guessing (which has bitten us multiple
+# times) is structurally prevented.
+#
+# For deviceless entities -- where no URL form lands the
+# user on a single entity -- ``deviceless_entity_link``
+# returns prose with a link to the bare entities table plus
+# explicit "search for `<eid>` in the list" instructions.
+
+
+def device_url(device_id: str) -> str:
+    """Raw URL for a device's panel."""
+    return f"/config/devices/device/{device_id}"
+
+
+def device_entity_url(*, device_id: str, config_entry_id: str) -> str:
+    """Raw URL for the entities table filtered to one
+    device-attached entity.
+
+    Both filters are required: the entities table requires
+    ``device`` to be present for filtering to surface any
+    rows, AND ``config_entry`` is what excludes wrappers
+    (e.g. switch_as_x) that share the source's device_id.
+    """
+    return (
+        f"/config/entities/?device={device_id}&config_entry={config_entry_id}"
+    )
+
+
+def config_entry_url(config_entry_id: str) -> str:
+    """Raw URL for the entities table filtered to one config entry."""
+    return f"/config/entities/?config_entry={config_entry_id}"
+
+
+def domain_entities_url(domain: str) -> str:
+    """Raw URL for the entities table filtered to one platform."""
+    return f"/config/entities/?domain={domain}"
+
+
+def integration_url(integration: str) -> str:
+    """Raw URL for an integration's per-integration page."""
+    return f"/config/integrations/integration/{integration}"
+
+
+def automation_edit_url(automation_id: str) -> str:
+    """Raw URL for the automation editor."""
+    return f"/config/automation/edit/{automation_id}"
+
+
+def script_edit_url(unique_id: str) -> str:
+    """Raw URL for the script editor."""
+    return f"/config/script/edit/{unique_id}"
+
+
+def entities_dashboard_url() -> str:
+    """Raw URL for the bare entities table (no filter)."""
+    return "/config/entities/"
+
+
+def dashboard_url(slug: str) -> str:
+    """Raw URL for a Lovelace dashboard view by slug.
+
+    Lovelace dashboards (the user-facing views, not the
+    Settings panels) live at the bare ``/<slug>`` -- the
+    default ``lovelace`` dashboard is at ``/lovelace``,
+    custom user dashboards at ``/<their-slug>``.
+    """
+    return f"/{slug}"
+
+
+def device_link(name: str, device_id: str) -> str:
+    """Markdown link to a device's panel."""
+    return f"[{md_escape(name)}]({device_url(device_id)})"
+
+
+def device_entity_link(
+    name: str,
+    *,
+    device_id: str,
+    config_entry_id: str,
+) -> str:
+    """Markdown link to the entities table filtered to one
+    device-attached entity (intersected with its config
+    entry, which excludes wrappers from other integrations).
+
+    Use when the source entity is device-attached AND has a
+    config_entry_id. Switch_as_x sources from real
+    integrations (Z-Wave, Lutron, etc.) fit; helper-based
+    sources (input_boolean, template) do not -- use
+    ``deviceless_entity_link`` for those.
+    """
+    url = device_entity_url(
+        device_id=device_id,
+        config_entry_id=config_entry_id,
+    )
+    return f"[{md_escape(name)}]({url})"
+
+
+def config_entry_link(name: str, config_entry_id: str) -> str:
+    """Markdown link to the entities table filtered to one
+    config entry's entities.
+
+    Use when the *config entry* is the unit of interest --
+    e.g., RW source-orphan listings link a whole
+    integration's worth of orphan entries.
+    """
+    return f"[{md_escape(name)}]({config_entry_url(config_entry_id)})"
+
+
+def domain_entities_link(name: str, domain: str) -> str:
+    """Markdown link to the entities table filtered to one
+    platform.
+
+    Use when no config_entry_id is available but the
+    integration's platform name is. Less narrow than
+    ``config_entry_link`` (shows entities from every config
+    entry of that integration) but useful for orphan
+    listings where the registry entry is the only signal
+    that survives integration removal.
+    """
+    return f"[{md_escape(name)}]({domain_entities_url(domain)})"
+
+
+def integration_link(name: str, integration: str) -> str:
+    """Markdown link to an integration's per-integration page."""
+    return f"[{md_escape(name)}]({integration_url(integration)})"
+
+
+def automation_edit_link(name: str, automation_id: str) -> str:
+    """Markdown link to the automation editor for one
+    automation by its ``id`` (the YAML id).
+    """
+    return f"[{md_escape(name)}]({automation_edit_url(automation_id)})"
+
+
+def script_edit_link(name: str, unique_id: str) -> str:
+    """Markdown link to the script editor for one script by
+    its registry ``unique_id`` (the script slug).
+    """
+    return f"[{md_escape(name)}]({script_edit_url(unique_id)})"
+
+
+def dashboard_link(name: str, slug: str) -> str:
+    """Markdown link to a Lovelace dashboard view by slug."""
+    return f"[{md_escape(name)}]({dashboard_url(slug)})"
+
+
+def deviceless_entity_link(name: str, entity_id: str) -> str:
+    """Prose with a link to the entities dashboard plus
+    instructions to search for the entity_id.
+
+    HA's frontend doesn't accept entity_id as a URL filter,
+    and the search box is set via ``history.state`` (not URL
+    params), so a deviceless entity can't be deep-linked to
+    a single-row view. Best we can do: link to
+    ``/config/entities/`` and tell the user to type the
+    entity_id into the search box.
+    """
+    return (
+        f"[{md_escape(name)}]({entities_dashboard_url()})"
+        f" (search for `{entity_id}` in the list)"
+    )
+
+
+def device_header_line(name: str, device_id: str) -> str:
     """Render the canonical ``Device: [<name>](<url>)`` header line.
 
     Used as the first body line in every per-device watchdog
@@ -207,50 +417,7 @@ def device_header_line(name: str, url: str) -> str:
     line shape stays consistent across handlers; tests pin
     the format.
     """
-    return f"Device: [{md_escape(name)}]({url})"
-
-
-def entity_settings_url(
-    *,
-    device_id: str | None = None,
-    config_entry_id: str | None = None,
-) -> str:
-    """Best-known-working URL to navigate the user toward an
-    entity's settings dialog.
-
-    HA's frontend doesn't expose a documented direct
-    deep-link to "settings dialog for entity X". The
-    closest forms HA's UI actually consumes today
-    (verified against the device + config-entry links
-    other handlers ship in production):
-
-    1. ``/config/devices/device/<device_id>`` -- the
-       device panel listing the entity. One click on the
-       entity opens the settings dialog. Used everywhere
-       in DW / EDW per-device notifications.
-    2. ``/config/entities/?config_entry=<config_entry_id>``
-       -- the entities table filtered to a config entry.
-       One click on the entity opens the settings dialog.
-       Used in RW broken-ref notifications.
-    3. ``/config/entities`` -- entities table; user
-       searches.
-
-    Prefer the device link when ``device_id`` is set,
-    fall through to config_entry, then to the bare table.
-
-    All URL string templating for entity-/device-/config-
-    entry-page links should go through helpers like this
-    one rather than being inlined at call sites -- guesses
-    at undocumented URLs (``/config/entities/<eid>``,
-    ``/_my_redirect/entity_settings`` with unsupported
-    redirect names, etc.) silently route to the wrong
-    page. See ``AUTOMATIONS.md`` "URL generation".
-    """
-    if device_id:
-        return f"/config/devices/device/{device_id}"
-    if config_entry_id:
-        return f"/config/entities/?config_entry={config_entry_id}"
-    return "/config/entities"
+    return f"Device: {device_link(name, device_id)}"
 
 
 def slugify(text: str) -> str:
@@ -1030,12 +1197,27 @@ __all__ = [
     "PersistentNotification",
     "TypedServiceResponse",
     "UnmatchedDirective",
+    "automation_edit_link",
+    "automation_edit_url",
+    "config_entry_link",
+    "config_entry_url",
+    "dashboard_link",
+    "dashboard_url",
+    "device_entity_link",
+    "device_entity_url",
     "device_header_line",
-    "entity_settings_url",
+    "device_link",
+    "device_url",
+    "deviceless_entity_link",
+    "domain_entities_link",
+    "domain_entities_url",
+    "entities_dashboard_url",
     "format_notification",
     "format_timestamp",
     "instance_id_for_config_error",
     "instance_state_entity_id",
+    "integration_link",
+    "integration_url",
     "make_config_error_notification",
     "make_emit_config_error",
     "make_unmatched_directives_notification",
@@ -1044,6 +1226,8 @@ __all__ = [
     "notification_prefix",
     "parse_entity_registry_update",
     "resolve_target_integrations",
+    "script_edit_link",
+    "script_edit_url",
     "slugify",
     "spec_bucket",
     "validate_and_join_regex_patterns",
