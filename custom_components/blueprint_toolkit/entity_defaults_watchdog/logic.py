@@ -1022,8 +1022,7 @@ def _build_visible_aliased_notification_message(
         (
             f"Visible aliased sources ({len(sorted_findings)}):"
             " each entity below is wrapped by switch_as_x but its"
-            " source row is still visible. Both rows show up in"
-            " dashboards, voice assistants, and entity pickers."
+            " source row is still visible."
         ),
     ]
     for f in sorted_findings:

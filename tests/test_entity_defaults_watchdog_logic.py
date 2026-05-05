@@ -1627,11 +1627,8 @@ class TestVisibleAliasedNotificationBody:
         assert "device=dev_kitchen" in body
         assert "config_entry=ce_kitchen" in body
         # Body names switch_as_x so the user knows which
-        # integration owns the wrapper, and lists voice
-        # assistants as one of the surfaces where both
-        # rows show up.
+        # integration owns the wrapper.
         assert "switch_as_x" in body
-        assert "voice assistants" in body
 
     def test_body_escapes_friendly_name(self) -> None:
         findings = [
