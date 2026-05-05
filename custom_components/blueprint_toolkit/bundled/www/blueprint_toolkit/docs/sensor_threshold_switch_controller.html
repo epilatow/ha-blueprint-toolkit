@@ -63,8 +63,9 @@ off twice within a configurable window disables this behavior.</li>
 duration when manually activated.</li>
 <li><strong>Startup Recovery</strong>: If Home Assistant restarts with the switch already ON,
 starts the auto-off timer.</li>
-<li><strong>Notifications</strong>: Optionally sends notifications for all actions via a
-configurable notification service.</li>
+<li><strong>Notifications</strong>: Optionally runs a user-supplied action chain (one or more
+&quot;Call service&quot; steps) on every action, with the pre-built message exposed as
+a <code>{{ message }}</code> variable inside the chain.</li>
 </ul>
 <h2>Usage</h2>
 <ol>
@@ -130,9 +131,9 @@ entities.</p>
 <td>Minutes before auto-off after manual switch activation. Set to 0 to disable.</td>
 </tr>
 <tr>
-<td><strong>Notification Service</strong></td>
+<td><strong>Notification Action</strong></td>
 <td><em>(empty)</em></td>
-<td>Service name for notifications (e.g., <code>notify</code> or <code>notify.mobile_app_phone</code>). Leave empty to disable.</td>
+<td>Action(s) to run on a notification (e.g. <code>notify.mobile_app_*</code>, a notify group, a script call). Receives the message via <code>{{ message }}</code></td>
 </tr>
 <tr>
 <td><strong>Notification Prefix</strong></td>
@@ -171,9 +172,9 @@ humidity spike), it turns off automatically after 30 minutes.</p>
 without requiring ad-hoc instrumentation.</p>
 <h3>Entity attributes (always on)</h3>
 <p>After every invocation, the automation writes decision metadata to a
-<code>blueprint_toolkit.stsc_&lt;slug&gt;_state</code> entity as
-attributes (where <code>&lt;slug&gt;</code> derives from the automation entity_id). These are
-visible in <strong>Developer Tools &gt; States</strong> with no configuration.</p>
+<code>blueprint_toolkit.stsc_&lt;slug&gt;_state</code> entity as attributes (where <code>&lt;slug&gt;</code>
+derives from the automation entity_id). These are visible in <strong>Developer Tools
+&gt; States</strong> with no configuration.</p>
 <p>The diagnostic entity's state value is the same as <code>last_action</code> (<code>TURN_ON</code>,
 <code>TURN_OFF</code>, or <code>NONE</code>) -- the most recent decision -- so dashboards keying off
 the state value mirror the action.</p>
@@ -226,8 +227,8 @@ the state value mirror the action.</p>
 <p>To view:</p>
 <ol>
 <li>Go to <strong>Developer Tools &gt; States</strong>.</li>
-<li>Search for <code>blueprint_toolkit.stsc_*_state</code>
-and find your instance's entity.</li>
+<li>Search for <code>blueprint_toolkit.stsc_*_state</code> and find your instance's
+entity.</li>
 <li>Expand the attributes to see the latest decision context.</li>
 </ol>
 <h3>Debug logging (opt-in)</h3>

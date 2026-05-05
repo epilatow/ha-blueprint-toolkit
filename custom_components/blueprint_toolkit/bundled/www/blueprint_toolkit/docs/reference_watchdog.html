@@ -345,7 +345,7 @@ skipped.</li>
 <li><strong>String sniff.</strong> String leaves that aren't under a known <code>_ENTITY_KEYS</code>
 position are checked against the entity-id regex with a domain filter.
 Catches blueprint inputs where the parent key name is custom
-(<code>controlled_entities</code>, <code>notification_service</code>) and bare values under
+(<code>controlled_entities</code>) and bare values under
 <code>service:</code> / <code>action:</code> / <code>service_template:</code> -- a typo'd
 <code>service: script.does_not_exist</code> surfaces as a broken-entity reference,
 while real registered service names are dropped by the truth set below.</li>
@@ -362,8 +362,9 @@ reporting). The filter is gated on origin: structural emissions at known
 entity-key positions (<code>entity_id: light.turn_on</code>) are NOT suppressed, since
 those slots carry the contract that the value is meant to be an entity ID, so
 a service-name collision there is a real configuration typo worth surfacing.
-Without this backstop, every <code>notification_service: notify.mobile_app_*</code>
-blueprint input would surface as a broken-entity false positive.</p>
+Without this backstop, every blueprint input that puts a service name under a
+custom key (e.g. <code>controlled_service: notify.mobile_app_*</code>) would surface as
+a broken-entity false positive.</p>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to
 <code>blueprint_toolkit.rw_&lt;slug&gt;_state</code>. Search for <code>blueprint_toolkit.rw_*</code> in

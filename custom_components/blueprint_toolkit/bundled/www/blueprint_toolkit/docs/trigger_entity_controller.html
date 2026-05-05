@@ -67,7 +67,9 @@ turn-on)</li>
 room is occupied)</li>
 <li>Force-on: re-enable controlled entities if turned off while triggers are
 active</li>
-<li>Configurable notifications for turn-on, force-on, and auto-off events</li>
+<li>Configurable notification action that runs on turn-on, force-on, and
+auto-off events; the action chain receives the pre-built body as a
+<code>{{ message }}</code> variable</li>
 <li>Entity validation: alerts via persistent notification if configured entities
 are missing or renamed</li>
 <li>Optional debug logging</li>
@@ -134,8 +136,8 @@ are missing or renamed</li>
 <td>When disabling entities are checked</td>
 </tr>
 <tr>
-<td>Notification service</td>
-<td>e.g., &quot;notify.mobile_app_phone&quot;</td>
+<td>Notification action</td>
+<td>Action(s) to run on a notification (e.g. <code>notify.mobile_app_*</code>, a notify group, a script call). Receives the message via <code>{{ message }}</code></td>
 </tr>
 <tr>
 <td>Notification prefix</td>
@@ -200,9 +202,9 @@ when they all return to &quot;off&quot;.</p>
 <h2>Developer notes</h2>
 <h3>Diagnostic state entity</h3>
 <p>After each evaluation, a diagnostic state entry is written at
-<code>blueprint_toolkit.tec_&lt;slug&gt;_state</code>, where <code>&lt;slug&gt;</code> is
-the automation's entity_id stripped of its <code>automation.</code> prefix. The state
-value is the decision name (NONE, TURN_ON, or TURN_OFF); attributes:</p>
+<code>blueprint_toolkit.tec_&lt;slug&gt;_state</code>, where <code>&lt;slug&gt;</code> is the automation's
+entity_id stripped of its <code>automation.</code> prefix. The state value is the
+decision name (NONE, TURN_ON, or TURN_OFF); attributes:</p>
 <p>Common attributes:</p>
 <ul>
 <li><code>instance_id</code>: the automation entity_id</li>

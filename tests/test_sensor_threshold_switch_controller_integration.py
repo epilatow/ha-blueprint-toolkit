@@ -15,11 +15,10 @@
 Exercises the parts the in-process unit tests
 (``tests/test_sensor_threshold_switch_controller_handler.py``)
 deliberately don't cover: the live ``vol.Schema`` argparse,
-the cross-field checks against ``hass.states`` /
-``hass.services.has_service`` for ``target_switch_entity``
-+ ``notification_service``, the full
+the cross-field check against ``hass.states`` for
+``target_switch_entity``, the full
 ``_async_service_layer`` state-load / action-dispatch /
-notification loop, and the diagnostic-state attrs.
+response-shape loop, and the diagnostic-state attrs.
 """
 
 from __future__ import annotations
@@ -107,7 +106,6 @@ def _valid_payload(
     trigger_entity: str = "sensor.humidity",
     trigger_threshold: float = 70.0,
     release_threshold: float = 60.0,
-    notification_service: str = "",
 ) -> dict[str, Any]:
     """Build a fully-populated STSC service-call payload."""
     return {
@@ -122,7 +120,6 @@ def _valid_payload(
         "sampling_window_seconds_raw": 600,
         "disable_window_seconds_raw": 30,
         "auto_off_minutes_raw": 60,
-        "notification_service": notification_service,
         "notification_prefix": "",
         "notification_suffix": "",
         "debug_logging_raw": False,
@@ -187,42 +184,6 @@ class TestArgparseEmitsConfigErrorNotification:
         msg: str = notifs[notif_id]["message"]
         assert "target_switch_entity" in msg
         assert "switch.does_not_exist" in msg
-
-    async def test_unregistered_notification_service_creates_notification(
-        self,
-        hass,  # noqa: ANN001
-    ) -> None:
-        from pytest_homeassistant_custom_component.common import (
-            async_mock_service,
-        )
-
-        await _setup_integration(hass)
-        _seed_target_switch(hass)
-        turn_on_calls = async_mock_service(hass, "homeassistant", "turn_on")
-
-        payload = _valid_payload(
-            instance_id="automation.stsc_bad_notify",
-            notification_service="notify.does_not_exist",
-        )
-        await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
-
-        from homeassistant.components.persistent_notification import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
-        notif_id = (
-            "blueprint_toolkit_sensor_threshold_switch_controller"
-            "__automation.stsc_bad_notify__config_error"
-        )
-        assert notif_id in notifs
-        msg: str = notifs[notif_id]["message"]
-        assert "notification_service" in msg
-        assert "notify.does_not_exist" in msg
-        # Argparse rejection must short-circuit before any
-        # action dispatch -- a bad notify service should
-        # never cause the target switch to flip.
-        assert turn_on_calls == []
 
     async def test_non_controllable_target_switch_creates_notification(
         self,
@@ -443,13 +404,12 @@ def _spike_payload(
     *,
     instance_id: str,
     sensor_value: str,
-    notification_service: str = "",
 ) -> dict[str, Any]:
     """Spike-tuned STSC payload.
 
     The default ``trigger_threshold`` of 5.0 keeps the
     spike-detection bar low so a 55 -> 65 sensor swing in
-    the action-dispatch / notification tests trips
+    the action-dispatch / response-shape tests trips
     ``Action.TURN_ON`` reliably.
     """
     return _valid_payload(
@@ -459,7 +419,6 @@ def _spike_payload(
         trigger_entity="sensor.humidity",
         trigger_threshold=5.0,
         release_threshold=2.0,
-        notification_service=notification_service,
     )
 
 
@@ -556,14 +515,18 @@ class TestActionDispatch:
         assert turn_off_calls == []
 
 
-class TestNotificationDispatch:
-    async def test_spike_dispatches_notification(
+class TestServiceResponseShape:
+    async def test_spike_returns_notification_message_in_response(
         self,
         hass,  # noqa: ANN001
     ) -> None:
-        """Spike with a configured notify service should
-        route a ``notify.<name>`` call carrying the
-        spike's notification body.
+        """Spike paths return a ``ServiceResponse`` mapping
+        carrying the pre-built notification body under
+        ``notification_message`` -- the blueprint captures
+        this via ``response_variable`` and runs the
+        user-supplied ``notify_action`` step against it.
+        Locks down the slot name + the non-empty body
+        contract on emit paths.
         """
         from pytest_homeassistant_custom_component.common import (
             async_mock_service,
@@ -572,43 +535,45 @@ class TestNotificationDispatch:
         await _setup_integration(hass)
         _seed_target_switch(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
-        notify_calls = async_mock_service(hass, "notify", "phone")
 
+        # First call seeds a baseline-low sample; second
+        # spikes well above ``baseline + threshold`` so the
+        # logic emits a TURN_ON + notification body.
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_notify",
+                instance_id="automation.stsc_resp",
                 sensor_value="55.0",
-                notification_service="notify.phone",
             ),
             blocking=True,
+            return_response=True,
         )
-        await hass.services.async_call(
+        response = await hass.services.async_call(
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_notify",
+                instance_id="automation.stsc_resp",
                 sensor_value="65.0",
-                notification_service="notify.phone",
             ),
             blocking=True,
+            return_response=True,
         )
         await hass.async_block_till_done()
 
-        # Exactly one notify call -- only the spike-tick
-        # produces a notification body.
-        assert len(notify_calls) == 1
-        assert "message" in notify_calls[0].data
-        assert len(notify_calls[0].data["message"]) > 0
+        assert isinstance(response, dict)
+        assert "notification_message" in response
+        assert response["notification_message"]
 
-    async def test_no_notify_when_service_empty(
+    async def test_no_op_returns_empty_message(
         self,
         hass,  # noqa: ANN001
     ) -> None:
-        """Empty ``notification_service`` short-circuits
-        the dispatch even on a spike that produces a
-        non-empty notification body.
+        """A baseline-steady sensor reading produces no
+        notification, so the response's
+        ``notification_message`` slot is the empty string.
+        The blueprint's ``choose`` short-circuits on that
+        and the user's notify action does not fire.
         """
         from pytest_homeassistant_custom_component.common import (
             async_mock_service,
@@ -617,108 +582,116 @@ class TestNotificationDispatch:
         await _setup_integration(hass)
         _seed_target_switch(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
-        notify_calls = async_mock_service(hass, "notify", "phone")
 
-        # Trigger a spike; ``notification_service=""`` means
-        # ``_async_send_notification`` is never reached.
-        await hass.services.async_call(
+        response = await hass.services.async_call(
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_no_notify",
+                instance_id="automation.stsc_noop_resp",
                 sensor_value="55.0",
             ),
             blocking=True,
-        )
-        await hass.services.async_call(
-            DOMAIN,
-            SERVICE,
-            _spike_payload(
-                instance_id="automation.stsc_no_notify",
-                sensor_value="65.0",
-            ),
-            blocking=True,
+            return_response=True,
         )
         await hass.async_block_till_done()
 
-        assert notify_calls == []
+        assert response == {"notification_message": ""}
 
 
-class TestStateSavedWhenNotifyFails:
-    async def test_state_persisted_when_notify_dispatch_raises(
+class TestServiceRegistersWithSupportsResponse:
+    async def test_registered_service_supports_response_optional(
         self,
         hass,  # noqa: ANN001
     ) -> None:
-        """The 2026-04-13 bath-fan flap regression: a
-        notify-service failure must not roll back the
-        state save. Code ordering matters --
-        ``update_instance_state`` runs before
-        ``_async_send_notification``, and the latter
-        try/except-wraps the dispatch. Reordering
-        (e.g. moving notify above state-save in a
-        future refactor) silently re-introduces the
-        bug, hence this guard.
+        """The service registers with
+        ``SupportsResponse.OPTIONAL`` so the blueprint can
+        capture the handler's return value via
+        ``response_variable`` without forcing every
+        non-blueprint caller to handle the response.
         """
-        from homeassistant.core import ServiceCall
+        from homeassistant.core import SupportsResponse
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        assert (
+            hass.services.supports_response(DOMAIN, SERVICE)
+            == SupportsResponse.OPTIONAL
+        )
 
-        async def _raises(call: ServiceCall) -> None:
-            msg = "simulated notify failure"
-            raise RuntimeError(msg)
 
-        # Register a notify.phone whose handler raises so
-        # we exercise the inside-try except branch of
-        # ``_async_send_notification``.
-        hass.services.async_register("notify", "phone", _raises)
+class TestStateSavedBeforeResponseReturned:
+    async def test_state_persists_before_handler_response(
+        self,
+        hass,  # noqa: ANN001
+        monkeypatch: Any,
+    ) -> None:
+        """Code-ordering invariant: the diagnostic state
+        write must run before the handler returns the
+        response. The blueprint runner invokes the user's
+        ``notify_action`` step AFTER the handler returns,
+        so this ordering guarantees a notify-action
+        failure can't roll back the state save. Catches a
+        future refactor that moves the state save below
+        the return.
+        """
         from pytest_homeassistant_custom_component.common import (
             async_mock_service,
         )
 
+        from custom_components.blueprint_toolkit.sensor_threshold_switch_controller import (  # noqa: E501
+            handler as stsc_handler,
+        )
+
+        await _setup_integration(hass)
+        _seed_target_switch(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
 
-        # Seed + spike. The spike call's notify dispatch
-        # raises; ``update_instance_state`` must still
-        # have run.
+        call_order: list[str] = []
+
+        real_update = stsc_handler.update_instance_state
+
+        def _spy_update(*args: Any, **kwargs: Any) -> None:
+            call_order.append("state")
+            real_update(*args, **kwargs)
+
+        monkeypatch.setattr(
+            stsc_handler,
+            "update_instance_state",
+            _spy_update,
+        )
+
+        # Seed + spike to drive the message-emitting path.
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_notify_raises",
+                instance_id="automation.stsc_order",
                 sensor_value="55.0",
-                notification_service="notify.phone",
             ),
             blocking=True,
+            return_response=True,
         )
-        await hass.services.async_call(
+        response = await hass.services.async_call(
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_notify_raises",
+                instance_id="automation.stsc_order",
                 sensor_value="65.0",
-                notification_service="notify.phone",
             ),
             blocking=True,
+            return_response=True,
         )
+        call_order.append("response")
         await hass.async_block_till_done()
 
-        state = hass.states.get(
-            "blueprint_toolkit.stsc_stsc_notify_raises_state",
-        )
-        assert state is not None, (
-            "diagnostic state entity not created -- state save"
-            " did not run after notify dispatch raised"
-        )
-        # State reflects the spike decision.
-        assert state.state == "TURN_ON"
-        # The persisted blob must be readable + non-empty.
-        import json
-
-        loaded = json.loads(state.attributes["data"])
-        assert loaded.get("baseline") is not None, (
-            "controller state baseline was not persisted"
-        )
+        # Both calls hit the state save; the response slot
+        # in ``call_order`` lands AFTER both.
+        assert call_order.count("state") == 2
+        assert call_order[-1] == "response"
+        # Sanity: the response carried a non-empty
+        # ``notification_message`` so we know we exercised
+        # the message-emitting branch (and not a no-op
+        # path that would bypass the ordering test).
+        assert response and response.get("notification_message")
 
 
 # --------------------------------------------------------

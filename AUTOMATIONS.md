@@ -82,7 +82,15 @@ service: str            # slug; "trigger_entity_controller"
 service_tag: str        # short tag for logs/notifs; "TEC"
 service_name: str       # human-readable; "Trigger Entity Controller"
 blueprint_path: str     # "blueprint_toolkit/<service>.yaml"
-service_handler         # async (hass, ServiceCall) -> None
+service_handler         # async (hass, ServiceCall) -> Any
+                        #   (None for void handlers, a ``ServiceResponse``
+                        #   mapping for handlers that opt into
+                        #   ``supports_response``)
+supports_response       # ``homeassistant.core.SupportsResponse`` value or
+                        #   None. When set, the dispatcher registers the
+                        #   service with ``supports_response=`` so the
+                        #   blueprint runner can capture the handler's
+                        #   return value via ``response_variable``.
 kick_variables          # dict[str, Any] | None  (flat ``automation.trigger``
                         #   variables for restart-recovery)
 on_reload               # callback (hass) -> None
@@ -165,8 +173,6 @@ Notification + formatting:
   user-supplied prefix/suffix strings.
 - `format_notification(text, prefix, suffix, current_time)` -- wrap a
   notification body with a formatted prefix + suffix.
-- `parse_notification_service(service)` -- split `notify.foo` / `foo` into
-  `(domain, name)`.
 - `md_escape(s)` -- escape `\\`, `[`, `]` for safe interpolation into
   notification bodies; apply to every user-controlled string.
 - `device_header_line(name, url)` -- render the canonical
@@ -313,9 +319,8 @@ the first failure forces the user to play whack-a-mole.
   within a single field is short-circuit, which is fine.)
 - Cross-field validation (no overlapping entity sets, etc.) appends to
   `errors`; never `return` mid-validation.
-- HA-state validation (entities exist, notification service is registered,
-  sun.sun is available if any time-of-day input is non-`always`) appends to
-  the same list.
+- HA-state validation (entities exist, sun.sun is available if any time-of-day
+  input is non-`always`) appends to the same list.
 - Single `await emit_config_error(...)` at the end of argparse with the
   accumulated `errors`. Empty list dismisses any prior notification.
 
@@ -398,11 +403,18 @@ The service layer's call flow is uniform across handlers:
 Auto-off scheduling (if applicable) cancels the prior wakeup before arming a
 new one.
 
-Notify-service dispatch via `helpers.parse_notification_service` plus
-`hass.services.async_call`. Notify failures: prefer fail-loud unless the call
-is in a bath-fan-flap-style "save state before notify" path, in which case
-`try / except / log + continue` (the state save MUST land regardless of notify
-outcome).
+Notify dispatch is owned by the calling blueprint, not by the handler.
+Handlers that produce a user-facing notification body register with
+`supports_response=SupportsResponse.OPTIONAL` on their `BlueprintHandlerSpec`
+and return a `ServiceResponse` mapping carrying `notification_message`. The
+blueprint captures the response via `response_variable`, then runs the
+user-supplied `notify_action` action chain against it (the user picks
+`notify.*`, a notify group, a script, or any combination). No-op evaluations
+return an empty / absent message so the blueprint's `choose` short-circuits.
+
+The state save runs BEFORE the handler returns, so a notify-action failure
+inside the blueprint runner cannot lose the controller state -- HA invokes the
+user's action sequence after the response is captured.
 
 ### Diagnostic state
 
@@ -431,10 +443,9 @@ it alone.
 
 ### Service-layer exit ordering
 
-The load-bearing invariant: **state must save before notify dispatch** -- a
-notify failure must not lose state. Beyond that, every handler's service layer
-composes the same five operations (PN sweep, state write, notify push, action
-dispatch, debug log), and the canonical order across the integration is:
+Every handler's service layer composes the same five operations (PN sweep,
+state write, action dispatch, debug log, response), and the canonical order
+across the integration is:
 
 1. **Sweep PNs.** Dispatch the per-instance persistent-notification set for
    this run via `process_persistent_notifications_with_sweep`. Clears stale
@@ -444,15 +455,37 @@ dispatch, debug log), and the canonical order across the integration is:
    `update_instance_state`. Records what we did this run.
 3. **Action dispatch.** `homeassistant.turn_on` / `turn_off` / etc, for
    handlers that drive entities.
-4. **Notify dispatch.** Best-effort push to `notify.<service>` for handlers
-   that have one (STSC + TEC today). Always after step 2 -- a notify failure
-   must not lose state.
-5. **Debug log.** A single `_LOGGER.warning(...)` line, gated on the
+4. **Debug log.** A single `_LOGGER.warning(...)` line, gated on the
    per-instance `debug_logging` toggle, summarising the decision. One line, at
    the end -- not interleaved through the scan.
+5. **Return ServiceResponse.** Handlers that opt into `supports_response`
+   (STSC + TEC today) return a mapping carrying `notification_message` -- the
+   blueprint captures it via `response_variable` and runs the user-supplied
+   `notify_action` step against it. Watchdog handlers return `None` from this
+   slot (the dispatcher's wrapper returns whatever the handler hands back).
 
-Handlers that don't need a step (no notify path, no action dispatch, nothing
-to log) just skip it. The remaining steps stay in the order above.
+Handlers that don't need a step (no response, no action dispatch, nothing to
+log) just skip it. The remaining steps stay in the order above.
+
+#### Response-variable convention
+
+Handlers that hand notify dispatch off to a user-supplied action chain set
+`supports_response=SupportsResponse.OPTIONAL` on their `BlueprintHandlerSpec`
+and return `{"notification_message": "<body>"}` from their service entrypoint
+-- empty string on no-op evaluations. The blueprint pairs the call with
+`response_variable: result` and a `choose` that fires `!input notify_action`
+only when `result.notification_message` is non-empty, with `message` exposed
+as a top-level variable inside the user's action sequence so each step can
+reference `{{ message }}`.
+
+This is the canonical choice for any handler whose notification surface is
+"call the user's notify endpoint with a pre-built body". It moves the choice
+of notify endpoint (notify group, mobile_app target, script, any combination)
+entirely into the blueprint UI's action picker -- the handler stays out of
+HA-specific dispatch entirely. STSC + TEC use it; watchdog handlers (DW, EDW,
+RW, ZRM) do not because their notification surface is
+`persistent_notification` (an HA-side render, not a user-side notify call) and
+is therefore handler-owned.
 
 ### Async tasks must be entry-scoped
 
@@ -705,8 +738,8 @@ For each handler, `tests/test_<service>_integration.py` should cover at
 minimum:
 
 - Schema-rejection emits persistent notification.
-- Cross-field overlap / missing-entity / missing-notify-service all emit
-  notifications with the right ID + message.
+- Cross-field overlap / missing-entity all emit notifications with the right
+  ID + message.
 - Successful call dismisses any prior config-error notification.
 - Notification body starts with
   `Automation: [name](/config/automation/edit/<id>)\n` when the automation

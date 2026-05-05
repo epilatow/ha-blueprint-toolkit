@@ -375,10 +375,26 @@ async def register_blueprint_handler(
     if hass.services.has_service(DOMAIN, spec.service):
         hass.services.async_remove(DOMAIN, spec.service)
 
-    async def _service_wrapper(call: ServiceCall) -> None:
-        await spec.service_handler(hass, call)
+    async def _service_wrapper(call: ServiceCall) -> Any:
+        return await spec.service_handler(hass, call)
 
-    hass.services.async_register(DOMAIN, spec.service, _service_wrapper)
+    # Per-spec ``supports_response`` plumbing: handlers that
+    # hand a ``ServiceResponse`` mapping back to the calling
+    # blueprint (so the blueprint can run a user-supplied
+    # action step against it) opt in by setting
+    # ``supports_response`` on their ``BlueprintHandlerSpec``;
+    # everyone else passes ``None`` and the dispatcher
+    # registers without the kwarg, leaving HA's default
+    # (no response) in place.
+    if spec.supports_response is not None:
+        hass.services.async_register(
+            DOMAIN,
+            spec.service,
+            _service_wrapper,
+            supports_response=spec.supports_response,
+        )
+    else:
+        hass.services.async_register(DOMAIN, spec.service, _service_wrapper)
 
     # Idempotent re-register: tear down every prior unsub
     # before re-subscribing so listener counts stay 1.

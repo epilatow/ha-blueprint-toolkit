@@ -133,18 +133,20 @@ blueprint:
             - night-time
             - day-time
 
-    notification_service:
-      name: Notification Service (optional)
+    notify_action:
+      name: Notification Action (optional)
       description: >
-        Service name for notifications (e.g., "notify"
-        or "notify.mobile_app_phone"). Validated at
-        automation startup; if the service does not
-        exist a persistent notification is raised and
-        the automation will not run. Leave empty to
-        disable notifications.
-      default: ""
+        Action(s) to run for notifications. Pick one or
+        more "Call service" steps (e.g.
+        notify.mobile_app_phone, notify.all, a notify
+        group). Each step receives the pre-built
+        notification body via a ``message`` variable;
+        your step's data should reference
+        ``{{ message }}``. Leave empty to disable
+        notifications.
+      default: []
       selector:
-        text:
+        action:
 
     notification_prefix:
       name: Notification Prefix
@@ -234,11 +236,27 @@ actions:
       trigger_forces_on_raw: !input trigger_forces_on
       trigger_disabling_entities_raw: !input trigger_disabling_entities
       trigger_disabling_period_raw: !input trigger_disabling_period
-      notification_service: !input notification_service
       notification_prefix_raw: !input notification_prefix
       notification_suffix_raw: !input notification_suffix
       notification_events_raw: !input notification_events
       debug_logging_raw: !input debug_logging
+    # The handler returns a ServiceResponse mapping that
+    # carries the pre-built notification body when the
+    # decision is configured to notify (and an empty /
+    # absent ``notification_message`` otherwise).
+    response_variable: result
+  # Run the user-supplied notify action only when the
+  # handler emitted a non-empty message. ``message`` is
+  # exposed as a top-level variable inside the user's
+  # action sequence so each step can reference
+  # ``{{ message }}`` in its ``data:`` block.
+  - choose:
+      - conditions:
+          - "{{ result.notification_message | default('') != '' }}"
+        sequence:
+          - variables:
+              message: "{{ result.notification_message }}"
+          - sequence: !input notify_action
 
 # ``queued`` + ``max: 10`` lets up to 10 trigger events
 # (motion bursts, controlled-state flips) stack up and run

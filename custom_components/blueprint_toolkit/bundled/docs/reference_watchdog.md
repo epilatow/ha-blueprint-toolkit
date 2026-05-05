@@ -240,7 +240,7 @@ stat attributes.
 3. **String sniff.** String leaves that aren't under a known `_ENTITY_KEYS`
    position are checked against the entity-id regex with a domain filter.
    Catches blueprint inputs where the parent key name is custom
-   (`controlled_entities`, `notification_service`) and bare values under
+   (`controlled_entities`) and bare values under
    `service:` / `action:` / `service_template:` -- a typo'd
    `service: script.does_not_exist` surfaces as a broken-entity reference,
    while real registered service names are dropped by the truth set below.
@@ -259,8 +259,9 @@ reporting). The filter is gated on origin: structural emissions at known
 entity-key positions (`entity_id: light.turn_on`) are NOT suppressed, since
 those slots carry the contract that the value is meant to be an entity ID, so
 a service-name collision there is a real configuration typo worth surfacing.
-Without this backstop, every `notification_service: notify.mobile_app_*`
-blueprint input would surface as a broken-entity false positive.
+Without this backstop, every blueprint input that puts a service name under a
+custom key (e.g. `controlled_service: notify.mobile_app_*`) would surface as
+a broken-entity false positive.
 
 ### Entity attributes
 

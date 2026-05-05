@@ -20,7 +20,9 @@ entities, force-on behavior, and configurable notifications.
   room is occupied)
 - Force-on: re-enable controlled entities if turned off while triggers are
   active
-- Configurable notifications for turn-on, force-on, and auto-off events
+- Configurable notification action that runs on turn-on, force-on, and
+  auto-off events; the action chain receives the pre-built body as a
+  `{{ message }}` variable
 - Entity validation: alerts via persistent notification if configured entities
   are missing or renamed
 - Optional debug logging
@@ -43,20 +45,20 @@ entities, force-on behavior, and configurable notifications.
 
 ### Optional
 
-| Parameter                   | Description                                                      |
-| --------------------------- | ---------------------------------------------------------------- |
-| Auto-off delay              | Minutes after triggers clear to turn off. Resets on new trigger. |
-| Auto-off disabling entities | When any is "on", suppresses auto-off for full manual control    |
-| Trigger entities            | Binary sensors that trigger activation                           |
-| Trigger period              | When triggers activate: always, night-time, day-time             |
-| Trigger forces on           | Re-enable if turned off while trigger active                     |
-| Trigger disabling entities  | When any is "on", suppresses triggers                            |
-| Trigger disabling period    | When disabling entities are checked                              |
-| Notification service        | e.g., "notify.mobile_app_phone"                                  |
-| Notification prefix         | Prepended to messages (supports timestamp tokens)                |
-| Notification suffix         | Appended to messages (supports timestamp tokens)                 |
-| Notification events         | Which actions notify: triggered-on, forced-on, auto-off          |
-| Debug logging               | Log debug info to HA logs                                        |
+| Parameter                   | Description                                                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Auto-off delay              | Minutes after triggers clear to turn off. Resets on new trigger.                                                                         |
+| Auto-off disabling entities | When any is "on", suppresses auto-off for full manual control                                                                            |
+| Trigger entities            | Binary sensors that trigger activation                                                                                                   |
+| Trigger period              | When triggers activate: always, night-time, day-time                                                                                     |
+| Trigger forces on           | Re-enable if turned off while trigger active                                                                                             |
+| Trigger disabling entities  | When any is "on", suppresses triggers                                                                                                    |
+| Trigger disabling period    | When disabling entities are checked                                                                                                      |
+| Notification action         | Action(s) to run on a notification (e.g. `notify.mobile_app_*`, a notify group, a script call). Receives the message via `{{ message }}` |
+| Notification prefix         | Prepended to messages (supports timestamp tokens)                                                                                        |
+| Notification suffix         | Appended to messages (supports timestamp tokens)                                                                                         |
+| Notification events         | Which actions notify: triggered-on, forced-on, auto-off                                                                                  |
+| Debug logging               | Log debug info to HA logs                                                                                                                |
 
 See the blueprint UI for default values.
 
@@ -110,9 +112,9 @@ when they all return to "off".
 ### Diagnostic state entity
 
 After each evaluation, a diagnostic state entry is written at
-`blueprint_toolkit.tec_<slug>_state`, where `<slug>` is
-the automation's entity_id stripped of its `automation.` prefix. The state
-value is the decision name (NONE, TURN_ON, or TURN_OFF); attributes:
+`blueprint_toolkit.tec_<slug>_state`, where `<slug>` is the automation's
+entity_id stripped of its `automation.` prefix. The state value is the
+decision name (NONE, TURN_ON, or TURN_OFF); attributes:
 
 Common attributes:
 

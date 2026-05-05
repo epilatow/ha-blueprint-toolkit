@@ -126,6 +126,22 @@ def install_homeassistant_stubs(
     core.ServiceCall = type("ServiceCall", (), {})  # type: ignore[attr-defined]
     core.Context = type("Context", (), {})  # type: ignore[attr-defined]
     core.Event = type("Event", (), {})  # type: ignore[attr-defined]
+    # Mirror HA's ``SupportsResponse`` enum surface (NONE
+    # / OPTIONAL / ONLY) -- handlers that opt into
+    # response-bearing service registration import it at
+    # module top-level. ``ServiceResponse`` is HA's typing
+    # alias for the response mapping; expose it as a
+    # subscriptable type so type annotations resolve at
+    # import time.
+    import enum as _enum  # noqa: PLC0415
+
+    class _SupportsResponse(_enum.Enum):
+        NONE = "none"
+        OPTIONAL = "optional"
+        ONLY = "only"
+
+    core.SupportsResponse = _SupportsResponse  # type: ignore[attr-defined]
+    core.ServiceResponse = dict  # type: ignore[attr-defined]
     # ``helpers.cv_ha_domain_list`` calls ``valid_domain``;
     # mirror HA's regex (no leading/trailing underscore,
     # no double-underscore, leading digit allowed).

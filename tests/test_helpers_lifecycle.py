@@ -143,6 +143,9 @@ class _MockServices:
     registered: dict[tuple[str, str], Callable[..., Any]] = field(
         default_factory=dict,
     )
+    registered_kwargs: dict[tuple[str, str], dict[str, Any]] = field(
+        default_factory=dict,
+    )
     calls: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
 
     def has_service(self, domain: str, name: str) -> bool:
@@ -153,11 +156,18 @@ class _MockServices:
         domain: str,
         name: str,
         handler: Callable[..., Any],
+        **kwargs: Any,
     ) -> None:
+        # ``supports_response`` is the only kwarg the
+        # dispatcher passes today; record the full kwargs
+        # mapping on the registered entry so the tests
+        # asserting plumbing can inspect it.
         self.registered[(domain, name)] = handler
+        self.registered_kwargs[(domain, name)] = dict(kwargs)
 
     def async_remove(self, domain: str, name: str) -> None:
         self.registered.pop((domain, name), None)
+        self.registered_kwargs.pop((domain, name), None)
 
     async def async_call(
         self,
@@ -970,6 +980,88 @@ class TestRegisterBlueprintHandler:
             spec,
         )
         assert len(hass.bus.listeners.get("entity_registry_updated", [])) == 1
+
+    @pytest.mark.asyncio
+    async def test_supports_response_threads_to_async_register(
+        self,
+    ) -> None:
+        """When the spec sets ``supports_response``, the
+        dispatcher must forward it to ``async_register`` so
+        the blueprint runner can capture the handler's
+        return value via ``response_variable``. When unset,
+        the dispatcher omits the kwarg so HA's default (no
+        response) applies. This locks down the plumbing for
+        STSC + TEC's notify-action handoff: the handler
+        returns ``{"notification_message": "..."}`` and the
+        blueprint then runs the user's notify action with
+        that message.
+        """
+        # Sentinel object stands in for
+        # ``homeassistant.core.SupportsResponse.OPTIONAL`` --
+        # the dispatcher only checks "is not None", so any
+        # non-None value exercises the threading.
+        sentinel = object()
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+        spec = _make_spec(supports_response=sentinel)
+
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,  # type: ignore[arg-type]
+            spec,
+        )
+
+        kwargs = hass.services.registered_kwargs[(DOMAIN, spec.service)]
+        assert kwargs == {"supports_response": sentinel}
+
+    @pytest.mark.asyncio
+    async def test_supports_response_default_omits_kwarg(self) -> None:
+        """When ``supports_response`` is left at its default
+        ``None``, the dispatcher must NOT pass the kwarg
+        through. Passing ``None`` would override HA's
+        default with an explicit ``None``, which HA accepts
+        but is a footgun under typing changes.
+        """
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+        spec = _make_spec()  # supports_response defaults to None
+
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,  # type: ignore[arg-type]
+            spec,
+        )
+
+        kwargs = hass.services.registered_kwargs[(DOMAIN, spec.service)]
+        assert kwargs == {}
+
+    @pytest.mark.asyncio
+    async def test_service_wrapper_returns_handler_response(self) -> None:
+        """The ``_service_wrapper`` must return whatever the
+        spec's ``service_handler`` returns -- ``None`` for
+        the void path, a ``ServiceResponse`` mapping for
+        handlers that opt into ``supports_response``. The
+        return value is what HA hands back to the blueprint
+        runner's ``response_variable`` capture.
+        """
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+
+        async def _handler_returning_dict(_hass: Any, _call: Any) -> Any:
+            return {"notification_message": "hello"}
+
+        spec = _make_spec(service_handler=_handler_returning_dict)
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,  # type: ignore[arg-type]
+            spec,
+        )
+        wrapper = hass.services.registered[(DOMAIN, spec.service)]
+        # The wrapper accepts a single ``ServiceCall`` arg;
+        # we don't need a real one for this unit-level
+        # check.
+        result = await wrapper(object())
+        assert result == {"notification_message": "hello"}
 
     @pytest.mark.asyncio
     async def test_idempotent_under_re_register(self) -> None:

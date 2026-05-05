@@ -12,13 +12,12 @@ Three-layer dispatch:
 
 2. **Argparse** -- runs the vol.Schema, then the
    cross-field + HA-state checks (entity existence,
-   notify-service existence, no overlapping sets).
-   Accumulates errors and emits a single
-   ``persistent_notification`` config_error per
-   automation instance (one notification per instance,
-   dismissed on subsequent successful argparse). On
-   success builds a ``logic.Config`` and hands off to
-   the service layer.
+   no overlapping sets). Accumulates errors and emits
+   a single ``persistent_notification`` config_error
+   per automation instance (one notification per
+   instance, dismissed on subsequent successful
+   argparse). On success builds a ``logic.Config`` and
+   hands off to the service layer.
 
 3. **Service layer** -- reads HA state to populate
    ``logic.Inputs`` (current state of trigger /
@@ -27,8 +26,14 @@ Three-layer dispatch:
    ``auto_off_at``), calls ``logic.evaluate``,
    applies the result (turn_on/turn_off propagating
    ``call.context``, schedule/cancel ``async_call_later``
-   for auto-off, send notification through
-   user-configured notify service).
+   for auto-off), and returns a ``ServiceResponse``
+   mapping carrying the user-facing notification body.
+   The blueprint captures the response via
+   ``response_variable`` and runs the user-supplied
+   ``notify_action`` step against it. State saving
+   runs BEFORE the handler returns, so a notify-action
+   failure inside the blueprint runner can't lose the
+   pending auto-off timestamp.
 
 Discovery + restart recovery: the integration walks
 ``hass.data[DATA_COMPONENT].entities`` (filtered by
@@ -47,7 +52,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 import voluptuous as vol
@@ -56,6 +61,8 @@ from homeassistant.core import (
     Context,
     HomeAssistant,
     ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_call_later
@@ -64,11 +71,11 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
+    TypedServiceResponse,
     automation_friendly_name,
     format_notification,
     make_emit_config_error,
     make_lifecycle_mutators,
-    parse_notification_service,
     register_blueprint_handler,
     spec_bucket,
     unregister_blueprint_handler,
@@ -165,7 +172,6 @@ _SCHEMA = vol.Schema(
             cv.ensure_list, [cv.entity_id]
         ),
         vol.Required("trigger_disabling_period_raw"): vol.In(_PERIOD_VALUES),
-        vol.Required("notification_service"): vol.Coerce(str),
         vol.Required("notification_prefix_raw"): vol.Coerce(str),
         vol.Required("notification_suffix_raw"): vol.Coerce(str),
         vol.Required("notification_events_raw"): vol.All(
@@ -218,7 +224,10 @@ def _instances(hass: HomeAssistant) -> dict[str, TecInstanceState]:
 # --------------------------------------------------------
 
 
-async def _async_entrypoint(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _async_entrypoint(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> ServiceResponse:
     """Service handler -- thin wrapper, hands off to argparse.
 
     Missing or invalid keys surface via ``vol.Invalid``
@@ -227,8 +236,16 @@ async def _async_entrypoint(hass: HomeAssistant, call: ServiceCall) -> None:
     keys are tolerated (see ``extra=vol.ALLOW_EXTRA`` on
     ``_SCHEMA``) for forward-compat with future blueprint
     inputs.
+
+    The internal layers return a typed
+    ``TypedServiceResponse`` dataclass; this entrypoint is
+    the single place we convert to HA's wire-format
+    ``ServiceResponse`` dict via ``dataclasses.asdict``.
+    Keeping the conversion here means every other return
+    site stays nominally typed and mypy rejects bare-dict
+    returns.
     """
-    await _async_argparse(hass, call, now=dt_util.now())
+    return asdict(await _async_argparse(hass, call, now=dt_util.now()))
 
 
 # --------------------------------------------------------
@@ -253,7 +270,7 @@ async def _async_argparse(
     call: ServiceCall,
     *,
     now: datetime,
-) -> None:
+) -> TypedServiceResponse:
     """Validate the call, build a Config, dispatch to the service layer."""
     raw = dict(call.data)
 
@@ -267,7 +284,7 @@ async def _async_argparse(
         _emit_config_error,
     )
     if data is None:
-        return
+        return TypedServiceResponse()
 
     instance_id: str = data["instance_id"]
     errors: list[str] = []
@@ -312,15 +329,6 @@ async def _async_argparse(
         ),
     )
 
-    # --- HA state: notification service exists ---
-    notif = data["notification_service"]
-    if notif:
-        notif_domain, notif_name = parse_notification_service(notif)
-        if not hass.services.has_service(notif_domain, notif_name):
-            errors.append(
-                f"notification service {notif} is not registered",
-            )
-
     # --- HA state: sun.sun must exist for time-of-day periods ---
     # Without it, ``_is_day_time()`` falls back to False and any
     # ``day-time`` configuration silently never fires; the
@@ -346,7 +354,7 @@ async def _async_argparse(
     # prior config-error notification for this instance.
     await _emit_config_error(hass, instance_id, errors)
     if errors:
-        return
+        return TypedServiceResponse()
 
     # --- Build the Config dataclass logic.evaluate expects ---
     config = logic.Config(
@@ -369,7 +377,7 @@ async def _async_argparse(
         ),
     )
 
-    await _async_service_layer(
+    return await _async_service_layer(
         hass,
         call.context,
         config,
@@ -377,7 +385,6 @@ async def _async_argparse(
         instance_id=instance_id,
         trigger_entity_id=data["trigger_entity_id"],
         trigger_to_state=data["trigger_to_state"],
-        notification_service=data["notification_service"],
         debug_logging=data["debug_logging_raw"],
     )
 
@@ -420,10 +427,18 @@ async def _async_service_layer(
     instance_id: str,
     trigger_entity_id: str,
     trigger_to_state: str,
-    notification_service: str,
     debug_logging: bool,
-) -> None:
-    """Read HA state, build Inputs, evaluate, apply Result."""
+) -> TypedServiceResponse:
+    """Read HA state, build Inputs, evaluate, apply Result.
+
+    Returns a ``ServiceResponse`` mapping the blueprint
+    runner captures via ``response_variable``. The
+    ``notification_message`` slot carries the pre-built
+    body when the configured notification events match the
+    decision (empty string otherwise); the blueprint then
+    runs the user-supplied ``notify_action`` step against
+    it.
+    """
     state = _instances(hass).setdefault(
         instance_id,
         TecInstanceState(instance_id=instance_id),
@@ -440,7 +455,7 @@ async def _async_service_layer(
         all_disabling,
     )
     if event_type is None:
-        return
+        return TypedServiceResponse()
 
     inputs = logic.Inputs(
         current_time=now,
@@ -457,7 +472,10 @@ async def _async_service_layer(
 
     result = logic.evaluate(config, inputs)
 
-    # --- Surface diagnostic state for the user ---
+    # State save runs before the response is returned so a
+    # downstream notify-action failure inside the blueprint
+    # runner cannot lose the pending auto-off timestamp or
+    # diagnostic decision context.
     update_instance_state(
         hass,
         service_tag=_SERVICE_TAG,
@@ -497,15 +515,6 @@ async def _async_service_layer(
     # --- Apply: scheduling auto_off_at (cancel previous) ---
     _apply_auto_off_at(hass, state, result.auto_off_at)
 
-    # --- Apply: notification (best-effort, never raises) ---
-    if notification_service and result.notification:
-        await _send_notification(
-            hass,
-            notification_service,
-            result.notification,
-            context,
-        )
-
     if debug_logging:
         _LOGGER.warning(
             "[%s: %s] event=%s action=%s reason=%r"
@@ -526,30 +535,8 @@ async def _async_service_layer(
             inputs.is_day_time,
         )
 
-
-async def _send_notification(
-    hass: HomeAssistant,
-    service: str,
-    message: str,
-    context: Context,
-) -> None:
-    """Dispatch a finding-style notification via the user's notify.* service.
-
-    Argparse already validated that ``service`` is
-    registered, and ``blocking=False`` returns before the
-    notify handler runs, so the only thing that could
-    raise here is a TOCTOU window where the service
-    deregistered between argparse and dispatch. We let
-    that propagate -- a loud failure in HA's logbook is
-    more useful than a silent miss.
-    """
-    domain, name = parse_notification_service(service)
-    await hass.services.async_call(
-        domain,
-        name,
-        {"message": message},
-        context=context,
-        blocking=False,
+    return TypedServiceResponse(
+        notification_message=result.notification or "",
     )
 
 
@@ -657,6 +644,12 @@ _SPEC = BlueprintHandlerSpec(
     service_name=_SERVICE_NAME,
     blueprint_path=BLUEPRINT_PATH,
     service_handler=_async_entrypoint,
+    # The handler returns a ``ServiceResponse`` mapping the
+    # blueprint runner captures via ``response_variable``;
+    # ``OPTIONAL`` lets non-blueprint callers (manual
+    # tests, the integration's auto-off wakeup) ignore the
+    # response without an error.
+    supports_response=SupportsResponse.OPTIONAL,
     # TEC-specific synthetic-TIMER payload: the dispatcher
     # fires ``automation.trigger`` with these flat
     # variables, and ``logic._handle_timer``'s catch-up

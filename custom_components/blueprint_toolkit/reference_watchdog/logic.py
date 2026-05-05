@@ -44,7 +44,7 @@ tree:
    ``_ENTITY_ID_RE`` with a domain in the known-domain
    set. This catches blueprint inputs where the parent
    key name is custom (``controlled_entities:``,
-   ``trigger_entities:``, ``notification_service:``).
+   ``trigger_entities:``).
 
    The sniff is explicitly disabled under ``_ENTITY_KEYS``
    subtrees (the structural walk already emitted those).
@@ -77,8 +77,9 @@ NOT suppressed -- the structural keys carry the contract
 that the value is meant to be an entity ID, so a
 collision with a service name is a real configuration
 typo worth flagging. Without this backstop, every
-``notification_service: notify.mobile_app_foo`` blueprint
-input would surface as a broken-entity false positive.
+blueprint input that puts a service name under a custom
+key (e.g. ``controlled_service: notify.mobile_app_foo``)
+would surface as a broken-entity false positive.
 
 Owner attribution
 -----------------

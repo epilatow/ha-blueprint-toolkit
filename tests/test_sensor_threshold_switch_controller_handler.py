@@ -20,11 +20,10 @@ callbacks, ``_ensure_timer`` arming, ``_async_kick_for_recovery``
 ``trigger_entity`` must be flat top-level variables, no
 ``context=`` propagation), schema-level validation of the
 numeric inputs, and the blueprint <-> schema drift check.
-The argparse cross-field checks
-(``target_switch_entity`` existence,
-``notification_service`` registration) and the service
-layer's full state-load / action-dispatch / notification
-loop are exercised in
+The argparse cross-field check on
+``target_switch_entity`` existence + the service layer's
+full state-load / action-dispatch / response-shape loop
+are exercised in
 ``test_sensor_threshold_switch_controller_integration.py``
 against the pytest-HACC harness.
 """
@@ -259,7 +258,6 @@ def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
         "sampling_window_seconds_raw": 600,
         "disable_window_seconds_raw": 30,
         "auto_off_minutes_raw": 60,
-        "notification_service": "",
         "notification_prefix": "",
         "notification_suffix": "",
         "debug_logging_raw": False,
@@ -403,15 +401,17 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
 
 
 class TestArgparseGuards(HandlerArgparseGuardsBase):
-    """Schema rejection / unregistered notify must short-circuit argparse."""
+    """Schema rejection must short-circuit argparse.
+
+    The unregistered-notify-service guard auto-skips
+    because STSC's schema no longer carries a
+    ``notification_service`` field -- notify dispatch is
+    owned by the blueprint via ``response_variable`` /
+    ``notify_action`` rather than by the handler.
+    """
 
     handler = handler
-    # ``notification_service`` is empty in the default payload;
-    # override to a name that the mock hass will report as
-    # unregistered so the cross-field guard kicks in.
-    valid_payload = _valid_argparse_payload(
-        notification_service="notify.does_not_exist",
-    )
+    valid_payload = _valid_argparse_payload()
 
 
 class TestCodeQuality(CodeQualityBase):

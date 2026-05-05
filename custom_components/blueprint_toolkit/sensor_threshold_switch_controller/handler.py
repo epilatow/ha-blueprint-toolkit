@@ -22,12 +22,18 @@ pattern):
   ``homeassistant.turn_off`` against the target
   switch entity, with the caller's ``context``
   propagated so logbook attribution is correct.
-- Notification dispatch: best-effort call to the
-  user-configured ``notify.<service>`` (real push
-  notification, not a persistent-notification
-  entry). Failures don't abort -- state save lands
-  before the dispatch so a notify failure can't lose
-  state.
+- Notification dispatch is owned by the blueprint, not
+  the handler. The service registers with
+  ``SupportsResponse.OPTIONAL`` and returns a
+  ``ServiceResponse`` mapping carrying the pre-built
+  notification body under ``notification_message`` --
+  the blueprint captures it via ``response_variable``
+  and runs the user-configured ``notify_action`` step.
+  No-op evaluations return an empty / absent message
+  so the blueprint's ``choose`` short-circuits. State
+  saving runs BEFORE the handler returns, so a notify-
+  action failure inside the blueprint runner can't
+  lose state.
 - Single notification slot for argparse / config
   errors via the shared
   ``helpers.make_config_error_notification`` /
@@ -42,26 +48,31 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
+    TypedServiceResponse,
     automation_friendly_name,
     entry_for_domain,
     instance_state_entity_id,
     make_emit_config_error,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
-    parse_notification_service,
     process_persistent_notifications_with_sweep,
     register_blueprint_handler,
     schedule_periodic_with_jitter,
@@ -143,7 +154,6 @@ _SCHEMA = vol.Schema(
         vol.Required("auto_off_minutes_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=1440)
         ),
-        vol.Required("notification_service"): vol.Coerce(str),
         vol.Required("notification_prefix"): vol.Coerce(str),
         vol.Required("notification_suffix"): vol.Coerce(str),
         vol.Required("debug_logging_raw"): cv.boolean,
@@ -172,9 +182,20 @@ def _instances(hass: HomeAssistant) -> dict[str, StscInstanceState]:
 # --------------------------------------------------------
 
 
-async def _async_entrypoint(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Service handler -- thin wrapper, hands off to argparse."""
-    await _async_argparse(hass, call, now=dt_util.now())
+async def _async_entrypoint(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Service handler -- thin wrapper, hands off to argparse.
+
+    The internal layers return a typed ``TypedServiceResponse``
+    dataclass; this entrypoint is the single place we
+    convert to HA's wire-format ``ServiceResponse`` dict
+    via ``dataclasses.asdict``. Keeping the conversion
+    here means every other return site stays nominally
+    typed and mypy rejects bare-dict returns.
+    """
+    return asdict(await _async_argparse(hass, call, now=dt_util.now()))
 
 
 # --------------------------------------------------------
@@ -193,7 +214,7 @@ async def _async_argparse(
     call: ServiceCall,
     *,
     now: datetime,
-) -> None:
+) -> TypedServiceResponse:
     """Validate, build context, dispatch to the service layer."""
     raw = dict(call.data)
 
@@ -204,7 +225,7 @@ async def _async_argparse(
         _emit_config_error,
     )
     if data is None:
-        return
+        return TypedServiceResponse()
 
     instance_id: str = data["instance_id"]
     errors: list[str] = []
@@ -229,33 +250,13 @@ async def _async_argparse(
             ),
         )
 
-    # Cross-field: notification_service must be registered.
-    # Empty string is a valid "no notifications" sentinel.
-    notification_service: str = data["notification_service"]
-    if notification_service:
-        try:
-            notif_domain, notif_name = parse_notification_service(
-                notification_service,
-            )
-        except ValueError as err:
-            errors.append(
-                f"notification_service: {err}",
-            )
-            notif_domain, notif_name = "", ""
-        if notif_domain and notif_name:
-            if not hass.services.has_service(notif_domain, notif_name):
-                errors.append(
-                    f"notification_service: {notification_service!r}"
-                    " is not a registered service",
-                )
-
     # Argparse complete; emit accumulated errors (or
     # dismiss any prior config_error notification).
     await _emit_config_error(hass, instance_id, errors)
     if errors:
-        return
+        return TypedServiceResponse()
 
-    await _async_service_layer(
+    return await _async_service_layer(
         hass,
         call,
         now=now,
@@ -270,7 +271,6 @@ async def _async_argparse(
         sampling_window_seconds=data["sampling_window_seconds_raw"],
         disable_window_seconds=data["disable_window_seconds_raw"],
         auto_off_minutes=data["auto_off_minutes_raw"],
-        notification_service=notification_service,
         notification_prefix=data["notification_prefix"],
         notification_suffix=data["notification_suffix"],
         debug_logging=data["debug_logging_raw"],
@@ -298,12 +298,19 @@ async def _async_service_layer(
     sampling_window_seconds: int,
     disable_window_seconds: int,
     auto_off_minutes: int,
-    notification_service: str,
     notification_prefix: str,
     notification_suffix: str,
     debug_logging: bool,
-) -> None:
-    """Run the controller + dispatch action / notification."""
+) -> TypedServiceResponse:
+    """Run the controller, apply actions, return notify message.
+
+    Returns a ``ServiceResponse`` mapping the blueprint
+    runner captures via ``response_variable``. The
+    ``notification_message`` slot carries the pre-built
+    body when the controller decided to notify (empty
+    string otherwise); the blueprint then runs the
+    user-supplied ``notify_action`` step against it.
+    """
     state = _instances(hass).setdefault(
         instance_id,
         StscInstanceState(instance_id=instance_id),
@@ -359,6 +366,9 @@ async def _async_service_layer(
         sweep_prefix=notif_prefix,
     )
 
+    # State save runs before the response is returned so a
+    # downstream notify-action failure inside the blueprint
+    # runner cannot lose the controller state.
     update_instance_state(
         hass,
         service_tag=_SERVICE_TAG,
@@ -404,15 +414,6 @@ async def _async_service_layer(
             blocking=False,
         )
 
-    if notification_service and result.notification:
-        await _async_send_notification(
-            hass,
-            notification_service,
-            result.notification,
-            call.context,
-            tag,
-        )
-
     if debug_logging:
         _LOGGER.warning(
             "%s event=%s sw=%s baseline=%s auto_off=%s samples=%s -> %s %r",
@@ -426,9 +427,13 @@ async def _async_service_layer(
             result.reason,
         )
 
+    return TypedServiceResponse(
+        notification_message=result.notification or "",
+    )
+
 
 # --------------------------------------------------------
-# State-blob load / send-notification helpers
+# State-blob load helper
 # --------------------------------------------------------
 
 
@@ -465,44 +470,6 @@ def _load_state_blob(
         # will rewrite it cleanly.
         return None
     return loaded
-
-
-async def _async_send_notification(
-    hass: HomeAssistant,
-    service: str,
-    message: str,
-    context: Any,
-    tag: str,
-) -> None:
-    """Dispatch the notify.* call. Failures log + swallow.
-
-    Best-effort: a notify-service failure must not abort
-    the STSC reconcile (state has already been saved).
-    Log the error so the user can diagnose; let the next
-    tick try again.
-    """
-    try:
-        domain, name = parse_notification_service(service)
-    except ValueError as err:
-        _LOGGER.warning("%s notify-service parse failed: %s", tag, err)
-        return
-    try:
-        await hass.services.async_call(
-            domain,
-            name,
-            {"message": message},
-            context=context,
-            blocking=False,
-        )
-    except Exception as err:  # noqa: BLE001
-        # Notification dispatch is best-effort; log loud,
-        # don't propagate.
-        _LOGGER.warning(
-            "%s notification dispatch via %s failed: %s",
-            tag,
-            service,
-            err,
-        )
 
 
 # --------------------------------------------------------
@@ -568,6 +535,12 @@ _SPEC = BlueprintHandlerSpec(
     service_name=_SERVICE_NAME,
     blueprint_path=BLUEPRINT_PATH,
     service_handler=_async_entrypoint,
+    # The handler returns a ``ServiceResponse`` mapping the
+    # blueprint runner captures via ``response_variable``;
+    # ``OPTIONAL`` lets non-blueprint callers (manual
+    # tests, the integration's own kicks) ignore the
+    # response without an error.
+    supports_response=SupportsResponse.OPTIONAL,
     # The blueprint's reactive triggers don't carry
     # ``trigger_id`` / ``trigger_entity`` defaults; the
     # synthetic kick supplies sensible fallbacks so the

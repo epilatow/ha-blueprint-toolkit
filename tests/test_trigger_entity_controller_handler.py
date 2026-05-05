@@ -474,15 +474,16 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
 
 
 class TestArgparseGuards(HandlerArgparseGuardsBase):
-    """Schema rejection / unregistered notify must short-circuit argparse."""
+    """Schema rejection must short-circuit argparse.
+
+    The unregistered-notify-service guard auto-skips
+    because TEC's schema no longer carries a
+    ``notification_service`` field -- notify dispatch is
+    owned by the blueprint via ``response_variable`` /
+    ``notify_action`` rather than by the handler.
+    """
 
     handler = handler
-    # Schema-rejection-blocks-service-layer is the universal
-    # check; the unregistered-notify case is exercised via
-    # ``test_trigger_entity_controller_integration.py`` end-to-end
-    # since the unit test would need full
-    # cross-field-validation setup (controlled / trigger /
-    # disabling entity sets all populated, etc.).
 
 
 # --------------------------------------------------------

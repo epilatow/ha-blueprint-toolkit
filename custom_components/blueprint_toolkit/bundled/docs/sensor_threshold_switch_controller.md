@@ -16,8 +16,9 @@ override protection, auto-off functionality, and notification support.
   duration when manually activated.
 - **Startup Recovery**: If Home Assistant restarts with the switch already ON,
   starts the auto-off timer.
-- **Notifications**: Optionally sends notifications for all actions via a
-  configurable notification service.
+- **Notifications**: Optionally runs a user-supplied action chain (one or more
+  "Call service" steps) on every action, with the pre-built message exposed as
+  a `{{ message }}` variable inside the chain.
 
 ## Usage
 
@@ -43,14 +44,14 @@ entities.
 
 ### Optional
 
-| Parameter                | Default                     | Description                                                                                                                                 |
-| ------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Sampling Window**      | 300s                        | Rolling window (in seconds) for min/max calculation.                                                                                        |
-| **Disable Window**       | 10s                         | Time window for double-off detection. Two manual switch-off operations within this window disable the sensor override. Set to 0 to disable. |
-| **Auto-Off Timeout**     | 30m                         | Minutes before auto-off after manual switch activation. Set to 0 to disable.                                                                |
-| **Notification Service** | *(empty)*                   | Service name for notifications (e.g., `notify` or `notify.mobile_app_phone`). Leave empty to disable.                                       |
-| **Notification Prefix**  | `'STSC: '`                  | Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.                      |
-| **Notification Suffix**  | `' at YYYY-MM-DD HH:mm:ss'` | Text appended to notifications. Supports timestamp tokens (see below). Quotes show the leading space in the default.                        |
+| Parameter               | Default                     | Description                                                                                                                                 |
+| ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sampling Window**     | 300s                        | Rolling window (in seconds) for min/max calculation.                                                                                        |
+| **Disable Window**      | 10s                         | Time window for double-off detection. Two manual switch-off operations within this window disable the sensor override. Set to 0 to disable. |
+| **Auto-Off Timeout**    | 30m                         | Minutes before auto-off after manual switch activation. Set to 0 to disable.                                                                |
+| **Notification Action** | *(empty)*                   | Action(s) to run on a notification (e.g. `notify.mobile_app_*`, a notify group, a script call). Receives the message via `{{ message }}`    |
+| **Notification Prefix** | `'STSC: '`                  | Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.                      |
+| **Notification Suffix** | `' at YYYY-MM-DD HH:mm:ss'` | Text appended to notifications. Supports timestamp tokens (see below). Quotes show the leading space in the default.                        |
 
 ### Timestamp Tokens
 
@@ -88,9 +89,9 @@ without requiring ad-hoc instrumentation.
 ### Entity attributes (always on)
 
 After every invocation, the automation writes decision metadata to a
-`blueprint_toolkit.stsc_<slug>_state` entity as
-attributes (where `<slug>` derives from the automation entity_id). These are
-visible in **Developer Tools > States** with no configuration.
+`blueprint_toolkit.stsc_<slug>_state` entity as attributes (where `<slug>`
+derives from the automation entity_id). These are visible in **Developer Tools
+\> States** with no configuration.
 
 The diagnostic entity's state value is the same as `last_action` (`TURN_ON`,
 `TURN_OFF`, or `NONE`) -- the most recent decision -- so dashboards keying off
@@ -111,8 +112,8 @@ the state value mirror the action.
 To view:
 
 1. Go to **Developer Tools > States**.
-2. Search for `blueprint_toolkit.stsc_*_state`
-   and find your instance's entity.
+2. Search for `blueprint_toolkit.stsc_*_state` and find your instance's
+   entity.
 3. Expand the attributes to see the latest decision context.
 
 ### Debug logging (opt-in)

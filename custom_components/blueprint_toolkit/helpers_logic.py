@@ -154,22 +154,6 @@ def format_notification(
     return f"{formatted_prefix}{text}{formatted_suffix}"
 
 
-def parse_notification_service(service: str) -> tuple[str, str]:
-    """Split a notify-service string into ``(domain, name)``.
-
-    Accepts both ``notify.foo`` (full ``domain.service``)
-    and the bare ``foo`` short form, defaulting to the
-    ``notify`` domain. Used by per-port handlers in two
-    spots: argparse-time validation that the service is
-    registered, and the actual dispatch when a finding-
-    style notification needs to be sent.
-    """
-    if "." in service:
-        domain, name = service.split(".", 1)
-        return domain, name
-    return "notify", service
-
-
 def md_escape(s: str) -> str:
     r"""Escape CommonMark ``\``, ``[``, ``]`` for safe interpolation.
 
@@ -372,6 +356,34 @@ def validate_and_join_regex_patterns(
         )
     joined = "|".join(line.raw for line in valid_lines)
     return JoinedRegexResult(joined=joined, errors=errors, lines=valid_lines)
+
+
+@dataclass(frozen=True)
+class TypedServiceResponse:
+    """Typed response shape for handlers that opt into
+    HA's ``SupportsResponse``.
+
+    HA's ``ServiceResponse`` is ``dict[str, JsonValueType]
+    | None``, so the on-the-wire contract between handler
+    and blueprint is a free-form string-key dict. This
+    dataclass pins each known field as a typed attribute
+    in one place; the entrypoint converts to the wire
+    dict via ``dataclasses.asdict`` only at the boundary.
+
+    Internal handler functions (``_async_argparse``,
+    ``_async_service_layer``) annotate ``-> TypedServiceResponse``
+    so mypy rejects bare-dict returns -- a future agent
+    cannot bypass the typed shape with ``return {"foo": "x"}``.
+    All fields default so a no-data return is just
+    ``return TypedServiceResponse()``.
+
+    Add a new field here when a handler needs to expose
+    one to its blueprint -- the union of all fields stays
+    in this single class so callers cross-reference one
+    place for the response shape.
+    """
+
+    notification_message: str = ""
 
 
 @dataclass
@@ -860,6 +872,19 @@ class BlueprintHandlerSpec:
     a port that needs none of them (e.g. a periodic
     watchdog) gets just the service registration.
 
+    Optional fields:
+        supports_response: Pass
+            ``homeassistant.core.SupportsResponse.OPTIONAL``
+            (or ``ONLY``) when the handler returns a
+            ``ServiceResponse`` mapping that the calling
+            blueprint captures via ``response_variable``.
+            STSC + TEC use this to hand the user-built
+            notification message back to the blueprint
+            runner, which then invokes the user-supplied
+            ``notify_action`` step. Watchdog handlers
+            leave it ``None`` (the dispatcher defaults to
+            no response).
+
     Lifecycle hooks:
         kick_variables: When set, restart-recovery is
             enabled. At HA-started time + after every
@@ -900,8 +925,21 @@ class BlueprintHandlerSpec:
     # Hass / ServiceCall typed as ``Any`` here -- the pure
     # flavour bans HA imports even under ``TYPE_CHECKING``.
     # Callers supply real HA objects; runtime / lifecycle
-    # consumers narrow the types at the receiving end.
-    service_handler: Callable[[Any, Any], Awaitable[None]]
+    # consumers narrow the types at the receiving end. The
+    # handler return type is ``Any`` rather than ``None`` so
+    # handlers that opt into ``supports_response`` can hand
+    # back a ``homeassistant.core.ServiceResponse`` mapping
+    # without forcing every other handler to declare a
+    # return type.
+    service_handler: Callable[[Any, Any], Awaitable[Any]]
+    # ``homeassistant.core.SupportsResponse`` value (typed
+    # ``Any`` to keep this module HA-import-free). When set,
+    # the dispatcher registers the service with this
+    # ``supports_response=`` flag so the blueprint runner
+    # can capture the handler's return value via the
+    # automation step's ``response_variable``. Default
+    # ``None`` means HA's own default applies (no response).
+    supports_response: Any = None
     kick_variables: dict[str, Any] | None = None
     on_reload: Callable[[Any], None] | None = None
     on_entity_remove: Callable[[Any, str], None] | None = None
@@ -947,6 +985,7 @@ __all__ = [
     "JoinedRegexResult",
     "LifecycleMutators",
     "PersistentNotification",
+    "TypedServiceResponse",
     "UnmatchedDirective",
     "device_header_line",
     "format_notification",
@@ -960,7 +999,6 @@ __all__ = [
     "md_escape",
     "notification_prefix",
     "parse_entity_registry_update",
-    "parse_notification_service",
     "resolve_target_integrations",
     "slugify",
     "spec_bucket",

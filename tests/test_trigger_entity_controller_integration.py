@@ -17,8 +17,11 @@ Exercises the parts that the in-process unit tests
 the live ``vol.Schema`` argparse, cross-field + state
 validation, the full ``_async_service_layer`` build-and-
 apply loop against ``hass.states`` / ``hass.services``,
-and the EVENT_AUTOMATION_RELOADED -> kick-discovery
-flow. Same pytest-HACC harness as ``test_integration.py``.
+the response-shape contract that hands the user-facing
+notification body back to the calling blueprint via
+``response_variable``, and the
+EVENT_AUTOMATION_RELOADED -> kick-discovery flow. Same
+pytest-HACC harness as ``test_integration.py``.
 
 Each test sets up our integration via the config flow,
 seeds the ``hass.states`` fixture with the entities the
@@ -111,7 +114,6 @@ def _valid_payload(
     trigger_entity_id: str = MOTION,
     trigger_to_state: str = "on",
     auto_off_minutes: int = 2,
-    notification_service: str = "",
 ) -> dict[str, Any]:
     """Build a fully-populated TEC service-call payload."""
     return {
@@ -126,7 +128,6 @@ def _valid_payload(
         "trigger_forces_on_raw": False,
         "trigger_disabling_entities_raw": [],
         "trigger_disabling_period_raw": "always",
-        "notification_service": notification_service,
         "notification_prefix_raw": "TEC: ",
         "notification_suffix_raw": "",
         "notification_events_raw": [],
@@ -570,6 +571,171 @@ class TestAutoOffSchedulesAndFires:
         # assert > 0 here. The live e2e walk-by test is
         # the real validation; this test guards the wiring
         # shape.
+
+
+# --------------------------------------------------------
+# Service response + supports_response
+# --------------------------------------------------------
+
+
+class TestServiceResponseShape:
+    async def test_trigger_on_returns_notification_message_when_enabled(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """A trigger-on event with the
+        ``triggered-on`` notification event configured
+        produces a non-empty
+        ``response.notification_message`` -- the
+        blueprint captures it via ``response_variable``
+        and runs the user-supplied ``notify_action``
+        step against it.
+        """
+        from pytest_homeassistant_custom_component.common import (
+            async_mock_service,
+        )
+
+        await _setup_integration(hass)
+        hass.states.async_set(LIGHT, "off")
+        hass.states.async_set(MOTION, "on")
+        async_mock_service(hass, "homeassistant", "turn_on")
+
+        payload = _valid_payload(instance_id="automation.tec_resp")
+        # Notify on every event so the trigger-on path
+        # produces a body.
+        payload["notification_events_raw"] = [
+            "triggered-on",
+            "forced-on",
+            "auto-off",
+        ]
+        response = await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            payload,
+            blocking=True,
+            return_response=True,
+        )
+        await hass.async_block_till_done()
+
+        assert isinstance(response, dict)
+        assert "notification_message" in response
+        assert response["notification_message"]
+
+    async def test_event_filtered_out_returns_empty_message(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """When ``notification_events`` excludes the
+        decision's event type, the handler returns an
+        empty ``notification_message`` and the blueprint
+        ``choose`` short-circuits without firing the
+        user's notify action.
+        """
+        from pytest_homeassistant_custom_component.common import (
+            async_mock_service,
+        )
+
+        await _setup_integration(hass)
+        hass.states.async_set(LIGHT, "off")
+        hass.states.async_set(MOTION, "on")
+        async_mock_service(hass, "homeassistant", "turn_on")
+
+        payload = _valid_payload(
+            instance_id="automation.tec_resp_filtered",
+        )
+        # Only ``auto-off`` events notify; the trigger-on
+        # event we drive falls outside the filter so the
+        # response carries an empty message.
+        payload["notification_events_raw"] = ["auto-off"]
+        response = await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            payload,
+            blocking=True,
+            return_response=True,
+        )
+        await hass.async_block_till_done()
+
+        assert response == {"notification_message": ""}
+
+
+class TestServiceRegistersWithSupportsResponse:
+    async def test_registered_service_supports_response_optional(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """The service registers with
+        ``SupportsResponse.OPTIONAL`` so the blueprint can
+        capture the handler's return value via
+        ``response_variable`` without forcing every
+        non-blueprint caller (the auto-off wakeup, manual
+        triggers) to handle the response.
+        """
+        from homeassistant.core import SupportsResponse
+
+        await _setup_integration(hass)
+        assert (
+            hass.services.supports_response(DOMAIN, SERVICE)
+            == SupportsResponse.OPTIONAL
+        )
+
+
+class TestStateSavedBeforeResponseReturned:
+    async def test_state_persists_before_handler_response(
+        self,
+        hass,  # noqa: ANN001
+        monkeypatch: Any,
+    ) -> None:
+        """Code-ordering invariant: the diagnostic state
+        write must run before the handler returns the
+        response. The blueprint runner invokes the user's
+        ``notify_action`` step AFTER the handler returns,
+        so this ordering guarantees a notify-action
+        failure can't roll back the state save (which
+        carries the pending ``auto_off_at`` timestamp).
+        """
+        from pytest_homeassistant_custom_component.common import (
+            async_mock_service,
+        )
+
+        from custom_components.blueprint_toolkit.trigger_entity_controller import (  # noqa: E501
+            handler as tec_handler,
+        )
+
+        await _setup_integration(hass)
+        hass.states.async_set(LIGHT, "off")
+        hass.states.async_set(MOTION, "on")
+        async_mock_service(hass, "homeassistant", "turn_on")
+
+        call_order: list[str] = []
+        real_update = tec_handler.update_instance_state
+
+        def _spy_update(*args: Any, **kwargs: Any) -> None:
+            call_order.append("state")
+            real_update(*args, **kwargs)
+
+        monkeypatch.setattr(
+            tec_handler,
+            "update_instance_state",
+            _spy_update,
+        )
+
+        payload = _valid_payload(instance_id="automation.tec_order")
+        payload["notification_events_raw"] = ["triggered-on"]
+        response = await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            payload,
+            blocking=True,
+            return_response=True,
+        )
+        call_order.append("response")
+        await hass.async_block_till_done()
+
+        assert call_order.count("state") == 1
+        assert call_order[-1] == "response"
+        # Sanity: we exercised the message-emitting branch.
+        assert response and response.get("notification_message")
 
 
 # --------------------------------------------------------
