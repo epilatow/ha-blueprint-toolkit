@@ -22,6 +22,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     CHECK_ALL,
     DRIFT_CHECK_DEVICE_ENTITY_ID,
     DRIFT_CHECK_DEVICE_ENTITY_NAME,
+    DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
     Config,
     DeviceEntry,
     DeviceInfo,
@@ -29,13 +30,17 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     DirectiveInputs,
     DriftDetail,
     EntityDriftInfo,
+    VisibleAliasedEntityFinding,
+    VisibleAliasedEntityInfo,
     _build_notification_message,
+    _build_visible_aliased_notification_message,
     _check_entity_drift,
     _check_id_enabled,
     _check_name_enabled,
     _compute_recommended_override,
     _evaluate_device,
     _evaluate_deviceless,
+    _evaluate_visible_aliased_entities,
     _is_excluded,
     _matches_with_collision_suffix,
     _validate_edw_directives,
@@ -1426,6 +1431,259 @@ class TestValidateEdwDirectives:
         )
         out = _validate_edw_directives(di, all_integrations=[])
         assert not [u for u in out if u.field == "exclude_entities"], out
+
+
+def _vinfo(
+    source_entity_id: str = "switch.foo",
+    wrapper_entity_id: str = "foo",
+    wrapper_target_domain: str = "fan",
+    wrapper_title: str = "Foo Fan",
+    source_friendly_name: str = "Foo",
+    source_device_id: str | None = "dev_abc",
+    source_config_entry_id: str | None = "cfg_abc",
+) -> VisibleAliasedEntityInfo:
+    return VisibleAliasedEntityInfo(
+        source_entity_id=source_entity_id,
+        wrapper_entity_id=wrapper_entity_id,
+        wrapper_target_domain=wrapper_target_domain,
+        wrapper_title=wrapper_title,
+        source_friendly_name=source_friendly_name,
+        source_device_id=source_device_id,
+        source_config_entry_id=source_config_entry_id,
+    )
+
+
+class TestVisibleAliasedEvaluate:
+    """Per-port logic-side coverage of the visible-aliased
+    drift check.
+
+    The handler is responsible for the defensive-skip cases
+    (entry disabled, malformed options, wrapper missing,
+    source disabled, source already hidden) -- those entries
+    never reach the logic layer, so the tests here only
+    cover the user-exclusion + finding-shape / body-render
+    paths.
+    """
+
+    def test_no_infos_no_findings(self) -> None:
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(cfg, [])
+        assert result.has_issue is False
+        assert result.findings == []
+        assert result.entries_kept == 0
+        assert result.entries_excluded == 0
+
+    def test_each_info_yields_one_finding(self) -> None:
+        cfg = _config()
+        infos = [
+            _vinfo(
+                source_entity_id="switch.foo",
+                wrapper_entity_id="foo",
+                wrapper_target_domain="fan",
+                source_friendly_name="Foo",
+            ),
+            _vinfo(
+                source_entity_id="switch.bar",
+                wrapper_entity_id="bar",
+                wrapper_target_domain="light",
+                source_friendly_name="Bar",
+            ),
+        ]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert result.has_issue is True
+        assert len(result.findings) == 2
+        eids = {f.source_entity_id for f in result.findings}
+        assert eids == {"switch.foo", "switch.bar"}
+
+    def test_finding_shape_carries_wrapper_and_settings_url(
+        self,
+    ) -> None:
+        cfg = _config()
+        infos = [
+            _vinfo(
+                source_entity_id="switch.kitchen",
+                wrapper_entity_id="kitchen",
+                wrapper_target_domain="fan",
+                source_friendly_name="Kitchen Fan",
+                source_device_id="dev_kitchen",
+            ),
+        ]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert len(result.findings) == 1
+        finding = result.findings[0]
+        assert isinstance(finding, VisibleAliasedEntityFinding)
+        assert finding.source_entity_id == "switch.kitchen"
+        assert finding.wrapper_entity_id == "kitchen"
+        assert finding.wrapper_target_domain == "fan"
+        assert finding.source_friendly_name == "Kitchen Fan"
+        assert finding.source_settings_url == (
+            "/config/devices/device/dev_kitchen"
+        )
+
+    def test_settings_url_falls_back_to_config_entry_when_no_device(
+        self,
+    ) -> None:
+        # Helper-backed switch_as_x sources can lack a
+        # device_id but carry a config_entry_id; URL helper
+        # routes to the entities-list filtered by the config
+        # entry in that case.
+        cfg = _config()
+        infos = [
+            _vinfo(
+                source_entity_id="switch.input",
+                source_device_id=None,
+                source_config_entry_id="cfg_input",
+            ),
+        ]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert result.findings[0].source_settings_url == (
+            "/config/entities/?config_entry=cfg_input"
+        )
+
+    def test_excluded_by_entity_id_list(self) -> None:
+        cfg = _config(exclude_entity_ids=["switch.foo"])
+        infos = [
+            _vinfo(source_entity_id="switch.foo"),
+            _vinfo(
+                source_entity_id="switch.bar",
+                wrapper_entity_id="bar",
+            ),
+        ]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert {f.source_entity_id for f in result.findings} == {
+            "switch.bar",
+        }
+        assert result.entries_excluded == 1
+
+    def test_excluded_by_entity_id_regex(self) -> None:
+        cfg = _config(exclude_entity_id_regex="^switch\\.skip_")
+        infos = [
+            _vinfo(source_entity_id="switch.skip_me"),
+            _vinfo(
+                source_entity_id="switch.keep",
+                wrapper_entity_id="keep",
+            ),
+        ]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert {f.source_entity_id for f in result.findings} == {
+            "switch.keep",
+        }
+        assert result.entries_excluded == 1
+
+    def test_excluded_by_entity_name_regex(self) -> None:
+        cfg = _config(exclude_entity_name_regex="^Skip ")
+        infos = [
+            _vinfo(
+                source_entity_id="switch.foo",
+                source_friendly_name="Skip Me",
+            ),
+            _vinfo(
+                source_entity_id="switch.bar",
+                wrapper_entity_id="bar",
+                source_friendly_name="Keep",
+            ),
+        ]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert {f.source_entity_id for f in result.findings} == {
+            "switch.bar",
+        }
+        assert result.entries_excluded == 1
+
+    def test_only_emits_when_nonempty(self) -> None:
+        cfg = _config(exclude_entity_ids=["switch.foo"])
+        infos = [_vinfo(source_entity_id="switch.foo")]
+        result = _evaluate_visible_aliased_entities(cfg, infos)
+        assert result.has_issue is False
+        assert result.findings == []
+        # Title + message stay empty when there is nothing
+        # to show so the dispatcher renders a dismiss spec.
+        assert result.notification_title == ""
+        assert result.notification_message == ""
+
+    def test_notification_id_uses_prefix(self) -> None:
+        cfg = _config(
+            notification_prefix="entity_defaults_watchdog_test__",
+        )
+        result = _evaluate_visible_aliased_entities(cfg, [_vinfo()])
+        assert result.notification_id == (
+            "entity_defaults_watchdog_test__visible_aliased"
+        )
+
+
+class TestVisibleAliasedNotificationBody:
+    def test_body_lists_each_finding(self) -> None:
+        findings = [
+            VisibleAliasedEntityFinding(
+                source_entity_id="switch.kitchen",
+                wrapper_entity_id="kitchen",
+                wrapper_target_domain="fan",
+                source_friendly_name="Kitchen Fan",
+                source_settings_url=("/config/devices/device/dev_kitchen"),
+            ),
+        ]
+        body = _build_visible_aliased_notification_message(findings)
+        assert "`switch.kitchen`" in body
+        assert "`fan.kitchen`" in body
+        assert "/config/devices/device/dev_kitchen" in body
+        # Body names switch_as_x so the user knows which
+        # integration owns the wrapper, and lists voice
+        # assistants as one of the surfaces where both
+        # rows show up.
+        assert "switch_as_x" in body
+        assert "voice assistants" in body
+
+    def test_body_escapes_friendly_name(self) -> None:
+        findings = [
+            VisibleAliasedEntityFinding(
+                source_entity_id="switch.foo",
+                wrapper_entity_id="foo",
+                wrapper_target_domain="fan",
+                source_friendly_name="Bad [Name]",
+                source_settings_url="/config/devices/device/dev_foo",
+            ),
+        ]
+        body = _build_visible_aliased_notification_message(findings)
+        assert "Bad \\[Name\\]" in body
+        assert "[Bad [Name]]" not in body
+
+    def test_body_sorts_findings_by_entity_id(self) -> None:
+        findings = [
+            VisibleAliasedEntityFinding(
+                source_entity_id="switch.zeta",
+                wrapper_entity_id="zeta",
+                wrapper_target_domain="fan",
+                source_friendly_name="Zeta",
+                source_settings_url="/config/devices/device/dev_zeta",
+            ),
+            VisibleAliasedEntityFinding(
+                source_entity_id="switch.alpha",
+                wrapper_entity_id="alpha",
+                wrapper_target_domain="fan",
+                source_friendly_name="Alpha",
+                source_settings_url=("/config/devices/device/dev_alpha"),
+            ),
+        ]
+        body = _build_visible_aliased_notification_message(findings)
+        # alpha must appear before zeta in the rendered body
+        assert body.index("switch.alpha") < body.index("switch.zeta")
+
+
+class TestCheckAllExposesVisibleAliased:
+    """The CHECK_ALL <-> blueprint pairing.
+
+    Locks down the constant rename + the user-facing dash
+    style so a future refactor can't silently drop the
+    drift-check option from CHECK_ALL. The blueprint-side
+    selector-options pairing lives in
+    ``test_entity_defaults_watchdog_handler.py`` (yaml is
+    available there via the test file's PEP 723 deps).
+    """
+
+    def test_constant_value_is_dashed(self) -> None:
+        assert DRIFT_CHECK_VISIBLE_ALIASED_ENTITY == "visible-aliased-entity"
+
+    def test_constant_in_check_all(self) -> None:
+        assert DRIFT_CHECK_VISIBLE_ALIASED_ENTITY in CHECK_ALL
 
 
 class TestCodeQuality(CodeQualityBase):

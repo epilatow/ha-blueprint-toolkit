@@ -326,6 +326,18 @@ async def _async_service_layer(
         logic.DEVICELESS_DOMAINS,
         target_integrations,
     )
+    # Visible-aliased inputs come from the switch_as_x
+    # config entries, not the entity registry walk -- the
+    # source-entity hide is keyed off the wrapper config
+    # entry, so the entry list is the natural starting
+    # point. Defensive-check skips (entry disabled,
+    # malformed options, wrapper missing, source disabled,
+    # source already hidden) get filtered out at the
+    # builder so the logic layer only sees genuinely
+    # candidate sources.
+    visible_aliased_infos, visible_aliased_defensive_skipped = (
+        _build_visible_aliased_inputs(hass)
+    )
 
     # Candidate sets for the directive validators. Sourced
     # from the FULL device + entity registries (NOT filtered
@@ -380,6 +392,7 @@ async def _async_service_layer(
         all_integrations,
         max_notifications,
         directive_inputs,
+        visible_aliased_infos,
     )
 
     unmatched_spec = make_unmatched_directives_notification(
@@ -424,6 +437,21 @@ async def _async_service_layer(
             "deviceless_excluded": ev.stat_deviceless_excluded,
             "deviceless_drift": ev.stat_deviceless_drift,
             "deviceless_stale": ev.stat_deviceless_stale,
+            # ``kept + excluded`` is ``len(infos)`` -- every
+            # candidate the handler handed to the logic
+            # layer. Adding the handler-side defensive-skip
+            # count gives the total number of switch_as_x
+            # entries walked.
+            "visible_aliased_total": (
+                ev.stat_visible_aliased_kept
+                + ev.stat_visible_aliased_excluded
+                + visible_aliased_defensive_skipped
+            ),
+            "visible_aliased_excluded": (
+                ev.stat_visible_aliased_excluded
+                + visible_aliased_defensive_skipped
+            ),
+            "visible_aliased_flagged": (ev.stat_visible_aliased_flagged),
             "unmatched_directives": len(ev.unmatched_directives),
         },
     )
@@ -658,6 +686,125 @@ def _build_deviceless_inputs(
         peers.setdefault(dom, set()).add(obj)
 
     return (entities, peers)
+
+
+# --------------------------------------------------------
+# Visible-aliased-entity inputs (event-loop only)
+# --------------------------------------------------------
+#
+# ``switch_as_x`` is HA core's wrapper integration: a user
+# exposes ``switch.foo`` as ``fan.foo`` and the integration
+# sets ``hidden_by="integration"`` on the source entity once
+# at config-entry creation. If ``hidden_by`` is later
+# cleared on the source, both rows become visible
+# everywhere. This builder discovers the candidate set
+# (switch_as_x entries whose source is currently visible)
+# and hands it to the logic layer for per-entity exclusion
+# + finding emission.
+
+
+_SWITCH_AS_X_DOMAIN = "switch_as_x"
+
+
+def _build_visible_aliased_inputs(
+    hass: HomeAssistant,
+) -> tuple[list[logic.VisibleAliasedEntityInfo], int]:
+    """Walk switch_as_x entries; return surviving inputs + defensive-skip count.
+
+    Defensive-skip cases (counted into the returned int, not
+    the input list):
+
+    - The whole switch_as_x entry is disabled
+      (``entry.disabled_by is not None``) -- skip.
+    - ``entry.options`` is malformed (missing
+      ``entity_id`` / ``target_domain``, or non-string
+      values, or the source isn't registered) -- skip.
+    - No registry entry whose
+      ``config_entry_id == entry.entry_id`` AND
+      ``domain == target_domain`` matches, OR more than one
+      such entry matches. Something else has gone sideways
+      with the entry; a flag would mislead.
+    - The source is disabled in the registry
+      (``source.disabled_by is not None``) -- skip.
+      Disabled covers the same user-facing symptom (source
+      row hidden), so flagging would be a false positive.
+    - The source still has ``hidden_by`` set -- this is the
+      healthy case. Filtered out at the builder so the
+      logic layer's input list maps 1:1 to candidate
+      findings.
+    """
+    ent_reg = er.async_get(hass)
+    infos: list[logic.VisibleAliasedEntityInfo] = []
+    defensive_skipped = 0
+
+    for entry in hass.config_entries.async_entries(
+        _SWITCH_AS_X_DOMAIN,
+    ):
+        if entry.disabled_by is not None:
+            defensive_skipped += 1
+            continue
+
+        options = entry.options or {}
+        source_eid_raw = options.get("entity_id")
+        target_domain_raw = options.get("target_domain")
+        if not isinstance(source_eid_raw, str) or not source_eid_raw:
+            defensive_skipped += 1
+            continue
+        if not isinstance(target_domain_raw, str) or not target_domain_raw:
+            defensive_skipped += 1
+            continue
+
+        source = ent_reg.async_get(source_eid_raw)
+        if source is None:
+            defensive_skipped += 1
+            continue
+
+        # Filter wrapper candidates by both ``config_entry_id``
+        # and ``target_domain`` so the lookup remains stable if
+        # a switch_as_x entry ever registers more than one
+        # entity (today HA core registers exactly one per
+        # entry; the registry walk order isn't guaranteed
+        # stable across HA versions).
+        wrapper_matches = [
+            e
+            for e in ent_reg.entities.values()
+            if e.config_entry_id == entry.entry_id
+            and e.domain == target_domain_raw
+        ]
+        if len(wrapper_matches) != 1:
+            defensive_skipped += 1
+            continue
+        wrapper = wrapper_matches[0]
+
+        if source.disabled_by is not None:
+            defensive_skipped += 1
+            continue
+
+        # Healthy case: integration- (or user-) hidden source
+        # is filtered out here. Logic only sees candidates
+        # whose source is visible, mapping 1:1 to findings
+        # before user exclusions.
+        if source.hidden_by is not None:
+            defensive_skipped += 1
+            continue
+
+        wrapper_obj_id = wrapper.entity_id.split(".", 1)[1]
+        friendly = str(
+            source.name or source.original_name or source_eid_raw,
+        )
+        infos.append(
+            logic.VisibleAliasedEntityInfo(
+                source_entity_id=source_eid_raw,
+                wrapper_entity_id=wrapper_obj_id,
+                wrapper_target_domain=target_domain_raw,
+                wrapper_title=str(entry.title or ""),
+                source_friendly_name=friendly,
+                source_device_id=source.device_id,
+                source_config_entry_id=source.config_entry_id,
+            ),
+        )
+
+    return infos, defensive_skipped
 
 
 # --------------------------------------------------------

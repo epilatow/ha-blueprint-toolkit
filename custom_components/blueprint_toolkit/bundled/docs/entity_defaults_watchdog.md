@@ -21,10 +21,13 @@ resolved.
   conflicts whose original peers were removed
 - Detect redundant name prefixes (overrides that include the device name when
   HA would add it automatically)
+- Detect visible aliased entities -- `switch_as_x` wrappers whose source
+  entity is no longer hidden, so both rows show up in dashboards, voice
+  assistants, and entity pickers
 - Per-device persistent notifications with auto-clear on drift resolution;
   single aggregate notification for deviceless entities
 - Selectable drift checks (device entity ID, device entity name, deviceless
-  ID, or any combination)
+  ID, visible aliased entity, or any combination)
 - Include/exclude integration filtering
 - Regex-based device and entity exclusion filters
 - Notification cap to limit per-device notifications
@@ -44,7 +47,7 @@ resolved.
 
 | Parameter                             | Description                                                                                                                                                                                                         |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), or any combination. Empty means all.                                                                                       |
+| Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), `visible-aliased-entity`, or any combination. Empty means all.                                                             |
 | Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities and to registry-backed deviceless entries (e.g. `template`, `rachio`). State-only entities have no platform to filter on. |
 | Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations.                                                                                                                                       |
 | Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                              |
@@ -204,6 +207,33 @@ adding `unique_id:` on every block has two benefits:
 - The watchdog can compare names to entity IDs and flag drift -- without a
   registry entry, it has no authoritative name to compare against.
 
+### Visible aliased entities
+
+`switch_as_x` is HA core's wrapper integration. When a user exposes (for
+example) `switch.kitchen_fan` as `fan.kitchen_fan`, switch_as_x sets
+`hidden_by="integration"` on the source entity once at config-entry creation,
+so the source row hides from dashboards / voice assistants / the entities
+picker while the wrapper row takes over.
+
+The hide is applied **once**. If `hidden_by` is later cleared on the source,
+both rows become visible everywhere again, and switch_as_x does not notice or
+self-heal. Users typically see the symptom as "every aliased switch is
+suddenly showing up twice in voice control".
+
+The watchdog flags every switch_as_x source whose `hidden_by` and
+`disabled_by` are both `None` (and whose wrapper entity exists in the
+registry). The notification body lists each flagged source with a per-entity
+link to **Settings > Entities > <source>** so you can re-toggle visibility off
+in one click.
+
+Manual fix: open the per-entity Settings page from the notification body,
+toggle **Visible** off. The toggle sets `hidden_by="user"` rather than
+`hidden_by="integration"` -- this sticks even if you later remove the
+switch_as_x wrapper, whereas an integration-managed hide would be cleaned up
+when the wrapper goes away. For most users the difference is moot; if you need
+the integration-managed behavior, remove and re-add the switch_as_x config
+entry instead (the integration reapplies its hide on creation).
+
 ### Notification panel ordering
 
 The order of notifications in the HA notification panel may change between
@@ -265,6 +295,11 @@ Tools > States to find it.
 - `deviceless_drift`: Deviceless entities flagged as drifted (excludes
   stale-suffix cases)
 - `deviceless_stale`: Deviceless entities with stale collision suffixes
+- `visible_aliased_total`: Total `switch_as_x` config entries walked
+- `visible_aliased_excluded`: Visible-aliased entries skipped via exclusions
+  or defensive checks (entry disabled, malformed options, wrapper entity
+  missing, source disabled, source already hidden)
+- `visible_aliased_flagged`: Visible-aliased findings emitted this run
 - `unmatched_directives`: Include / exclude directives that bound to zero live
   candidates this run (zero unless **Validate include / exclude directives**
   surfaced something)

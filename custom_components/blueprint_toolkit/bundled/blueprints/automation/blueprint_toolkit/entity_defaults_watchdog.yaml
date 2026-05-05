@@ -28,6 +28,8 @@ blueprint:
               value: device-entity-name
             - label: Entity ID (deviceless entities)
               value: entity-id
+            - label: Visible aliased entity
+              value: visible-aliased-entity
 
     include_integrations:
       name: Include integrations

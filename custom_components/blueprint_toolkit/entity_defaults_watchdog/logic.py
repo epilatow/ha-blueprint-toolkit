@@ -47,12 +47,14 @@ class DeviceEntry:
 DRIFT_CHECK_DEVICE_ENTITY_ID = "device-entity-id"
 DRIFT_CHECK_DEVICE_ENTITY_NAME = "device-entity-name"
 DRIFT_CHECK_ENTITY_ID = "entity-id"
+DRIFT_CHECK_VISIBLE_ALIASED_ENTITY = "visible-aliased-entity"
 
 CHECK_ALL: frozenset[str] = frozenset(
     {
         DRIFT_CHECK_DEVICE_ENTITY_ID,
         DRIFT_CHECK_DEVICE_ENTITY_NAME,
         DRIFT_CHECK_ENTITY_ID,
+        DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
     },
 )
 
@@ -209,6 +211,94 @@ class DevicelessResult:
 
 
 @dataclass
+class VisibleAliasedEntityInfo:
+    """Per-switch_as_x-entry input for the visible-aliased
+    drift check.
+
+    Built by the handler from
+    ``hass.config_entries.async_entries("switch_as_x")``
+    plus entity-registry lookups; consumed by
+    ``_evaluate_visible_aliased_entities``. The handler is
+    responsible for defensive checks (entry disabled,
+    malformed options, wrapper entity missing, source
+    disabled in registry, source already hidden) -- entries
+    that fail those checks are simply not added to the
+    input list.
+
+    Carrying the wrapper's ``target_domain`` + ``title``
+    keeps the logic-side notification body self-contained
+    without re-querying the registry.
+    """
+
+    source_entity_id: str
+    wrapper_entity_id: str
+    wrapper_target_domain: str
+    wrapper_title: str
+    source_friendly_name: str
+    # Source's registry ``device_id`` / ``config_entry_id``
+    # if set. Threaded into ``VisibleAliasedEntityFinding``
+    # so the notification body's link uses the canonical
+    # ``helpers.entity_settings_url`` selection.
+    source_device_id: str | None = None
+    source_config_entry_id: str | None = None
+
+
+@dataclass
+class VisibleAliasedEntityFinding:
+    """One flagged source entity from the visible-aliased
+    check.
+
+    The per-entity shape is deliberately distinct from
+    ``DevicelessDriftDetail`` -- a future repair surface
+    will want to stamp one repair per finding, and packing
+    visible-aliased findings into the deviceless dataclass
+    would either lose fields or pollute the deviceless
+    schema with optional aliased-only fields.
+
+    ``source_settings_url`` is built via
+    ``helpers.entity_settings_url`` from the source's
+    ``device_id`` / ``config_entry_id`` (whichever is
+    present) so the notification body's link goes to a
+    URL HA's frontend actually serves.
+    """
+
+    source_entity_id: str
+    wrapper_entity_id: str
+    wrapper_target_domain: str
+    source_friendly_name: str
+    source_settings_url: str
+
+
+@dataclass
+class VisibleAliasedResult:
+    """Aggregated visible-aliased-entity result.
+
+    Mirrors ``DevicelessResult``: one bucket notification
+    covering every flagged source entity, plus the
+    bookkeeping the handler needs for diagnostic state.
+    The per-finding shape lives on ``findings``; the
+    notification body assembles them into the rendered
+    aggregate message.
+
+    ``entries_kept`` is the count of ``infos`` that survived
+    user exclusion (``len(infos) - entries_excluded``);
+    ``entries_excluded`` is the count filtered out by
+    ``exclude_entities`` / ``exclude_entity_id_regex`` /
+    ``exclude_entity_name_regex``. Defensive-check
+    bookkeeping (entries dropped at the handler before
+    they ever reach logic) is the handler's responsibility.
+    """
+
+    has_issue: bool
+    notification_id: str
+    notification_title: str
+    notification_message: str
+    findings: list[VisibleAliasedEntityFinding]
+    entries_kept: int
+    entries_excluded: int
+
+
+@dataclass
 class DeviceResult:
     """Per-device evaluation result."""
 
@@ -311,6 +401,11 @@ def _check_name_enabled(config: Config) -> bool:
 def _check_deviceless_enabled(config: Config) -> bool:
     """True if deviceless entity-id check is active."""
     return DRIFT_CHECK_ENTITY_ID in config.drift_checks
+
+
+def _check_visible_aliased_enabled(config: Config) -> bool:
+    """True if visible-aliased-entity check is active."""
+    return DRIFT_CHECK_VISIBLE_ALIASED_ENTITY in config.drift_checks
 
 
 def _matches_with_collision_suffix(
@@ -900,6 +995,120 @@ def _evaluate_deviceless(
     )
 
 
+def _build_visible_aliased_notification_message(
+    findings: list[VisibleAliasedEntityFinding],
+) -> str:
+    """Build the visible-aliased-entity bucket body.
+
+    Per-finding bullets explain the symptom (both rows
+    visible) and link to the per-entity Settings page. The
+    leading paragraph names the integration that owns the
+    wrapper (``switch_as_x``) and the surfaces where both
+    rows show up.
+    """
+    sorted_findings = [
+        f
+        for _, _, f in sorted(
+            ((f.source_entity_id, i, f) for i, f in enumerate(findings)),
+            key=lambda triple: (triple[0], triple[1]),
+        )
+    ]
+
+    lines: list[str] = [
+        (
+            f"Visible aliased sources ({len(sorted_findings)}):"
+            " each entity below is wrapped by switch_as_x but its"
+            " source row is still visible. Both rows show up in"
+            " dashboards, voice assistants, and entity pickers."
+        ),
+    ]
+    for f in sorted_findings:
+        name = helpers.md_escape(f.source_friendly_name)
+        wrapper_eid = f"{f.wrapper_target_domain}.{f.wrapper_entity_id}"
+        lines.append(
+            f"- `{f.source_entity_id}` -> wrapped as `{wrapper_eid}`",
+        )
+        lines.append(
+            f"  Re-hide: open [{name}]({f.source_settings_url}),"
+            f" click `{f.source_entity_id}`, toggle"
+            ' "Visible" off.',
+        )
+    lines.append("")
+    lines.append(
+        "Toggling visibility off in the UI sets"
+        ' `hidden_by="user"`, which sticks even if the'
+        " switch_as_x wrapper is later removed. The integration"
+        ' also re-hides with `hidden_by="integration"` only at'
+        " switch_as_x config-entry creation, so a wrapper"
+        " removed and re-added recovers the integration-managed"
+        " hide; a `user` hide does not.",
+    )
+    return "\n".join(lines)
+
+
+def _evaluate_visible_aliased_entities(
+    config: Config,
+    infos: list[VisibleAliasedEntityInfo],
+) -> VisibleAliasedResult:
+    """Evaluate switch_as_x sources for visibility drift.
+
+    Each ``info`` represents a switch_as_x entry whose
+    source is currently visible (``hidden_by is None``);
+    handler-side defensive checks have already filtered
+    out entries with malformed options, disabled wrappers,
+    disabled sources, or missing wrapper entities.
+
+    Per-entity exclusions still apply at the logic layer so
+    users can keep a known-good aliased pair visible without
+    disabling the whole check (the
+    ``exclude_entities`` / ``exclude_entity_id_regex`` /
+    ``exclude_entity_name_regex`` config fields are reused
+    from the device-attached + deviceless paths).
+    """
+    findings: list[VisibleAliasedEntityFinding] = []
+    excluded = 0
+
+    for info in infos:
+        if _is_excluded(
+            config,
+            info.source_entity_id,
+            info.source_friendly_name,
+        ):
+            excluded += 1
+            continue
+        findings.append(
+            VisibleAliasedEntityFinding(
+                source_entity_id=info.source_entity_id,
+                wrapper_entity_id=info.wrapper_entity_id,
+                wrapper_target_domain=info.wrapper_target_domain,
+                source_friendly_name=info.source_friendly_name,
+                source_settings_url=helpers.entity_settings_url(
+                    device_id=info.source_device_id,
+                    config_entry_id=info.source_config_entry_id,
+                ),
+            ),
+        )
+
+    has_issue = bool(findings)
+    title = ""
+    message = ""
+    if has_issue:
+        title = "Visible aliased entities"
+        message = _build_visible_aliased_notification_message(
+            findings,
+        )
+
+    return VisibleAliasedResult(
+        has_issue=has_issue,
+        notification_id=(f"{config.notification_prefix}visible_aliased"),
+        notification_title=title,
+        notification_message=message,
+        findings=findings,
+        entries_kept=len(infos) - excluded,
+        entries_excluded=excluded,
+    )
+
+
 def evaluate_devices(
     config: Config,
     devices: list[DeviceInfo],
@@ -994,6 +1203,15 @@ class EvaluationResult:
     stat_deviceless_excluded: int
     stat_deviceless_drift: int
     stat_deviceless_stale: int
+    # Visible-aliased-entity counters. ``kept`` is the count
+    # of inputs the logic layer received that survived user
+    # exclusion; ``excluded`` is the count filtered by user
+    # exclusion. The handler adds defensive-skip bookkeeping
+    # (entries dropped before they reached logic) on top to
+    # populate the diagnostic state.
+    stat_visible_aliased_kept: int = 0
+    stat_visible_aliased_excluded: int = 0
+    stat_visible_aliased_flagged: int = 0
     unmatched_directives: list[helpers.UnmatchedDirective] = field(
         default_factory=list,
     )
@@ -1091,6 +1309,7 @@ def run_evaluation(
     all_integrations: list[str],
     max_notifications: int,
     directive_inputs: DirectiveInputs | None = None,
+    visible_aliased_infos: list[VisibleAliasedEntityInfo] | None = None,
 ) -> EvaluationResult:
     """Run entity defaults evaluation in a worker thread.
 
@@ -1099,6 +1318,9 @@ def run_evaluation(
     drift classification + notification body assembly stays
     off the event loop.
     """
+    if visible_aliased_infos is None:
+        visible_aliased_infos = []
+
     results = evaluate_devices(config, devices)
 
     notifications = helpers.prepare_notifications(
@@ -1136,6 +1358,31 @@ def run_evaluation(
         ),
     )
 
+    if _check_visible_aliased_enabled(config):
+        visible_aliased = _evaluate_visible_aliased_entities(
+            config,
+            visible_aliased_infos,
+        )
+    else:
+        visible_aliased = VisibleAliasedResult(
+            has_issue=False,
+            notification_id=(f"{config.notification_prefix}visible_aliased"),
+            notification_title="",
+            notification_message="",
+            findings=[],
+            entries_kept=0,
+            entries_excluded=0,
+        )
+    notifications.append(
+        helpers.PersistentNotification(
+            active=visible_aliased.has_issue,
+            notification_id=visible_aliased.notification_id,
+            title=visible_aliased.notification_title,
+            message=visible_aliased.notification_message,
+            instance_id=config.instance_id,
+        ),
+    )
+
     issues = [r for r in results if r.has_issue]
     stat_deviceless_stale = sum(
         [1 for d in deviceless.drifted if d.stale_suffix]
@@ -1167,6 +1414,9 @@ def run_evaluation(
         stat_deviceless_excluded=deviceless.entities_excluded,
         stat_deviceless_drift=stat_deviceless_drift,
         stat_deviceless_stale=stat_deviceless_stale,
+        stat_visible_aliased_kept=visible_aliased.entries_kept,
+        stat_visible_aliased_excluded=visible_aliased.entries_excluded,
+        stat_visible_aliased_flagged=len(visible_aliased.findings),
         unmatched_directives=_validate_edw_directives(
             directive_inputs
             if directive_inputs is not None

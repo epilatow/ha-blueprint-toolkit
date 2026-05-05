@@ -581,6 +581,244 @@ class TestArgparseIntValidation(_ArgparseHarness):
 
 
 # --------------------------------------------------------
+# _build_visible_aliased_inputs defensive-skip cases
+# --------------------------------------------------------
+#
+# The visible-aliased drift check sources its candidate set
+# from ``hass.config_entries.async_entries("switch_as_x")``;
+# every defensive-skip branch lives in
+# ``_build_visible_aliased_inputs`` (the logic layer never
+# sees skipped entries). Each test below plants exactly one
+# fake switch_as_x entry plus a hand-rolled entity registry
+# and asserts the builder returns ``(infos=[],
+# defensive_skipped=1)`` -- the per-cause counter shape the
+# diagnostic-state ``visible_aliased_excluded`` arithmetic
+# depends on.
+
+
+class _FakeRegistryEntry:
+    def __init__(
+        self,
+        *,
+        entity_id: str,
+        config_entry_id: str | None = None,
+        domain: str = "",
+        hidden_by: object = None,
+        disabled_by: object = None,
+        name: str | None = None,
+        original_name: str | None = None,
+    ) -> None:
+        self.entity_id = entity_id
+        self.config_entry_id = config_entry_id
+        self.domain = domain or entity_id.split(".", 1)[0]
+        self.hidden_by = hidden_by
+        self.disabled_by = disabled_by
+        self.name = name
+        self.original_name = original_name
+
+
+class _FakeEntityRegistry:
+    def __init__(self) -> None:
+        self.entities: dict[str, _FakeRegistryEntry] = {}
+
+    def add(self, e: _FakeRegistryEntry) -> None:
+        self.entities[e.entity_id] = e
+
+    def async_get(self, entity_id: str) -> _FakeRegistryEntry | None:
+        return self.entities.get(entity_id)
+
+
+class _FakeConfigEntry:
+    def __init__(
+        self,
+        *,
+        entry_id: str,
+        domain: str,
+        title: str = "",
+        options: dict[str, Any] | None = None,
+        disabled_by: object = None,
+    ) -> None:
+        self.entry_id = entry_id
+        self.domain = domain
+        self.title = title
+        self.options = options if options is not None else {}
+        self.disabled_by = disabled_by
+
+
+class _FakeConfigEntries:
+    def __init__(self, entries: list[_FakeConfigEntry]) -> None:
+        self._entries = entries
+
+    def async_entries(self, domain: str) -> list[_FakeConfigEntry]:
+        return [e for e in self._entries if e.domain == domain]
+
+
+class _FakeHassForBuilder:
+    def __init__(self, entries: list[_FakeConfigEntry]) -> None:
+        self.config_entries = _FakeConfigEntries(entries)
+
+
+class TestBuildVisibleAliasedInputs:
+    """Defensive-skip coverage for ``_build_visible_aliased_inputs``.
+
+    The logic layer sees only entries that pass every
+    defensive check; each test below plants a single failing
+    case and asserts no info reached the input list.
+    """
+
+    def setup_method(self) -> None:
+        self._real_async_get = handler.er.async_get
+        self._registry = _FakeEntityRegistry()
+
+        def _fake_async_get(_hass: Any) -> _FakeEntityRegistry:
+            return self._registry
+
+        handler.er.async_get = _fake_async_get  # type: ignore[assignment]
+
+    def teardown_method(self) -> None:
+        handler.er.async_get = self._real_async_get  # type: ignore[assignment]
+
+    def test_wrapper_missing_in_registry_skipped(self) -> None:
+        # Source registered + visible, switch_as_x entry has
+        # well-formed options, but no registry entry whose
+        # config_entry_id matches -> defensive-skipped.
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="switch.foo",
+                domain="switch",
+                hidden_by=None,
+                disabled_by=None,
+                original_name="Foo",
+            ),
+        )
+        entry = _FakeConfigEntry(
+            entry_id="orphan-entry-id",
+            domain="switch_as_x",
+            options={
+                "entity_id": "switch.foo",
+                "target_domain": "fan",
+            },
+        )
+        h = _FakeHassForBuilder([entry])
+
+        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+
+        assert infos == []
+        assert skipped == 1
+
+    def test_multiple_wrappers_for_same_entry_skipped(self) -> None:
+        # Two registry entries match the same switch_as_x
+        # entry on both ``config_entry_id`` and
+        # ``domain == target_domain``. Today HA core
+        # registers exactly one wrapper per entry, but the
+        # builder defensively skips any entry with !=1
+        # matches so a future core change can't silently
+        # pick whichever entry the registry walk happens to
+        # yield first.
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="switch.dup",
+                domain="switch",
+                hidden_by=None,
+                disabled_by=None,
+                original_name="Dup",
+            ),
+        )
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="fan.dup_a",
+                domain="fan",
+                config_entry_id="entry-id-dup",
+                hidden_by=None,
+                disabled_by=None,
+                original_name="Dup A",
+            ),
+        )
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="fan.dup_b",
+                domain="fan",
+                config_entry_id="entry-id-dup",
+                hidden_by=None,
+                disabled_by=None,
+                original_name="Dup B",
+            ),
+        )
+        entry = _FakeConfigEntry(
+            entry_id="entry-id-dup",
+            domain="switch_as_x",
+            options={
+                "entity_id": "switch.dup",
+                "target_domain": "fan",
+            },
+        )
+        h = _FakeHassForBuilder([entry])
+
+        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+
+        assert infos == []
+        assert skipped == 1
+
+    def test_source_disabled_in_registry_skipped(self) -> None:
+        # Source is disabled in the registry. Disabled covers
+        # the "source row hidden" symptom, so flagging would
+        # be a false positive; defensive-skipped.
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="switch.bar",
+                domain="switch",
+                hidden_by=None,
+                disabled_by="user",
+                original_name="Bar",
+            ),
+        )
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="fan.bar",
+                domain="fan",
+                config_entry_id="entry-id-bar",
+                hidden_by=None,
+                disabled_by=None,
+                original_name="Bar",
+            ),
+        )
+        entry = _FakeConfigEntry(
+            entry_id="entry-id-bar",
+            domain="switch_as_x",
+            options={
+                "entity_id": "switch.bar",
+                "target_domain": "fan",
+            },
+        )
+        h = _FakeHassForBuilder([entry])
+
+        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+
+        assert infos == []
+        assert skipped == 1
+
+    def test_non_switch_as_x_integration_ignored(self) -> None:
+        # ``async_entries("switch_as_x")`` filters by domain,
+        # so an entry from another integration doesn't reach
+        # the loop and contributes nothing -- not even a
+        # defensive-skip count.
+        entry = _FakeConfigEntry(
+            entry_id="other-entry-id",
+            domain="some_other_integration",
+            options={
+                "entity_id": "switch.unrelated",
+                "target_domain": "fan",
+            },
+        )
+        h = _FakeHassForBuilder([entry])
+
+        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+
+        assert infos == []
+        assert skipped == 0
+
+
+# --------------------------------------------------------
 # Restart-recovery kick payload
 # --------------------------------------------------------
 
@@ -611,6 +849,76 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
         "instance_id": "automation.edw_default_check",
         "trigger_id": "manual",
     }
+
+
+class TestBlueprintDriftChecksOptionsMatchCheckAll:
+    """The blueprint's ``drift_checks`` selector options must
+    map 1:1 to ``logic.CHECK_ALL``.
+
+    Without this guard a refactor that adds a new
+    ``DRIFT_CHECK_*`` constant + wires it into
+    ``CHECK_ALL`` (or vice versa) can leave the blueprint
+    UI unable to surface the new value, or accept a value
+    the constant set rejects. Both directions silently
+    break the user-visible drift-check selector.
+    """
+
+    def test_options_match_check_all(self) -> None:
+        import yaml  # noqa: PLC0415
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501, PLC0415
+            logic,
+        )
+
+        bp_path = (
+            REPO_ROOT
+            / "custom_components"
+            / "blueprint_toolkit"
+            / "bundled"
+            / "blueprints"
+            / "automation"
+            / "blueprint_toolkit"
+            / "entity_defaults_watchdog.yaml"
+        )
+
+        class _Loader(yaml.SafeLoader):
+            pass
+
+        def _passthrough(
+            _loader: object,
+            _suffix: str,
+            node: object,
+        ) -> object:
+            value = getattr(node, "value", None)
+            if isinstance(value, str):
+                return value
+            return None
+
+        _Loader.add_multi_constructor("!", _passthrough)
+        loaded: dict[str, object] = yaml.load(  # noqa: S506
+            bp_path.read_text(),
+            Loader=_Loader,
+        )
+        bp = loaded.get("blueprint")
+        assert isinstance(bp, dict)
+        inputs = bp.get("input")
+        assert isinstance(inputs, dict)
+        drift_checks = inputs.get("drift_checks")
+        assert isinstance(drift_checks, dict)
+        selector = drift_checks.get("selector")
+        assert isinstance(selector, dict)
+        select = selector.get("select")
+        assert isinstance(select, dict)
+        options = select.get("options")
+        assert isinstance(options, list)
+        offered = {o.get("value") for o in options if isinstance(o, dict)}
+        assert offered == set(logic.CHECK_ALL), (
+            "blueprint drift_checks options do not match CHECK_ALL.\n"
+            f"  only in blueprint: "
+            f"{sorted(offered - set(logic.CHECK_ALL))}\n"
+            f"  only in CHECK_ALL: "
+            f"{sorted(set(logic.CHECK_ALL) - offered)}"
+        )
 
 
 class TestArgparseGuards(HandlerArgparseGuardsBase):

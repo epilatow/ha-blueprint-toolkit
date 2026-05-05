@@ -68,10 +68,13 @@ match their current names</li>
 conflicts whose original peers were removed</li>
 <li>Detect redundant name prefixes (overrides that include the device name when
 HA would add it automatically)</li>
+<li>Detect visible aliased entities -- <code>switch_as_x</code> wrappers whose source
+entity is no longer hidden, so both rows show up in dashboards, voice
+assistants, and entity pickers</li>
 <li>Per-device persistent notifications with auto-clear on drift resolution;
 single aggregate notification for deviceless entities</li>
 <li>Selectable drift checks (device entity ID, device entity name, deviceless
-ID, or any combination)</li>
+ID, visible aliased entity, or any combination)</li>
 <li>Include/exclude integration filtering</li>
 <li>Regex-based device and entity exclusion filters</li>
 <li>Notification cap to limit per-device notifications</li>
@@ -98,7 +101,7 @@ device name + ID drift)</li>
 <tbody>
 <tr>
 <td>Drift checks</td>
-<td>Which checks to run: <code>device-entity-id</code>, <code>device-entity-name</code>, <code>entity-id</code> (deviceless), or any combination. Empty means all.</td>
+<td>Which checks to run: <code>device-entity-id</code>, <code>device-entity-name</code>, <code>entity-id</code> (deviceless), <code>visible-aliased-entity</code>, or any combination. Empty means all.</td>
 </tr>
 <tr>
 <td>Include integrations</td>
@@ -262,6 +265,28 @@ cross-restart stability just work.</li>
 <li>The watchdog can compare names to entity IDs and flag drift -- without a
 registry entry, it has no authoritative name to compare against.</li>
 </ul>
+<h3>Visible aliased entities</h3>
+<p><code>switch_as_x</code> is HA core's wrapper integration. When a user exposes (for
+example) <code>switch.kitchen_fan</code> as <code>fan.kitchen_fan</code>, switch_as_x sets
+<code>hidden_by=&quot;integration&quot;</code> on the source entity once at config-entry creation,
+so the source row hides from dashboards / voice assistants / the entities
+picker while the wrapper row takes over.</p>
+<p>The hide is applied <strong>once</strong>. If <code>hidden_by</code> is later cleared on the source,
+both rows become visible everywhere again, and switch_as_x does not notice or
+self-heal. Users typically see the symptom as &quot;every aliased switch is
+suddenly showing up twice in voice control&quot;.</p>
+<p>The watchdog flags every switch_as_x source whose <code>hidden_by</code> and
+<code>disabled_by</code> are both <code>None</code> (and whose wrapper entity exists in the
+registry). The notification body lists each flagged source with a per-entity
+link to <strong>Settings &gt; Entities &gt; <source></strong> so you can re-toggle visibility off
+in one click.</p>
+<p>Manual fix: open the per-entity Settings page from the notification body,
+toggle <strong>Visible</strong> off. The toggle sets <code>hidden_by=&quot;user&quot;</code> rather than
+<code>hidden_by=&quot;integration&quot;</code> -- this sticks even if you later remove the
+switch_as_x wrapper, whereas an integration-managed hide would be cleaned up
+when the wrapper goes away. For most users the difference is moot; if you need
+the integration-managed behavior, remove and re-add the switch_as_x config
+entry instead (the integration reapplies its hide on creation).</p>
 <h3>Notification panel ordering</h3>
 <p>The order of notifications in the HA notification panel may change between
 evaluation runs. This is because each run re-creates all active notifications
@@ -316,6 +341,11 @@ Tools &gt; States to find it.</p>
 <li><code>deviceless_drift</code>: Deviceless entities flagged as drifted (excludes
 stale-suffix cases)</li>
 <li><code>deviceless_stale</code>: Deviceless entities with stale collision suffixes</li>
+<li><code>visible_aliased_total</code>: Total <code>switch_as_x</code> config entries walked</li>
+<li><code>visible_aliased_excluded</code>: Visible-aliased entries skipped via exclusions
+or defensive checks (entry disabled, malformed options, wrapper entity
+missing, source disabled, source already hidden)</li>
+<li><code>visible_aliased_flagged</code>: Visible-aliased findings emitted this run</li>
 <li><code>unmatched_directives</code>: Include / exclude directives that bound to zero live
 candidates this run (zero unless <strong>Validate include / exclude directives</strong>
 surfaced something)</li>

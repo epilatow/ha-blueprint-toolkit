@@ -210,6 +210,49 @@ def device_header_line(name: str, url: str) -> str:
     return f"Device: [{md_escape(name)}]({url})"
 
 
+def entity_settings_url(
+    *,
+    device_id: str | None = None,
+    config_entry_id: str | None = None,
+) -> str:
+    """Best-known-working URL to navigate the user toward an
+    entity's settings dialog.
+
+    HA's frontend doesn't expose a documented direct
+    deep-link to "settings dialog for entity X". The
+    closest forms HA's UI actually consumes today
+    (verified against the device + config-entry links
+    other handlers ship in production):
+
+    1. ``/config/devices/device/<device_id>`` -- the
+       device panel listing the entity. One click on the
+       entity opens the settings dialog. Used everywhere
+       in DW / EDW per-device notifications.
+    2. ``/config/entities/?config_entry=<config_entry_id>``
+       -- the entities table filtered to a config entry.
+       One click on the entity opens the settings dialog.
+       Used in RW broken-ref notifications.
+    3. ``/config/entities`` -- entities table; user
+       searches.
+
+    Prefer the device link when ``device_id`` is set,
+    fall through to config_entry, then to the bare table.
+
+    All URL string templating for entity-/device-/config-
+    entry-page links should go through helpers like this
+    one rather than being inlined at call sites -- guesses
+    at undocumented URLs (``/config/entities/<eid>``,
+    ``/_my_redirect/entity_settings`` with unsupported
+    redirect names, etc.) silently route to the wrong
+    page. See ``AUTOMATIONS.md`` "URL generation".
+    """
+    if device_id:
+        return f"/config/devices/device/{device_id}"
+    if config_entry_id:
+        return f"/config/entities/?config_entry={config_entry_id}"
+    return "/config/entities"
+
+
 def slugify(text: str) -> str:
     """Return a Home Assistant-compatible slug from ``text``.
 
@@ -988,6 +1031,7 @@ __all__ = [
     "TypedServiceResponse",
     "UnmatchedDirective",
     "device_header_line",
+    "entity_settings_url",
     "format_notification",
     "format_timestamp",
     "instance_id_for_config_error",

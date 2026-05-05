@@ -811,6 +811,417 @@ class TestUnmatchedDirectives:
             )
 
 
+class TestVisibleAliasedScan:
+    """End-to-end coverage of the visible-aliased-entity check.
+
+    Plants a fake ``switch_as_x`` config entry plus the
+    matching wrapper + source entity-registry entries, then
+    drives a service call with the new ``visible-aliased-entity``
+    drift-check value.
+    """
+
+    async def _plant_pair(
+        self,
+        hass,  # noqa: ANN001
+        *,
+        source_entity_id: str,
+        wrapper_entity_id: str,
+        wrapper_target_domain: str,
+        source_friendly_name: str,
+        source_hidden_by=None,  # noqa: ANN001
+        source_disabled_by=None,  # noqa: ANN001
+        source_device_id: str | None = None,
+        bad_options=False,
+    ) -> Any:
+        """Plant a switch_as_x entry + wrapper + source.
+
+        Returns the planted ``MockConfigEntry``.
+        """
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        # Source entity (the wrapped switch).
+        ent_reg = er.async_get(hass)
+        source_domain, source_obj = source_entity_id.split(".", 1)
+        source_entry_for_source_eid = _mock_config_entry(
+            domain="fake_source_integration",
+            title="fake_source_integration",
+        )
+        source_entry_for_source_eid.add_to_hass(hass)
+        # If the test requests a specific device_id, plant a
+        # device under the same config entry so the
+        # source's registry entry can reference it. The
+        # notification body's link uses
+        # ``/config/devices/device/<device_id>``.
+        device_id_to_attach: str | None = None
+        if source_device_id is not None:
+            dev_reg = dr.async_get(hass)
+            device = dev_reg.async_get_or_create(
+                config_entry_id=source_entry_for_source_eid.entry_id,
+                identifiers={
+                    ("fake_source_integration", source_device_id),
+                },
+            )
+            device_id_to_attach = device.id
+        ent_reg.async_get_or_create(
+            domain=source_domain,
+            platform="fake_source_integration",
+            unique_id=f"src-{source_obj}",
+            suggested_object_id=source_obj,
+            config_entry=source_entry_for_source_eid,
+            device_id=device_id_to_attach,
+            original_name=source_friendly_name,
+            hidden_by=source_hidden_by,
+            disabled_by=source_disabled_by,
+        )
+
+        # The switch_as_x config entry that wraps the source.
+        if bad_options:
+            options: dict[str, Any] = {}
+        else:
+            options = {
+                "entity_id": source_entity_id,
+                "target_domain": wrapper_target_domain,
+            }
+        sax_entry = _mock_config_entry(
+            domain="switch_as_x",
+            title=f"{source_friendly_name} (as {wrapper_target_domain})",
+            options=options,
+        )
+        sax_entry.add_to_hass(hass)
+
+        # Wrapper entity registered under the switch_as_x
+        # entry. The handler matches by config_entry_id.
+        ent_reg.async_get_or_create(
+            domain=wrapper_target_domain,
+            platform="switch_as_x",
+            unique_id=f"wrap-{wrapper_entity_id}",
+            suggested_object_id=wrapper_entity_id,
+            config_entry=sax_entry,
+            original_name=source_friendly_name,
+        )
+        return sax_entry
+
+    async def test_visible_source_emits_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """A switch_as_x entry whose source has
+        ``hidden_by=None`` triggers the aggregate
+        notification with a per-finding bullet.
+        """
+        from homeassistant.helpers import (
+            device_registry as dr,
+        )
+        from homeassistant.helpers import (
+            entity_registry as er,
+        )
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.kitchen",
+            wrapper_entity_id="kitchen",
+            wrapper_target_domain="fan",
+            source_friendly_name="Kitchen Fan",
+            source_hidden_by=None,
+            source_device_id="dev-kitchen",
+        )
+        # Capture the HA-generated device.id; the
+        # notification body links to
+        # ``/config/devices/device/<id>``.
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+        source_entry = ent_reg.async_get("switch.kitchen")
+        assert source_entry is not None
+        assert source_entry.device_id is not None
+        kitchen_device = dev_reg.async_get(source_entry.device_id)
+        assert kitchen_device is not None
+        device_id = kitchen_device.id
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_visible_aliased",
+                drift_checks=["visible-aliased-entity"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_visible_aliased__visible_aliased"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id in notifs, (
+            f"expected visible-aliased notif; got {sorted(notifs.keys())}"
+        )
+        body: str = notifs[notif_id]["message"]
+        assert "`switch.kitchen`" in body
+        assert "`fan.kitchen`" in body
+        assert f"/config/devices/device/{device_id}" in body
+
+    async def test_hidden_source_no_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """A healthy switch_as_x setup
+        (``hidden_by="integration"`` on source) yields no
+        finding.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.bedroom",
+            wrapper_entity_id="bedroom",
+            wrapper_target_domain="light",
+            source_friendly_name="Bedroom Light",
+            source_hidden_by=er.RegistryEntryHider.INTEGRATION,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_visible_clean",
+                drift_checks=["visible-aliased-entity"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_visible_clean__visible_aliased"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id not in notifs, (
+            f"expected no visible-aliased notif; got {sorted(notifs.keys())}"
+        )
+
+    async def test_diagnostic_state_carries_counters(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """The state entity gets the three new attrs
+        whether or not the check is enabled.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        # One visible (flagged), one hidden (defensive).
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.flagged",
+            wrapper_entity_id="flagged",
+            wrapper_target_domain="fan",
+            source_friendly_name="Flagged",
+            source_hidden_by=None,
+        )
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.healthy",
+            wrapper_entity_id="healthy",
+            wrapper_target_domain="fan",
+            source_friendly_name="Healthy",
+            source_hidden_by=er.RegistryEntryHider.INTEGRATION,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_visible_state",
+                drift_checks=["visible-aliased-entity"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        state = hass.states.get(
+            "blueprint_toolkit.edw_edw_visible_state_state",
+        )
+        assert state is not None
+        attrs = state.attributes
+        for key in (
+            "visible_aliased_total",
+            "visible_aliased_excluded",
+            "visible_aliased_flagged",
+        ):
+            assert key in attrs, f"missing {key} in {attrs!r}"
+        # Two switch_as_x entries walked total. One flagged,
+        # one defensively skipped (already hidden).
+        assert attrs["visible_aliased_total"] == 2
+        assert attrs["visible_aliased_excluded"] == 1
+        assert attrs["visible_aliased_flagged"] == 1
+
+    async def test_disabled_entry_skipped(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """A disabled switch_as_x entry never reaches the
+        logic layer and counts as defensive-skipped.
+        """
+        from homeassistant.config_entries import ConfigEntryDisabler
+
+        await _setup_integration(hass)
+        sax_entry = await self._plant_pair(
+            hass,
+            source_entity_id="switch.disabled_entry",
+            wrapper_entity_id="disabled_entry",
+            wrapper_target_domain="fan",
+            source_friendly_name="Disabled Entry",
+            source_hidden_by=None,
+        )
+        await hass.config_entries.async_set_disabled_by(
+            sax_entry.entry_id,
+            ConfigEntryDisabler.USER,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_visible_disabled",
+                drift_checks=["visible-aliased-entity"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_visible_disabled__visible_aliased"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id not in notifs
+
+        state = hass.states.get(
+            "blueprint_toolkit.edw_edw_visible_disabled_state",
+        )
+        assert state is not None
+        assert state.attributes["visible_aliased_flagged"] == 0
+        assert state.attributes["visible_aliased_excluded"] == 1
+
+    async def test_check_disabled_no_findings(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """When ``visible-aliased-entity`` is not in
+        ``drift_checks``, the logic short-circuits and no
+        notification is emitted even if a candidate exists.
+        """
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.would_be_flagged",
+            wrapper_entity_id="would_be_flagged",
+            wrapper_target_domain="fan",
+            source_friendly_name="Would Be Flagged",
+            source_hidden_by=None,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_visible_off",
+                drift_checks=["entity-id"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_visible_off__visible_aliased"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id not in notifs
+
+    async def test_flagged_run_leaves_hidden_by_unchanged(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        """The check is detection-only: flagging a source
+        must not mutate ``hidden_by`` on its registry entry.
+
+        Locks down the load-bearing "no auto-fix" guarantee.
+        A future regression that silently re-hides flagged
+        sources would be a surprising registry mutation
+        during a watchdog scan, and would also defeat the
+        user's deliberate "I want both rows visible" choice.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.detection_only",
+            wrapper_entity_id="detection_only",
+            wrapper_target_domain="fan",
+            source_friendly_name="Detection Only",
+            source_hidden_by=None,
+        )
+
+        ent_reg = er.async_get(hass)
+        before = ent_reg.async_get("switch.detection_only")
+        assert before is not None
+        assert before.hidden_by is None
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_detection_only",
+                drift_checks=["visible-aliased-entity"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notif_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_detection_only__visible_aliased"
+        )
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        assert notif_id in notifs, (
+            "expected the visible-aliased notif to fire so the "
+            "hidden_by-unchanged assertion is meaningful"
+        )
+
+        after = ent_reg.async_get("switch.detection_only")
+        assert after is not None
+        assert after.hidden_by is None, (
+            f"hidden_by must remain None after a flagged run; "
+            f"got {after.hidden_by!r}"
+        )
+
+
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "EDW"
     setup_integration = staticmethod(_setup_integration)
