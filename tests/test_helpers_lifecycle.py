@@ -1746,30 +1746,6 @@ class TestValidateDirectivesItem:
         )
 
 
-class TestValidateDirectivesPath:
-    """fnmatch-flavoured directive validator (RW exclude_paths)."""
-
-    def test_glob_matches_returns_empty(self) -> None:
-        assert (
-            helpers.validate_directives_path(
-                field="exclude_paths",
-                directives=["*.yaml"],
-                candidates=frozenset({"automations.yaml", "scripts.yaml"}),
-            )
-            == []
-        )
-
-    def test_no_match_flagged(self) -> None:
-        unmatched = helpers.validate_directives_path(
-            field="exclude_paths",
-            directives=["*.yaml", "deleted/*.yml"],
-            candidates=frozenset({"automations.yaml", "scripts.yaml"}),
-        )
-        assert len(unmatched) == 1
-        assert unmatched[0].value == "deleted/*.yml"
-        assert unmatched[0].reason == "no path matches"
-
-
 class TestValidateDirectivesRegex:
     """Per-line regex check, used for every multi-line regex blueprint
     input.

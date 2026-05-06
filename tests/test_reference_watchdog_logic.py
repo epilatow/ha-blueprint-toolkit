@@ -25,8 +25,17 @@ sys.path.insert(0, str(REPO_ROOT))
 from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # noqa: E402, E501
+    _UNUSED_DEVICE_SKIP_INTEGRATIONS,
+    _UNUSED_DEVICELESS_SKIP_DOMAINS,
+    _UNUSED_DEVICELESS_SKIP_PLATFORMS,
+    CHECK_ALL,
+    CHECK_BROKEN_REFERENCES,
+    CHECK_SOURCE_ORPHANS,
+    CHECK_UNUSED_DEVICELESS_ENTITIES,
+    CHECK_UNUSED_DEVICES,
     SEED_DOMAINS,
     Config,
+    DeviceRecord,
     Finding,
     Owner,
     OwnerResult,
@@ -35,10 +44,16 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
     SourceInput,
     SourceOrphan,
     TruthSet,
+    UnusedDevice,
+    UnusedDevicelessEntity,
     _build_notification_body,
     _build_owner_result,
     _build_source_orphans_notification,
+    _build_unused_device_notification,
+    _build_unused_deviceless_notifications,
+    _cascade_up_rescue,
     _collect_findings,
+    _collect_referenced_device_ids,
     _discover_yaml_sources,
     _enumerate_json_sources,
     _enumerate_storage_helpers,
@@ -48,7 +63,6 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
     _find_source_orphans,
     _is_entity_excluded,
     _is_integration_excluded,
-    _is_path_excluded,
     _looks_like_entity_id,
     _orphan_url,
     _owner_display_name,
@@ -59,10 +73,15 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
     _scan_automations,
     _scan_config_entries,
     _scan_customize,
+    _scan_energy_storage,
+    _scan_exposed_entities,
     _scan_generic_yaml,
     _scan_lovelace,
+    _scan_person_storage,
     _scan_scripts,
     _scan_template,
+    _scan_unused_deviceless_entities,
+    _scan_unused_devices,
     _source_orphans_notification_id,
     _walk_tree,
     run_evaluation,
@@ -73,7 +92,6 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
 
 def _config(**overrides: object) -> Config:
     defaults: dict[str, object] = {
-        "exclude_paths": [],
         "exclude_integrations": [],
         "exclude_entities": [],
         "exclude_entity_id_regex": "",
@@ -92,6 +110,7 @@ def _reg_entry(
     disabled: bool = False,
     name: str | None = None,
     original_name: str | None = None,
+    device_id: str | None = None,
 ) -> RegistryEntry:
     return RegistryEntry(
         entity_id=entity_id,
@@ -101,6 +120,31 @@ def _reg_entry(
         disabled=disabled,
         name=name,
         original_name=original_name,
+        device_id=device_id,
+    )
+
+
+def _device(
+    device_id: str,
+    *,
+    name: str = "",
+    integration: str = "shelly",
+    config_entry_title: str | None = None,
+    manufacturer: str | None = None,
+    model: str | None = None,
+    via_device_id: str | None = None,
+    entry_type: str | None = None,
+) -> DeviceRecord:
+    return DeviceRecord(
+        device_id=device_id,
+        name=name or device_id,
+        manufacturer=manufacturer,
+        model=model,
+        integration=integration,
+        config_entry_title=config_entry_title,
+        via_device_id=via_device_id,
+        config_entries=(),
+        entry_type=entry_type,
     )
 
 
@@ -113,6 +157,9 @@ def _ts(
     entity_by_unique_id: dict[tuple[str, str], str] | None = None,
     extra_domains: set[str] | None = None,
     config_entries_with_entities: set[str] | None = None,
+    device_records: dict[str, DeviceRecord] | None = None,
+    device_to_entities: dict[str, frozenset[str]] | None = None,
+    config_entry_titles: dict[str, str] | None = None,
 ) -> TruthSet:
     # TruthSet is frozen, so build staging collections
     # and construct once.
@@ -134,6 +181,14 @@ def _ts(
                 derived_ceids.add(reg_entry.config_entry_id)
     if config_entries_with_entities:
         derived_ceids.update(config_entries_with_entities)
+    # Auto-derive device_to_entities from the registry's
+    # device_id field when the caller doesn't override.
+    if device_to_entities is None and registry:
+        d2e: dict[str, set[str]] = {}
+        for r in registry.values():
+            if r.device_id:
+                d2e.setdefault(r.device_id, set()).add(r.entity_id)
+        device_to_entities = {did: frozenset(eids) for did, eids in d2e.items()}
     return TruthSet(
         entity_ids=frozenset(ents),
         disabled_entity_ids=frozenset(disabled),
@@ -143,6 +198,9 @@ def _ts(
         registry=dict(registry or {}),
         entity_by_unique_id=dict(entity_by_unique_id or {}),
         config_entries_with_entities=frozenset(derived_ceids),
+        device_records=dict(device_records or {}),
+        device_to_entities=dict(device_to_entities or {}),
+        config_entry_titles=dict(config_entry_titles or {}),
     )
 
 
@@ -383,24 +441,6 @@ class TestWalkTree:
 
 
 class TestExclusionHelpers:
-    def test_path_excluded_simple_match(self) -> None:
-        assert _is_path_excluded("plants.yaml", ["plants.yaml"])
-
-    def test_path_excluded_glob(self) -> None:
-        assert _is_path_excluded(
-            ".storage/lovelace.old_dashboard",
-            [".storage/lovelace.*"],
-        )
-
-    def test_path_not_excluded(self) -> None:
-        assert not _is_path_excluded(
-            "automations.yaml",
-            ["plants.yaml"],
-        )
-
-    def test_path_empty_patterns(self) -> None:
-        assert not _is_path_excluded("anything.yaml", [])
-
     def test_integration_excluded(self) -> None:
         assert _is_integration_excluded("shelly", ["shelly", "hue"])
 
@@ -1551,7 +1591,12 @@ class TestEvaluateSources:
         assert results[0].refs_total == 1
         assert results[0].refs_valid == 1
 
-    def test_exclude_integration_drops_entries(self) -> None:
+    def test_exclude_integration_zeros_findings_keeps_refs(self) -> None:
+        # Source-side ``exclude_integrations`` silences findings
+        # but keeps the owner walked so its refs feed the
+        # unused-* rescue set. The result is returned with
+        # findings=[]; ``has_issue`` is False; the rescue set
+        # still contains the refs the excluded owner walked.
         sources = [
             _source(
                 "config_entries",
@@ -1574,9 +1619,17 @@ class TestEvaluateSources:
             sources,
             _ts(),
         )
-        assert results == []
+        # Owner is returned (so seen_*_refs feed the rescue
+        # set) but its findings are zeroed.
+        assert len(results) == 1
+        assert results[0].has_issue is False
+        assert results[0].findings == []
 
-    def test_exclude_source_entity_drops_owner(self) -> None:
+    def test_exclude_source_entity_zeros_findings_keeps_refs(self) -> None:
+        # Same shape for owner-entity-side exclusion
+        # (``exclude_entities`` against ``owner.entity_id``):
+        # findings zeroed, walk still happens, refs still
+        # feed the rescue set.
         sources = [
             _source(
                 "automations",
@@ -1595,7 +1648,56 @@ class TestEvaluateSources:
             sources,
             ts,
         )
-        assert results == []
+        assert len(results) == 1
+        assert results[0].has_issue is False
+        assert results[0].findings == []
+
+    def test_excluded_owner_refs_feed_unused_rescue(self) -> None:
+        # End-to-end of the bug fix: an automation that's been
+        # excluded via ``exclude_entities`` still references a
+        # template sensor; the template sensor must NOT be
+        # flagged as unused-deviceless because the excluded
+        # owner's walk now seeds the rescue set.
+        sources = [
+            _source(
+                "automations",
+                "automations.yaml",
+                [
+                    {
+                        "id": "legacy",
+                        "alias": "Legacy",
+                        "trigger": [],
+                        "action": [
+                            {"service": "switch.turn_on", "data": {}},
+                        ],
+                        "condition": [
+                            {
+                                "condition": "state",
+                                "entity_id": "sensor.template_thing",
+                                "state": "on",
+                            },
+                        ],
+                    },
+                ],
+            ),
+        ]
+        ts = _ts(
+            entity_by_unique_id={
+                ("automation", "legacy"): "automation.legacy",
+            },
+            entity_ids={"automation.legacy", "sensor.template_thing"},
+        )
+        results = _evaluate_sources(
+            _config(exclude_entities=["automation.legacy"]),
+            sources,
+            ts,
+        )
+        # The excluded owner's walk populated seen_entity_refs
+        # with sensor.template_thing -- the union of all
+        # results' seen_entity_refs is the rescue set
+        # consumed by the unused-* checks.
+        assert results[0].findings == []
+        assert "sensor.template_thing" in results[0].seen_entity_refs
 
     def test_yaml_only_owner_via_registry(self) -> None:
         # Automation in automations.yaml with an `id` is
@@ -1766,6 +1868,142 @@ class TestCollectFindingsDevice:
         )
         assert findings == []
         assert stats.refs_valid == 1
+
+    def test_valid_device_captured_in_seen_device_refs(self) -> None:
+        # Resolved device-kind refs feed
+        # ``_collect_referenced_device_ids`` (the rescue set
+        # the unused-device check unions across owners). A
+        # device whose only "use" in user config is a valid
+        # ``device_id:`` reference must be captured here so
+        # it can rescue the device record from the
+        # unused-device check downstream.
+        tree: dict[str, object] = {
+            "device_id": "a" * 32,
+        }
+        owner = Owner(source_file="x.yaml", friendly_name="t")
+        ts = _ts(device_ids={"a" * 32})
+        _findings, stats = _collect_findings(
+            _config(),
+            owner,
+            tree,
+            ts,
+        )
+        assert stats.seen_device_refs == {"a" * 32}
+
+    def test_broken_device_not_in_seen_device_refs(self) -> None:
+        # Broken (unresolved) device-kind refs surface as
+        # findings but don't enter the rescue set -- they
+        # point at devices that don't exist, so they can't
+        # rescue anything.
+        tree: dict[str, object] = {
+            "device_id": "a" * 32,
+        }
+        owner = Owner(source_file="x.yaml", friendly_name="t")
+        ts = _ts(device_ids={"b" * 32})
+        _findings, stats = _collect_findings(
+            _config(),
+            owner,
+            tree,
+            ts,
+        )
+        assert stats.seen_device_refs == set()
+
+
+# -- _collect_referenced_device_ids --------------------
+
+
+class TestCollectReferencedDeviceIds:
+    """Cross-owner rescue-set union for device-kind refs.
+
+    Regression guard for the canonical user case: a Pico
+    remote (or Z-Wave button device) whose only "use" in
+    user config is a valid ``device_id:`` reference -- e.g.
+    a ``lutron_caseta_button_event`` automation trigger
+    binding the automation to the device by id. The
+    unused-device check must see those device_ids in the
+    rescue set; otherwise the device is misclassified as
+    unused.
+    """
+
+    def _result(
+        self,
+        *,
+        seen_device_refs: frozenset[str] = frozenset(),
+        findings: list[Finding] | None = None,
+    ) -> OwnerResult:
+        return OwnerResult(
+            owner=Owner(source_file="x.yaml"),
+            has_issue=False,
+            notification_id="x",
+            notification_title="",
+            notification_message="",
+            findings=list(findings or []),
+            refs_total=0,
+            refs_structural=0,
+            refs_jinja=0,
+            refs_sniff=0,
+            refs_valid=0,
+            refs_disabled=0,
+            refs_broken=0,
+            refs_service_skipped=0,
+            seen_device_refs=seen_device_refs,
+        )
+
+    def test_unions_seen_device_refs_across_owners(self) -> None:
+        a = self._result(seen_device_refs=frozenset({"d1"}))
+        b = self._result(seen_device_refs=frozenset({"d2", "d3"}))
+        assert _collect_referenced_device_ids([a, b]) == frozenset(
+            {"d1", "d2", "d3"},
+        )
+
+    def test_empty_when_no_owners_have_device_refs(self) -> None:
+        a = self._result()
+        b = self._result()
+        assert _collect_referenced_device_ids([a, b]) == frozenset()
+
+    def test_broken_device_findings_not_included(self) -> None:
+        # ``OwnerResult.findings`` carries broken refs, which
+        # point at devices that don't exist -- they must not
+        # contribute to the rescue set.
+        broken = Finding(
+            ref=Ref(
+                kind="device",
+                value="ffffffffffffffffffffffffffffffff",
+                context="device_id",
+            ),
+        )
+        r = self._result(findings=[broken])
+        assert _collect_referenced_device_ids([r]) == frozenset()
+
+    def test_end_to_end_valid_device_id_ref_rescues_device(self) -> None:
+        # End-to-end: walk a synthetic source containing a
+        # valid ``device_id:`` ref; assert
+        # ``_collect_referenced_device_ids`` picks the
+        # device_id out of the per-owner walk so a device
+        # whose only "use" is that ref is rescued from the
+        # unused-device check.
+        device_id = "a" * 32
+        owner = Owner(
+            source_file="automations.yaml",
+            integration="automation",
+            friendly_name="Pico Remote Action",
+        )
+        tree: dict[str, object] = {
+            "trigger": [
+                {
+                    "platform": "event",
+                    "event_type": "lutron_caseta_button_event",
+                    "event_data": {"device_id": device_id},
+                },
+            ],
+        }
+        ts = _ts(device_ids={device_id})
+        findings, stats = _collect_findings(_config(), owner, tree, ts)
+        assert findings == []
+        result = _build_owner_result(_config(), owner, findings, stats)
+        assert _collect_referenced_device_ids([result]) == frozenset(
+            {device_id},
+        )
 
 
 # -- _build_owner_result -------------------------------
@@ -2249,7 +2487,6 @@ class TestRunEvaluation:
             str(tmp_path),
             _config(),
             _ts(),
-            [],
             0,
         )
         # One automation owner with a broken ref.
@@ -2807,7 +3044,6 @@ class TestRunEvaluationOrphans:
             str(tmp_path),
             _config(),
             ts,
-            [],
             0,
         )
         assert ev.source_orphan_count == 1
@@ -2880,6 +3116,1396 @@ class TestIntegrationUxInvariant:
             owner.integration,
             ["customize"],
         )
+
+
+class TestCheckConstants:
+    """Lock down the four-check superset and value strings.
+
+    The ``CHECK_*`` constants are blueprint-facing values: they
+    appear in the ``enabled_checks`` selector options and round-
+    trip through the user's saved automations. Renaming any of
+    them silently breaks existing automations on upgrade -- this
+    test fires when that happens so the rename can be paired
+    with a migration plan.
+    """
+
+    def test_check_all_membership_is_pinned(self) -> None:
+        assert CHECK_ALL == frozenset(
+            {
+                CHECK_BROKEN_REFERENCES,
+                CHECK_SOURCE_ORPHANS,
+                CHECK_UNUSED_DEVICES,
+                CHECK_UNUSED_DEVICELESS_ENTITIES,
+            }
+        )
+
+    def test_check_values_use_dashes(self) -> None:
+        # Per AUTOMATIONS.md user-facing-enum convention.
+        assert CHECK_BROKEN_REFERENCES == "broken-references"
+        assert CHECK_SOURCE_ORPHANS == "source-orphans"
+        assert CHECK_UNUSED_DEVICES == "unused-devices"
+        assert CHECK_UNUSED_DEVICELESS_ENTITIES == (
+            "unused-deviceless-entities"
+        )
+
+
+class TestSkipListConstants:
+    """Membership-equality on the unused-* skip-list constants.
+
+    Pinning the exact set of skip targets keeps the docs and
+    code in lockstep. Adding a new entry without updating the
+    user-facing markdown trips this test.
+    """
+
+    def test_unused_device_skip_integrations_membership(self) -> None:
+        assert _UNUSED_DEVICE_SKIP_INTEGRATIONS == frozenset(
+            {
+                "bluetooth",
+                "homeassistant_connect_zbt2",
+                "homeassistant_sky_connect",
+                "homeassistant_yellow",
+                "mobile_app",
+                "music_assistant",
+            },
+        )
+
+    def test_unused_deviceless_skip_platforms_membership(self) -> None:
+        assert _UNUSED_DEVICELESS_SKIP_PLATFORMS == frozenset(
+            {"automation", "group", "cloud"},
+        )
+
+    def test_unused_deviceless_skip_domains_membership(self) -> None:
+        assert _UNUSED_DEVICELESS_SKIP_DOMAINS == frozenset(
+            {"stt", "tts"},
+        )
+
+
+class TestCascadeUpRescue:
+    def test_self_loop_terminates(self) -> None:
+        # A live HA registry was found containing a Lutron
+        # Caseta entry whose via_device_id pointed to itself;
+        # the walker must stop on a self-loop.
+        d = _device("a", via_device_id="a")
+        rescued = _cascade_up_rescue({"a": d}, "a")
+        assert rescued == set()
+
+    def test_multi_hop_cycle_terminates(self) -> None:
+        # A -> B -> C -> A. Walk visits B and C as ancestors,
+        # then sees A again and stops -- without exploding.
+        a = _device("a", via_device_id="b")
+        b = _device("b", via_device_id="c")
+        c = _device("c", via_device_id="a")
+        rescued = _cascade_up_rescue(
+            {"a": a, "b": b, "c": c},
+            "a",
+        )
+        assert rescued == {"b", "c"}
+
+    def test_multi_level_chain(self) -> None:
+        gp = _device("gp")
+        p = _device("p", via_device_id="gp")
+        c = _device("c", via_device_id="p")
+        rescued = _cascade_up_rescue(
+            {"gp": gp, "p": p, "c": c},
+            "c",
+        )
+        assert rescued == {"p", "gp"}
+
+    def test_no_parent_returns_empty(self) -> None:
+        d = _device("a")
+        assert _cascade_up_rescue({"a": d}, "a") == set()
+
+
+class TestScanUnusedDevices:
+    def _make_truth_set(
+        self,
+        devices: list[DeviceRecord],
+        entities_by_device: dict[str, list[str]],
+        *,
+        disabled: set[str] | None = None,
+    ) -> TruthSet:
+        registry: dict[str, RegistryEntry] = {}
+        for did, ents in entities_by_device.items():
+            for eid in ents:
+                registry[eid] = _reg_entry(
+                    eid,
+                    platform=next(
+                        (d.integration for d in devices if d.device_id == did),
+                        "shelly",
+                    ),
+                    device_id=did,
+                )
+        return _ts(
+            entity_ids={r.entity_id for r in registry.values()},
+            disabled_entity_ids=disabled or set(),
+            registry=registry,
+            device_records={d.device_id: d for d in devices},
+        )
+
+    def test_skip_integration_hassio_not_flagged(self) -> None:
+        # ``hassio`` registers service-typed devices for HA Core /
+        # Supervisor / OS update entities, so the
+        # ``entry_type == "service"`` filter catches them.
+        d = _device("d1", integration="hassio", entry_type="service")
+        ts = self._make_truth_set([d], {"d1": ["sensor.update_x"]})
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+
+    def test_skip_integration_homekit_not_flagged(self) -> None:
+        # ``homekit`` BRIDGE devices are service-typed in HA's
+        # device registry; caught by the ``entry_type == "service"``
+        # filter rather than the explicit skip list.
+        d = _device("d1", integration="homekit", entry_type="service")
+        ts = self._make_truth_set([d], {"d1": ["sensor.bridge"]})
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+
+    def test_zero_enabled_entity_device_skipped(self) -> None:
+        # Device with one entity, but it's disabled -- no
+        # enabled entities -> not a candidate.
+        d = _device("d1", integration="shelly")
+        ts = self._make_truth_set(
+            [d],
+            {"d1": ["sensor.x"]},
+            disabled={"sensor.x"},
+        )
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+
+    def test_unreferenced_device_flagged(self) -> None:
+        d = _device("d1", integration="shelly", name="Hot Tub")
+        ts = self._make_truth_set([d], {"d1": ["sensor.hot_tub_temp"]})
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert len(result.unused) == 1
+        assert result.unused[0].device_id == "d1"
+        assert result.unused[0].name == "Hot Tub"
+
+    def test_referenced_entity_rescues_device(self) -> None:
+        d = _device("d1", integration="shelly")
+        ts = self._make_truth_set([d], {"d1": ["sensor.shelly_x"]})
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.shelly_x"}),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+
+    def test_referenced_device_id_rescues_device(self) -> None:
+        d = _device("d1", integration="shelly")
+        ts = self._make_truth_set([d], {"d1": ["sensor.x"]})
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset({"d1"}),
+        )
+        assert result.unused == []
+
+    def test_cascade_up_basic_parent_rescued(self) -> None:
+        # Parent has no direct refs; child's referenced
+        # entity rescues it via cascade-up.
+        parent = _device("parent")
+        child = _device("child", via_device_id="parent")
+        ts = self._make_truth_set(
+            [parent, child],
+            {"parent": ["sensor.parent_diag"], "child": ["sensor.child"]},
+        )
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.child"}),
+            referenced_device_ids=frozenset(),
+        )
+        flagged = {u.device_id for u in result.unused}
+        # Parent is rescued by cascade-up; child is directly
+        # active. Neither flagged.
+        assert flagged == set()
+
+    def test_cascade_does_not_flow_down_to_siblings(self) -> None:
+        # Parent has NO direct refs; one sibling-child is
+        # referenced; the OTHER sibling-child is NOT
+        # rescued -- cascade is up-only.
+        parent = _device("parent")
+        child_a = _device("child_a", via_device_id="parent")
+        child_b = _device("child_b", via_device_id="parent")
+        ts = self._make_truth_set(
+            [parent, child_a, child_b],
+            {
+                "parent": ["sensor.parent_diag"],
+                "child_a": ["sensor.a"],
+                "child_b": ["sensor.b"],
+            },
+        )
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.a"}),
+            referenced_device_ids=frozenset(),
+        )
+        flagged = {u.device_id for u in result.unused}
+        # child_b is not rescued -- it stays flagged.
+        # child_a is active, parent is cascade-rescued.
+        assert flagged == {"child_b"}
+
+    def test_cascade_multi_level_grandparent_rescued(self) -> None:
+        gp = _device("gp")
+        p = _device("p", via_device_id="gp")
+        c = _device("c", via_device_id="p")
+        ts = self._make_truth_set(
+            [gp, p, c],
+            {
+                "gp": ["sensor.gp_diag"],
+                "p": ["sensor.p_diag"],
+                "c": ["sensor.c"],
+            },
+        )
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.c"}),
+            referenced_device_ids=frozenset(),
+        )
+        flagged = {u.device_id for u in result.unused}
+        assert flagged == set()
+
+    def test_exclude_device_name_regex_excludes_match(self) -> None:
+        d = _device("d1", integration="shelly", name="Test Hot Tub")
+        ts = self._make_truth_set([d], {"d1": ["sensor.x"]})
+        result = _scan_unused_devices(
+            _config(exclude_device_name_regex="hot tub"),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+        # The device passed the candidate filters and was
+        # then user-excluded by the regex.
+        assert result.total == 1
+        assert result.excluded == 1
+
+    def test_excluded_counts_user_silenced_regardless_of_activity(self) -> None:
+        # Both devices match the user's regex -- ``excluded``
+        # counts the user-silenced subset of the candidate
+        # pool regardless of whether they would have been
+        # flagged. Same shape DW + EDW use for their pools.
+        d_active = _device("d1", integration="shelly", name="Match Me")
+        d_unused = _device("d2", integration="shelly", name="Match Me Too")
+        ts = self._make_truth_set(
+            [d_active, d_unused],
+            {"d1": ["sensor.x"], "d2": ["sensor.y"]},
+        )
+        result = _scan_unused_devices(
+            _config(exclude_device_name_regex="match me"),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.x"}),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+        assert result.total == 2
+        assert result.excluded == 2
+
+    def test_exclude_integrations_filters_device(self) -> None:
+        d = _device("d1", integration="shelly")
+        ts = self._make_truth_set([d], {"d1": ["sensor.x"]})
+        result = _scan_unused_devices(
+            _config(exclude_integrations=["shelly"]),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+
+    def test_service_type_device_skipped(self) -> None:
+        # ``DeviceEntry.entry_type == DeviceEntryType.SERVICE``
+        # is HA's native marker for "this is an agent, not
+        # physical hardware". Skipped pre-pool (doesn't count
+        # toward total / excluded), parallel to the hardcoded
+        # skip-integrations filter.
+        d = _device(
+            "d1",
+            integration="spotify",
+            entry_type="service",
+        )
+        ts = self._make_truth_set([d], {"d1": ["media_player.epilatow"]})
+        result = _scan_unused_devices(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+        assert result.total == 0
+        assert result.excluded == 0
+
+    def test_all_entities_silenced_by_regex_drops_device(self) -> None:
+        # A device whose every enabled entity matches
+        # ``exclude_entity_id_regex`` is invisible to the user
+        # and so can't be flagged as unused. Skipped from the
+        # candidate pool entirely (doesn't count toward total).
+        d = _device("d1", integration="enphase_envoy", name="Inverter X")
+        ts = self._make_truth_set(
+            [d],
+            {
+                "d1": [
+                    "sensor.inverter_122101041984",
+                    "sensor.inverter_122101041984_last_reported",
+                ],
+            },
+        )
+        result = _scan_unused_devices(
+            _config(exclude_entity_id_regex="sensor\\.inverter_"),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+        assert result.total == 0
+        assert result.excluded == 0
+
+    def test_all_entities_silenced_by_exclude_entities_drops_device(
+        self,
+    ) -> None:
+        d = _device("d1", integration="enphase_envoy", name="Inverter X")
+        ts = self._make_truth_set([d], {"d1": ["sensor.inverter_a"]})
+        result = _scan_unused_devices(
+            _config(exclude_entities=["sensor.inverter_a"]),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+        assert result.total == 0
+
+    def test_partially_silenced_device_still_flagged_with_visible_only(
+        self,
+    ) -> None:
+        # Device has one excluded + one un-excluded entity.
+        # The un-excluded entity is unreferenced, so the device
+        # is flagged. The notification body lists ONLY the
+        # un-excluded (visible) entity.
+        d = _device("d1", integration="shelly", name="Mixed")
+        ts = self._make_truth_set(
+            [d],
+            {"d1": ["sensor.shelly_skip_me", "sensor.shelly_visible"]},
+        )
+        result = _scan_unused_devices(
+            _config(exclude_entity_id_regex="sensor\\.shelly_skip_"),
+            ts,
+            referenced_entity_ids=frozenset(),
+            referenced_device_ids=frozenset(),
+        )
+        assert len(result.unused) == 1
+        assert result.unused[0].enabled_entity_ids == ("sensor.shelly_visible",)
+        assert result.total == 1
+        assert result.excluded == 0
+
+    def test_excluded_entity_referenced_still_rescues_device(self) -> None:
+        # Even when an entity is user-excluded for notification
+        # purposes, a reference to it still counts as activity
+        # for rescuing the device. (A reference is a reference;
+        # exclusion silences notifications, not the model.)
+        d = _device("d1", integration="shelly", name="Rescued")
+        ts = self._make_truth_set(
+            [d],
+            {"d1": ["sensor.shelly_skip_me", "sensor.shelly_other"]},
+        )
+        result = _scan_unused_devices(
+            _config(exclude_entity_id_regex="sensor\\.shelly_skip_"),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.shelly_skip_me"}),
+            referenced_device_ids=frozenset(),
+        )
+        assert result.unused == []
+
+
+class TestScanUnusedDevicelessEntities:
+    def test_unreferenced_deviceless_entity_flagged(self) -> None:
+        reg = _reg_entry(
+            "sensor.lonely",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert len(out) == 1
+        assert out[0].entity_id == "sensor.lonely"
+        assert out[0].domain == "sensor"
+
+    def test_script_referenced_by_unique_id_form_rescues_entity(
+        self,
+    ) -> None:
+        # HA registers a script under one entity_id (alias-
+        # slug) but accepts a service call referencing
+        # ``script.<unique_id>`` (block-key) as well. When the
+        # block-key and alias-slug differ -- the user's typo
+        # case -- the rescue check has to consider both forms.
+        reg = _reg_entry(
+            "script.main_bedroom_pedestal_fan_on",  # alias-slug
+            platform="script",
+            unique_id="main_bedroom_pedastal_fan_on",  # typo'd block key
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            # User's automation references the block-key form
+            # (typo) rather than the alias-slug form.
+            referenced_entity_ids=frozenset(
+                {"script.main_bedroom_pedastal_fan_on"},
+            ),
+        )
+        assert out == []
+
+    def test_script_referenced_by_entity_id_form_still_rescues(self) -> None:
+        # Sanity check: the alias-slug-form reference still
+        # rescues even when block-key differs.
+        reg = _reg_entry(
+            "script.main_bedroom_pedestal_fan_on",
+            platform="script",
+            unique_id="main_bedroom_pedastal_fan_on",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(
+                {"script.main_bedroom_pedestal_fan_on"},
+            ),
+        )
+        assert out == []
+
+    def test_script_unreferenced_under_any_form_flagged(self) -> None:
+        reg = _reg_entry(
+            "script.main_bedroom_pedestal_fan_on",
+            platform="script",
+            unique_id="main_bedroom_pedastal_fan_on",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(
+                {"script.something_else_entirely"},
+            ),
+        )
+        assert len(out) == 1
+        assert out[0].entity_id == "script.main_bedroom_pedestal_fan_on"
+
+    def test_skip_platform_automation_not_flagged(self) -> None:
+        reg = _reg_entry(
+            "automation.x",
+            platform="automation",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+    def test_skip_platform_group_not_flagged(self) -> None:
+        reg = _reg_entry(
+            "group.fam",
+            platform="group",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+    def test_skip_platform_cloud_not_flagged(self) -> None:
+        reg = _reg_entry(
+            "binary_sensor.remote_ui",
+            platform="cloud",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+    def test_skip_domain_stt_not_flagged(self) -> None:
+        reg = _reg_entry(
+            "stt.cloud",
+            platform="some_platform",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+    def test_skip_domain_tts_not_flagged(self) -> None:
+        reg = _reg_entry(
+            "tts.cloud",
+            platform="some_platform",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+    def test_device_bound_entity_not_flagged(self) -> None:
+        # Entity with device_id is the unused-DEVICES check's
+        # responsibility, not deviceless.
+        reg = _reg_entry(
+            "sensor.lonely",
+            platform="shelly",
+            device_id="d1",
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+    def test_referenced_entity_rescued(self) -> None:
+        reg = _reg_entry(
+            "sensor.referenced",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(),
+            ts,
+            referenced_entity_ids=frozenset({"sensor.referenced"}),
+        )
+        assert out == []
+
+    def test_exclude_integrations_filters_platform(self) -> None:
+        reg = _reg_entry(
+            "sensor.x",
+            platform="my_integration",
+            device_id=None,
+        )
+        ts = _ts(registry={reg.entity_id: reg})
+        out = _scan_unused_deviceless_entities(
+            _config(exclude_integrations=["my_integration"]),
+            ts,
+            referenced_entity_ids=frozenset(),
+        )
+        assert out == []
+
+
+class TestScanExposedEntities:
+    def test_should_expose_true_emits_id(self) -> None:
+        parsed = {
+            "data": {
+                "exposed_entities": {
+                    "light.kitchen": {
+                        "google": {"should_expose": True},
+                    },
+                },
+            },
+        }
+        out = _scan_exposed_entities(parsed)
+        assert out == {"light.kitchen"}
+
+    def test_all_should_expose_false_skipped(self) -> None:
+        parsed = {
+            "data": {
+                "exposed_entities": {
+                    "light.kitchen": {
+                        "google": {"should_expose": False},
+                        "alexa": {"should_expose": False},
+                    },
+                },
+            },
+        }
+        out = _scan_exposed_entities(parsed)
+        assert out == set()
+
+    def test_at_least_one_assistant_exposes(self) -> None:
+        parsed = {
+            "data": {
+                "exposed_entities": {
+                    "light.kitchen": {
+                        "google": {"should_expose": False},
+                        "alexa": {"should_expose": True},
+                    },
+                },
+            },
+        }
+        out = _scan_exposed_entities(parsed)
+        assert out == {"light.kitchen"}
+
+    def test_missing_assistants_key_skipped_no_raise(self) -> None:
+        parsed = {
+            "data": {
+                "exposed_entities": {
+                    "light.kitchen": "not a dict",
+                },
+            },
+        }
+        # Must not raise; entity dropped.
+        out = _scan_exposed_entities(parsed)
+        assert out == set()
+
+    def test_missing_data_key_returns_empty(self) -> None:
+        assert _scan_exposed_entities({}) == set()
+        assert _scan_exposed_entities({"data": "wrong"}) == set()
+
+    def test_non_dict_input_returns_empty(self) -> None:
+        assert _scan_exposed_entities("not a dict") == set()
+        assert _scan_exposed_entities(None) == set()
+
+
+class TestScanEnergyStorage:
+    def test_energy_sources_extracts_entity_ids(self) -> None:
+        parsed = {
+            "data": {
+                "energy_sources": [
+                    {"type": "gas", "entity_id": "sensor.gas_meter"},
+                    {
+                        "type": "grid",
+                        "stat_energy_from": "sensor.power_in",
+                        "stat_energy_to": "sensor.power_out",
+                    },
+                ],
+            },
+        }
+        out = _scan_energy_storage(parsed)
+        assert "sensor.gas_meter" in out
+        assert "sensor.power_in" in out
+        assert "sensor.power_out" in out
+
+    def test_device_consumption_extracts_stat_consumption(self) -> None:
+        parsed = {
+            "data": {
+                "device_consumption": [
+                    {"stat_consumption": "sensor.dishwasher_kwh"},
+                    {"stat_consumption_water": "sensor.dishwasher_water"},
+                ],
+            },
+        }
+        out = _scan_energy_storage(parsed)
+        assert out == {"sensor.dishwasher_kwh", "sensor.dishwasher_water"}
+
+    def test_missing_data_returns_empty(self) -> None:
+        assert _scan_energy_storage({}) == set()
+
+
+class TestScanPersonStorage:
+    def test_extracts_device_trackers(self) -> None:
+        parsed = {
+            "data": {
+                "items": [
+                    {
+                        "id": "alice",
+                        "device_trackers": [
+                            "device_tracker.alice_phone",
+                            "device_tracker.alice_watch",
+                        ],
+                    },
+                    {
+                        "id": "bob",
+                        "device_trackers": ["device_tracker.bob_phone"],
+                    },
+                ],
+            },
+        }
+        out = _scan_person_storage(parsed)
+        assert out == {
+            "device_tracker.alice_phone",
+            "device_tracker.alice_watch",
+            "device_tracker.bob_phone",
+        }
+
+    def test_no_trackers_field_returns_empty(self) -> None:
+        parsed = {"data": {"items": [{"id": "x"}]}}
+        assert _scan_person_storage(parsed) == set()
+
+
+class TestUnusedDeviceNotificationFormat:
+    def test_notification_id_has_three_field_separators(self) -> None:
+        cfg = _config(
+            notification_prefix="reference_watchdog_test__automation.x__",
+        )
+        dev = UnusedDevice(
+            device_id="abc123",
+            name="Hot Tub",
+            integration="shelly",
+            config_entry_title=None,
+            manufacturer=None,
+            model=None,
+            enabled_entity_ids=("sensor.x",),
+        )
+        notif = _build_unused_device_notification(cfg, dev)
+        # Two ``__`` separators (service + instance_id).
+        assert notif.notification_id.count("__") == 2
+        assert notif.notification_id.endswith("unused_device_abc123")
+
+    def test_body_contains_required_sections(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        dev = UnusedDevice(
+            device_id="abc",
+            name="Hot Tub",
+            integration="shelly",
+            config_entry_title="Hottub Pro",
+            manufacturer="Acme",
+            model="Spa3000",
+            enabled_entity_ids=(
+                "sensor.hot_tub_temp",
+                "sensor.hot_tub_pump",
+            ),
+        )
+        notif = _build_unused_device_notification(cfg, dev)
+        body = notif.message
+        # Device link.
+        assert "[Hot Tub](/config/devices/device/abc)" in body
+        # Integration link + config-entry title.
+        assert "[shelly]" in body
+        assert "Hottub Pro" in body
+        # Manufacturer / model line.
+        assert "Acme" in body
+        assert "Spa3000" in body
+        # Enabled entities.
+        assert "sensor.hot_tub_temp" in body
+        assert "sensor.hot_tub_pump" in body
+        # Hint text.
+        assert "exclude_device_name_regex" in body
+        assert "exclude_integrations" in body
+
+
+class TestUnusedDevicelessNotificationFormat:
+    def test_notification_id_per_platform_three_separators(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.x",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        assert len(notifs) == 1
+        # Two ``__`` separators (service + instance_id).
+        assert notifs[0].notification_id.count("__") == 2
+        assert notifs[0].notification_id.endswith(
+            "unused_deviceless_utility_meter",
+        )
+
+    def test_per_platform_rollup_groups_correctly(self) -> None:
+        # Two entities sharing platform=utility_meter even though
+        # one is on the ``sensor`` domain and the other on
+        # ``binary_sensor`` -- grouping is by integration, not
+        # domain, so they land in the same rollup.
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.a",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+            UnusedDevicelessEntity(
+                entity_id="binary_sensor.b",
+                domain="binary_sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+            UnusedDevicelessEntity(
+                entity_id="input_boolean.c",
+                domain="input_boolean",
+                platform="input_boolean",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        # Two notifications -- one per integration (platform).
+        assert len(notifs) == 2
+        utility_notif = next(
+            n for n in notifs if "utility_meter" in n.notification_id
+        )
+        assert "sensor.a" in utility_notif.message
+        assert "binary_sensor.b" in utility_notif.message
+        assert "input_boolean.c" not in utility_notif.message
+        # Rollup body header carries the integration link.
+        assert (
+            "/config/integrations/integration/utility_meter"
+            in utility_notif.message
+        )
+
+    def test_script_rollup_header_links_to_dashboard(self) -> None:
+        # ``script`` is a built-in domain rather than a
+        # config-flow integration, so the per-integration
+        # page is empty. Override to the script-list
+        # dashboard.
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="script.foo",
+                domain="script",
+                platform="script",
+                unique_id="foo",
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "/config/script/dashboard" in body
+        assert "/config/integrations/integration/script" not in body
+
+    def test_template_rollup_header_links_to_domain_filter(self) -> None:
+        # ``template`` per-integration page only lists UI-
+        # managed template helpers, missing the larger set
+        # of YAML-defined templates the rollup covers.
+        # Override to the entities-page filtered to the
+        # ``template`` domain.
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.template_thing",
+                domain="sensor",
+                platform="template",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "/config/entities/?domain=template" in body
+        assert "/config/integrations/integration/template" not in body
+
+    def test_source_label_yaml_default(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.um",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        assert "utility_meters.yaml" in notifs[0].message
+
+    def test_source_label_config_entry_title(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.x",
+                domain="sensor",
+                platform="my_integration",
+                unique_id=None,
+                config_entry_id="abc",
+                config_entry_title="My Integration Instance",
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        assert "My Integration Instance" in notifs[0].message
+
+    def test_disabled_tag_in_body(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.disabled",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=True,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        assert "*(disabled)*" in notifs[0].message
+
+    def test_automation_entry_links_to_editor(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="automation.driveway_lights",
+                domain="automation",
+                platform="automation",
+                unique_id="1234567890",
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "[`automation.driveway_lights`]" in body
+        assert "/config/automation/edit/1234567890" in body
+
+    def test_script_entry_links_to_editor(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="script.tts_sonos",
+                domain="script",
+                platform="script",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "[`script.tts_sonos`]" in body
+        assert "/config/script/edit/tts_sonos" in body
+
+    def test_helper_with_config_entry_links_to_filter(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.utility",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id="abc",
+                config_entry_id="ce_xyz",
+                config_entry_title="My Meter",
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "[`sensor.utility`]" in body
+        assert "/config/entities/?config_entry=ce_xyz" in body
+
+    def test_yaml_only_entry_is_bare_code_span(self) -> None:
+        # No config_entry_id and not an automation/script -> no
+        # single-entity URL exists, so the bullet head stays as a
+        # bare code-spanned entity_id (no link wrapper).
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.template_thing",
+                domain="sensor",
+                platform="template",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        # Bare code span -- no surrounding [`...`](...) link.
+        assert "- `sensor.template_thing` -- source:" in body
+        assert "[`sensor.template_thing`]" not in body
+
+    def test_cleared_domain_emits_dismiss_spec(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities=[],
+            platforms_seen_active=frozenset({"sensor"}),
+        )
+        assert len(notifs) == 1
+        assert notifs[0].active is False
+
+
+class TestRunEvaluationEnabledChecks:
+    def test_default_check_all_enables_everything(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Empty config_dir; an empty dir produces no orphans /
+        # no unused-* findings, but the call should run all
+        # four checks without raising.
+        ts = _ts()
+        cfg = _config()  # default enabled_checks == CHECK_ALL
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.source_orphan_count == 0
+        assert ev.unused_device_count == 0
+        assert ev.unused_deviceless_count == 0
+
+    def test_only_broken_references_skips_unused_checks(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # One unreferenced device + one unreferenced deviceless
+        # entity. With only broken-references enabled, NONE of
+        # the unused-* / source-orphan findings should fire.
+        d = _device("d1", integration="shelly")
+        reg_dev = _reg_entry(
+            "sensor.lonely_dev",
+            platform="shelly",
+            device_id="d1",
+        )
+        reg_dl = _reg_entry(
+            "sensor.lonely_dl",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(
+            registry={
+                reg_dev.entity_id: reg_dev,
+                reg_dl.entity_id: reg_dl,
+            },
+            device_records={d.device_id: d},
+        )
+        cfg = _config(
+            enabled_checks=frozenset({CHECK_BROKEN_REFERENCES}),
+        )
+        # Empty configuration.yaml so the broken-ref scan
+        # has nothing to walk -- just enough to run.
+        (tmp_path / "configuration.yaml").write_text("")
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.unused_device_count == 0
+        assert ev.unused_deviceless_count == 0
+        assert ev.source_orphan_count == 0
+
+    def test_only_unused_deviceless_skips_broken_references(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reg_dl = _reg_entry(
+            "sensor.lonely",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg_dl.entity_id: reg_dl})
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_UNUSED_DEVICELESS_ENTITIES},
+            ),
+        )
+        (tmp_path / "configuration.yaml").write_text("")
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.unused_deviceless_count == 1
+
+
+class TestRunEvaluationSharedCap:
+    def test_unused_device_notifications_share_cap(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Single shared cap budget across broken-references
+        # owners + unused-device per-device notifications.
+        # Five unreferenced devices, max_notifications=2:
+        # the cap is shared so at most two PNs total
+        # (broken-refs contributes 0 since the YAML config
+        # is empty), plus the single ``__cap`` summary slot.
+        devs = [
+            _device(f"d{i}", integration="shelly", name=f"Lonely {i}")
+            for i in range(1, 6)
+        ]
+        registry = {
+            f"sensor.lonely_dev_{i}": _reg_entry(
+                f"sensor.lonely_dev_{i}",
+                platform="shelly",
+                device_id=f"d{i}",
+            )
+            for i in range(1, 6)
+        }
+        device_to_entities = {
+            f"d{i}": frozenset({f"sensor.lonely_dev_{i}"}) for i in range(1, 6)
+        }
+        ts = _ts(
+            registry=registry,
+            device_records={d.device_id: d for d in devs},
+            device_to_entities=device_to_entities,
+        )
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_BROKEN_REFERENCES, CHECK_UNUSED_DEVICES},
+            ),
+        )
+        (tmp_path / "configuration.yaml").write_text("")
+        ev = run_evaluation(str(tmp_path), cfg, ts, max_notifications=2)
+        assert ev.unused_device_count == 5
+        unused_dev_pns = [
+            n
+            for n in ev.notifications
+            if "__unused_device_" in n.notification_id and n.active
+        ]
+        assert len(unused_dev_pns) == 2
+        # The single ``__cap`` slot is active.
+        cap_pns = [
+            n
+            for n in ev.notifications
+            if n.notification_id.endswith("__cap") and n.active
+        ]
+        assert len(cap_pns) == 1
+        # Per-type cap slot from the previous design is gone.
+        assert not any(
+            n.notification_id.endswith("__cap_unused_devices")
+            for n in ev.notifications
+        )
+
+    def test_shared_cap_summary_inactive_when_under_cap(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Two unused devices + zero broken-refs,
+        # max_notifications=10: total under cap, so the
+        # ``__cap`` summary slot fires inactive (so any
+        # prior-run active cap notification dismisses).
+        devs = [
+            _device(f"d{i}", integration="shelly", name=f"Lonely {i}")
+            for i in range(1, 3)
+        ]
+        registry = {
+            f"sensor.lonely_dev_{i}": _reg_entry(
+                f"sensor.lonely_dev_{i}",
+                platform="shelly",
+                device_id=f"d{i}",
+            )
+            for i in range(1, 3)
+        }
+        device_to_entities = {
+            f"d{i}": frozenset({f"sensor.lonely_dev_{i}"}) for i in range(1, 3)
+        }
+        ts = _ts(
+            registry=registry,
+            device_records={d.device_id: d for d in devs},
+            device_to_entities=device_to_entities,
+        )
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_BROKEN_REFERENCES, CHECK_UNUSED_DEVICES},
+            ),
+        )
+        (tmp_path / "configuration.yaml").write_text("")
+        ev = run_evaluation(str(tmp_path), cfg, ts, max_notifications=10)
+        cap_pns = [
+            n for n in ev.notifications if n.notification_id.endswith("__cap")
+        ]
+        assert len(cap_pns) == 1
+        assert cap_pns[0].active is False
+
+
+class TestRunEvaluationExtendedRefs:
+    def test_exposed_entities_rescues_unused_deviceless(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Plant a deviceless entity that would otherwise be
+        # unused, plus a homeassistant.exposed_entities file
+        # that exposes it. Should NOT be flagged.
+        reg_dl = _reg_entry(
+            "sensor.exposed_only",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg_dl.entity_id: reg_dl})
+        (tmp_path / "configuration.yaml").write_text("")
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "homeassistant.exposed_entities").write_text(
+            '{"data": {"exposed_entities": '
+            '{"sensor.exposed_only": '
+            '{"google": {"should_expose": true}}}}}'
+        )
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_UNUSED_DEVICELESS_ENTITIES},
+            ),
+        )
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.unused_deviceless_count == 0
+
+    def test_exclude_exposed_entities_flips_flag(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Same setup; with exclude_exposed_entities=True the
+        # voice-exposure scan is skipped, so the entity flips
+        # back to flagged.
+        reg_dl = _reg_entry(
+            "sensor.exposed_only",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg_dl.entity_id: reg_dl})
+        (tmp_path / "configuration.yaml").write_text("")
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "homeassistant.exposed_entities").write_text(
+            '{"data": {"exposed_entities": '
+            '{"sensor.exposed_only": '
+            '{"google": {"should_expose": true}}}}}'
+        )
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_UNUSED_DEVICELESS_ENTITIES},
+            ),
+            exclude_exposed_entities=True,
+        )
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.unused_deviceless_count == 1
+
+    def test_energy_dashboard_rescues_entity(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reg_dl = _reg_entry(
+            "sensor.um_energy",
+            platform="utility_meter",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg_dl.entity_id: reg_dl})
+        (tmp_path / "configuration.yaml").write_text("")
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "energy").write_text(
+            '{"data": {"device_consumption": '
+            '[{"stat_consumption": "sensor.um_energy"}]}}'
+        )
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_UNUSED_DEVICELESS_ENTITIES},
+            ),
+        )
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.unused_deviceless_count == 0
+
+    def test_person_card_rescues_device_tracker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reg_dl = _reg_entry(
+            "device_tracker.alice_phone",
+            platform="some_tracker",
+            device_id=None,
+            config_entry_id=None,
+        )
+        ts = _ts(registry={reg_dl.entity_id: reg_dl})
+        (tmp_path / "configuration.yaml").write_text("")
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "person").write_text(
+            '{"data": {"items": [{"id": "alice", '
+            '"device_trackers": ["device_tracker.alice_phone"]}]}}'
+        )
+        cfg = _config(
+            enabled_checks=frozenset(
+                {CHECK_UNUSED_DEVICELESS_ENTITIES},
+            ),
+        )
+        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        assert ev.unused_deviceless_count == 0
 
 
 class TestCodeQuality(CodeQualityBase):

@@ -66,6 +66,7 @@ from .helpers_logic import (
     notification_prefix,
     parse_entity_registry_update,
     resolve_target_integrations,
+    script_dashboard_link,
     script_edit_link,
     script_edit_url,
     slugify,
@@ -73,7 +74,6 @@ from .helpers_logic import (
     validate_and_join_regex_patterns,
     validate_controlled_entity_domains,
     validate_directives_item,
-    validate_directives_path,
     validate_directives_regex,
 )
 from .helpers_runtime import (
@@ -145,6 +145,7 @@ __all__ = [
     "register_blueprint_handler",
     "resolve_target_integrations",
     "schedule_periodic_with_jitter",
+    "script_dashboard_link",
     "script_edit_link",
     "script_edit_url",
     "slugify",
@@ -154,7 +155,6 @@ __all__ = [
     "validate_and_join_regex_patterns",
     "validate_controlled_entity_domains",
     "validate_directives_item",
-    "validate_directives_path",
     "validate_directives_regex",
     "validate_payload_or_emit_config_error",
 ]

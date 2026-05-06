@@ -109,13 +109,14 @@ def _valid_payload(
     validate_includes_excludes: bool = True,
     exclude_integrations: list[str] | None = None,
     exclude_entities: list[str] | None = None,
-    exclude_paths: str = "",
+    enabled_checks_raw: list[str] | None = None,
+    exclude_device_name_regex: str = "",
+    exclude_exposed_entities_raw: bool = False,
 ) -> dict[str, Any]:
     """Build a fully-populated RW service-call payload."""
     return {
         "instance_id": instance_id,
         "trigger_id": "manual",
-        "exclude_paths_raw": exclude_paths,
         "exclude_integrations_raw": list(exclude_integrations or []),
         "exclude_entities_raw": list(exclude_entities or []),
         "exclude_entity_id_regex_raw": exclude_entity_id_regex,
@@ -123,6 +124,9 @@ def _valid_payload(
         "check_interval_minutes_raw": check_interval_minutes,
         "max_source_notifications_raw": max_source_notifications,
         "validate_includes_excludes_raw": validate_includes_excludes,
+        "enabled_checks_raw": list(enabled_checks_raw or []),
+        "exclude_device_name_regex_raw": exclude_device_name_regex,
+        "exclude_exposed_entities_raw": exclude_exposed_entities_raw,
         "debug_logging_raw": False,
     }
 
@@ -360,8 +364,7 @@ class TestServiceLayerScan:
         # Per-port stat extras (subset; full list in the
         # handler).
         for key in (
-            "paths_included",
-            "paths_excluded",
+            "paths_walked",
             "owners_total",
             "owners_with_issues",
             "total_findings",
@@ -568,6 +571,44 @@ class TestUnmatchedDirectives:
         assert "exclude_integrations" in body
         assert "unknown integration" in body
 
+    async def test_unmatched_device_name_regex_fires_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        # A regex line in ``exclude_device_name_regex`` that
+        # matches no device name should surface as an
+        # unmatched-directives bullet, parallel to the
+        # ``exclude_entity_id_regex`` validation.
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_unmatched_dev_regex",
+                exclude_device_name_regex="zzz_no_device_matches_this",
+                enabled_checks_raw=["unused-devices"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notif_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_unmatched_dev_regex__unmatched_directives"
+        )
+        assert notif_id in notifs, (
+            "expected unmatched-directives notification; got: "
+            f"{sorted(notifs.keys())}"
+        )
+        body: str = notifs[notif_id]["message"]
+        assert "exclude_device_name_regex" in body
+        assert "regex matched no candidates" in body
+
     async def test_toggle_off_dismisses_prior_notification(
         self,
         hass,  # noqa: ANN001
@@ -622,7 +663,7 @@ class TestUnmatchedDirectives:
         hass,  # noqa: ANN001
     ) -> None:
         """One representative bullet per directive category in a single
-        notification body: integration / entity / path / regex.
+        notification body: integration / entity / regex.
 
         Locks down the per-handler ``_validate_rw_directives``
         composition so a refactor that drops a category from
@@ -637,7 +678,6 @@ class TestUnmatchedDirectives:
                 instance_id="automation.rw_categories",
                 exclude_integrations=["typoed_integration"],
                 exclude_entities=["sensor.test_each_dir_cat_unique_id"],
-                exclude_paths="deleted_dir/*.yaml",
                 exclude_entity_id_regex=r"^xyz_no_match_anywhere_each_cat$",
             ),
             blocking=True,
@@ -655,11 +695,9 @@ class TestUnmatchedDirectives:
         body = _async_get_or_create_notifications(hass)[notif_id]["message"]
         assert "exclude_integrations" in body
         assert "exclude_entities" in body
-        assert "exclude_paths" in body
         assert "exclude_entity_id_regex" in body
         assert "typoed_integration" in body
         assert "sensor.test_each_dir_cat_unique_id" in body
-        assert "deleted_dir" in body
         assert "xyz_no_match_anywhere_each_cat" in body
 
     async def test_cap_bypass_unmatched_directives_always_surfaces(
@@ -857,6 +895,423 @@ class TestUnmatchedDirectives:
             assert "light.does_not_exist" not in body, (
                 f"broken-ref suppression false-flagged: {body!r}"
             )
+
+
+class TestUnusedDeviceCheckEndToEnd:
+    """End-to-end coverage for the unused-device check.
+
+    These exercise the full pipeline -- truth-set assembly
+    from the device + entity registries, cascade-up rescue,
+    voice-exposure rescue, and notification-body assembly --
+    not just the pure-Python logic units. Rationale: the
+    truth-set construction in ``handler._build_truth_set``
+    only runs through pytest-HACC, so a logic-level test
+    can't catch a regression where (e.g.) a referenced
+    device_id never reaches the rescue set.
+    """
+
+    async def test_unused_device_emits_per_device_notification(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_unused_dev",
+            "on",
+            {"friendly_name": "RW: Unused Dev", "id": "1"},
+        )
+        fake_entry = _mock_config_entry(
+            domain="fake_unused",
+            title="fake_unused",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_unused", "device-1")},
+            name="Hot Tub",
+        )
+        ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_unused",
+            unique_id="hot_tub_temp",
+            device_id=device.id,
+            config_entry=fake_entry,
+            original_name="hot_tub_temp",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_unused_dev",
+                enabled_checks_raw=["unused-devices"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        per_device = [
+            (nid, body)
+            for nid, body in notifs.items()
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_unused_dev__unused_device_"
+            )
+        ]
+        assert per_device, (
+            "expected per-device unused notification; got "
+            f"{sorted(notifs.keys())}"
+        )
+        _nid, payload = per_device[0]
+        body: str = payload["message"]
+        assert "Hot Tub" in body
+        assert "fake_unused" in body
+        # Automation-link prefix lands.
+        assert body.startswith(
+            "Automation: [RW: Unused Dev](/config/automation/edit/1)\n",
+        )
+
+    async def test_cascade_up_rescue_parent_not_flagged(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        # Parent device has its own entities but no direct
+        # config reference; one of its child devices has an
+        # entity that's referenced via a template. The parent
+        # must NOT appear in the unused list -- cascade-up
+        # rescue propagates the child's "active" status.
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_cascade",
+            "on",
+            {"friendly_name": "RW: Cascade", "id": "2"},
+        )
+        fake_entry = _mock_config_entry(
+            domain="fake_cascade",
+            title="fake_cascade",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+
+        parent = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_cascade", "parent")},
+            name="Parent Hub",
+        )
+        child = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_cascade", "child")},
+            name="Child Sensor",
+            via_device=("fake_cascade", "parent"),
+        )
+        ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_cascade",
+            unique_id="parent_diag",
+            device_id=parent.id,
+            config_entry=fake_entry,
+            original_name="parent_diag",
+        )
+        child_entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_cascade",
+            unique_id="child_temp",
+            device_id=child.id,
+            config_entry=fake_entry,
+            original_name="child_temp",
+        )
+
+        # Reference the child entity from a template.yaml so
+        # the structural walker emits a ref for it.
+        config_dir = Path(hass.config.config_dir)
+        (config_dir / "configuration.yaml").write_text(
+            "template: !include template.yaml\n",
+        )
+        (config_dir / "template.yaml").write_text(
+            "- sensor:\n"
+            "    - name: ChildMirror\n"
+            f"      state: \"{{{{ states('{child_entry.entity_id}') }}}}\"\n",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_cascade",
+                enabled_checks_raw=["unused-devices"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        unused_dev_notifs = {
+            nid
+            for nid in notifs
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_cascade__unused_device_"
+            )
+        }
+        # Neither parent nor child should be flagged --
+        # child is directly referenced, parent is rescued
+        # via cascade-up.
+        state = hass.states.get("blueprint_toolkit.rw_rw_cascade_state")
+        attrs = state.attributes if state else {}
+        assert unused_dev_notifs == set(), (
+            f"parent must be cascade-rescued; got {unused_dev_notifs}; "
+            f"diagnostic state attrs: {attrs}"
+        )
+        assert attrs.get("unused_device_count") == 0
+
+    async def test_exclude_exposed_entities_toggle_flips_rescue(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        # A device whose only "use" is via the unified
+        # voice-exposure store. With ``exclude_exposed_entities``
+        # off (default), the entity is part of the reference
+        # set and the device is rescued. Toggle on, the
+        # exposure scan is skipped and the device flips to
+        # flagged.
+        import json
+
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_expose",
+            "on",
+            {"friendly_name": "RW: Expose", "id": "3"},
+        )
+        fake_entry = _mock_config_entry(
+            domain="fake_expose",
+            title="fake_expose",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_expose", "device-1")},
+            name="Voice Light",
+        )
+        entity = ent_reg.async_get_or_create(
+            domain="light",
+            platform="fake_expose",
+            unique_id="voice_light",
+            device_id=device.id,
+            config_entry=fake_entry,
+            original_name="voice_light",
+        )
+
+        # Plant a unified exposed-entities store flagging
+        # the entity as exposed to one assistant.
+        config_dir = Path(hass.config.config_dir)
+        (config_dir / ".storage").mkdir(exist_ok=True)
+        (config_dir / ".storage" / "homeassistant.exposed_entities").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "minor_version": 1,
+                    "key": "homeassistant.exposed_entities",
+                    "data": {
+                        "exposed_entities": {
+                            entity.entity_id: {
+                                "cloud.alexa": {"should_expose": True},
+                            },
+                        },
+                    },
+                },
+            ),
+        )
+
+        # Toggle off: exposure rescues the device.
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_expose",
+                enabled_checks_raw=["unused-devices"],
+                exclude_exposed_entities_raw=False,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+            async_dismiss,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        rescued_notifs = {
+            nid
+            for nid in notifs
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_expose__unused_device_"
+            )
+        }
+        assert rescued_notifs == set(), (
+            f"toggle off: voice-exposure must rescue device; "
+            f"got {rescued_notifs}"
+        )
+
+        # Dismiss anything left from the first call so the
+        # second-call assertion is unambiguous (only run-2
+        # notifications survive).
+        for nid in list(notifs.keys()):
+            async_dismiss(hass, nid)
+
+        # Toggle on: exposure scan is skipped, device flips
+        # to flagged.
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_expose",
+                enabled_checks_raw=["unused-devices"],
+                exclude_exposed_entities_raw=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        notifs2: dict[str, Any] = _async_get_or_create_notifications(hass)
+        flagged_notifs = {
+            nid
+            for nid in notifs2
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_expose__unused_device_"
+            )
+        }
+        assert len(flagged_notifs) == 1, (
+            f"toggle on: device must be flagged; got "
+            f"notifs2={sorted(notifs2.keys())}"
+        )
+
+
+class TestUnusedDevicelessCheckEndToEnd:
+    async def test_per_platform_rollup_groups_by_integration(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        # Plant unused deviceless entities across two
+        # integrations; the check must emit one rollup per
+        # integration, each linking to that integration's
+        # config page in the body header.
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_dl",
+            "on",
+            {"friendly_name": "RW: Deviceless", "id": "4"},
+        )
+        utility_entry = _mock_config_entry(
+            domain="utility_meter",
+            title="utility_meter",
+        )
+        utility_entry.add_to_hass(hass)
+        ib_entry = _mock_config_entry(
+            domain="input_boolean",
+            title="input_boolean",
+        )
+        ib_entry.add_to_hass(hass)
+        ent_reg = er.async_get(hass)
+
+        # Two utility_meter unused deviceless entities (one
+        # sensor, one binary_sensor -- different domains, same
+        # integration, must end up in the same rollup).
+        ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="utility_meter",
+            unique_id="meter_sensor_1",
+            config_entry=utility_entry,
+            original_name="meter_sensor_1",
+        )
+        ent_reg.async_get_or_create(
+            domain="binary_sensor",
+            platform="utility_meter",
+            unique_id="meter_sensor_2",
+            config_entry=utility_entry,
+            original_name="meter_sensor_2",
+        )
+        # One input_boolean unused deviceless entity.
+        ent_reg.async_get_or_create(
+            domain="input_boolean",
+            platform="input_boolean",
+            unique_id="ib_lonely",
+            config_entry=ib_entry,
+            original_name="ib_lonely",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_dl",
+                enabled_checks_raw=["unused-deviceless-entities"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        rollup_notifs = {
+            nid: spec["message"]
+            for nid, spec in notifs.items()
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_dl__unused_deviceless_"
+            )
+        }
+        # Two integrations -> two rollups, suffixed by
+        # platform. The utility_meter rollup groups across
+        # domains so both planted entities are in the same
+        # body.
+        utility_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_dl__unused_deviceless_utility_meter"
+        )
+        ib_id = (
+            "blueprint_toolkit_reference_watchdog"
+            "__automation.rw_dl__unused_deviceless_input_boolean"
+        )
+        assert utility_id in rollup_notifs, sorted(rollup_notifs)
+        assert ib_id in rollup_notifs, sorted(rollup_notifs)
+        assert "2 entities from this integration" in (rollup_notifs[utility_id])
+        assert "1 entities from this integration" in rollup_notifs[ib_id]
+        # The body's Integration: header line links to the
+        # integration's config page.
+        assert (
+            "/config/integrations/integration/utility_meter"
+            in rollup_notifs[utility_id]
+        )
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

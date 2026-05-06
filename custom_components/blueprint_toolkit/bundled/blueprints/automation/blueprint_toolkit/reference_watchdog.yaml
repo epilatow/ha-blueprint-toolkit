@@ -14,19 +14,30 @@ blueprint:
   author: epilatow
 
   input:
-    exclude_paths:
-      name: Exclude paths
+    enabled_checks:
+      name: Enabled checks
       description: >
-        File paths to skip, using fnmatch-style glob
-        patterns. Matched against the source's relative
-        path (e.g. "plants.yaml" or
-        ".storage/lovelace.old_dashboard"). One pattern
-        per line. Use this to exclude a specific YAML
-        file or dashboard.
-      default: ""
+        Which reference-integrity checks to run. Default
+        set (broken-references and source-orphans) flags
+        high-confidence problems. The two new checks
+        (unused-devices, unused-deviceless-entities) are
+        cleanup signals -- noisier and more opinionated --
+        so they're opt-in. Empty selection means all checks.
+      default:
+        - broken-references
+        - source-orphans
       selector:
-        text:
-          multiline: true
+        select:
+          multiple: true
+          options:
+            - label: Broken references
+              value: broken-references
+            - label: Source orphans
+              value: source-orphans
+            - label: Unused devices
+              value: unused-devices
+            - label: Unused deviceless entities
+              value: unused-deviceless-entities
 
     exclude_integrations:
       name: Exclude integrations
@@ -41,11 +52,8 @@ blueprint:
         a `.storage/core.config_entries` entry -- e.g.
         `group`, `homekit`, or whatever HA integrations
         you have installed), type its name as a custom
-        value. Legacy YAML integrations that don't
-        register entities (e.g. the `plant` integration)
-        have no `Integration:` line and aren't filterable
-        here -- use "Exclude paths" to skip those files
-        directly.
+        value. Also silences unused-devices and unused-
+        deviceless-entities for the named integrations.
       default: []
       selector:
         select:
@@ -83,6 +91,34 @@ blueprint:
       selector:
         text:
           multiline: true
+
+    exclude_device_name_regex:
+      name: Exclude devices by name (regex, multi-line)
+      description: >
+        Per-line regex patterns matched (case-insensitive)
+        against device names. A matching device is excluded
+        from the unused-devices check. Affects only the
+        unused-devices check; broken-references and
+        source-orphans are unaffected. A partial match is
+        sufficient (use ^...$ to require a full match).
+      default: ""
+      selector:
+        text:
+          multiline: true
+
+    exclude_exposed_entities:
+      name: Exclude voice-assistant exposure from the reference set
+      description: >
+        By default, an entity that's deliberately exposed
+        to a voice assistant (HA's Voice Assistants UI,
+        with should_expose=true) counts as "referenced"
+        for the unused-* checks. Enable this toggle to
+        drop the homeassistant.exposed_entities scan from
+        the reference set. Has no effect when neither
+        unused-* check is enabled.
+      default: false
+      selector:
+        boolean: {}
 
     check_disabled_entities:
       name: Check disabled entities
@@ -168,7 +204,6 @@ actions:
       # variables. Default covers ad-hoc dev-tools manual
       # calls.
       trigger_id: "{{ trigger_id | default('manual', true) }}"
-      exclude_paths_raw: !input exclude_paths
       exclude_integrations_raw: !input exclude_integrations
       exclude_entities_raw: !input exclude_entities
       exclude_entity_id_regex_raw: !input exclude_entity_id_regex
@@ -176,6 +211,9 @@ actions:
       check_interval_minutes_raw: !input check_interval_minutes
       max_source_notifications_raw: !input max_source_notifications
       validate_includes_excludes_raw: !input validate_includes_excludes
+      enabled_checks_raw: !input enabled_checks
+      exclude_device_name_regex_raw: !input exclude_device_name_regex
+      exclude_exposed_entities_raw: !input exclude_exposed_entities
       debug_logging_raw: !input debug_logging
 
 # Periodic scans, restart recovery, and reload recovery

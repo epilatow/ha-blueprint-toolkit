@@ -120,8 +120,9 @@ for the full list. The headline cases:
   adapters don't wire them through yet.
 - Unregistered YAML entities (e.g. the legacy ``plant``
   integration, which doesn't register entities) can't be
-  reached by ``exclude_integrations`` -- use
-  ``exclude_paths`` for those cases.
+  reached by ``exclude_integrations``. Fall back to
+  ``exclude_entity_id_regex`` against the broken-ref
+  values to silence those.
 """
 
 import re
@@ -133,21 +134,28 @@ import jinja2
 import jinja2.nodes
 
 from ..helpers import (
+    CappableResult,
+    IssueNotification,
     JoinedRegexLine,
     PersistentNotification,
     UnmatchedDirective,
+    automation_edit_link,
     automation_edit_url,
+    config_entry_link,
     config_entry_url,
     dashboard_url,
+    device_header_line,
+    domain_entities_link,
     domain_entities_url,
     entities_dashboard_url,
     integration_link,
     matches_pattern,
     md_escape,
     prepare_notifications,
+    script_dashboard_link,
+    script_edit_link,
     script_edit_url,
     validate_directives_item,
-    validate_directives_path,
     validate_directives_regex,
 )
 
@@ -255,6 +263,111 @@ _ENTITY_KEYS: frozenset[str] = frozenset(
 # here are validated against _DEVICE_ID_RE and the device truth set.
 _DEVICE_KEYS: frozenset[str] = frozenset(["device", "device_id", "devices"])
 
+# Check identifiers surfaced as blueprint options, mirroring the
+# DW shape (one constant per check, ``CHECK_ALL`` enumerates the
+# full set, argparse falls back to ``CHECK_ALL`` on an empty
+# enabled-list). Adding a new check = one new constant, add it
+# to ``CHECK_ALL``, gate its evaluator on ``in config.enabled_checks``.
+CHECK_BROKEN_REFERENCES = "broken-references"
+CHECK_SOURCE_ORPHANS = "source-orphans"
+CHECK_UNUSED_DEVICES = "unused-devices"
+CHECK_UNUSED_DEVICELESS_ENTITIES = "unused-deviceless-entities"
+
+CHECK_ALL: frozenset[str] = frozenset(
+    {
+        CHECK_BROKEN_REFERENCES,
+        CHECK_SOURCE_ORPHANS,
+        CHECK_UNUSED_DEVICES,
+        CHECK_UNUSED_DEVICELESS_ENTITIES,
+    },
+)
+
+
+# Hardware-typed devices on these integrations are skipped from
+# the unused-device check unconditionally. The common thread:
+# every device on these integrations is pure transport
+# infrastructure (a hub / radio / adapter that exists to surface
+# OTHER devices, not to be referenced itself) or a user-
+# interactive surface (a phone that connects to HA but isn't
+# typically wired into automations as state). Cascade-up rescue
+# can't catch them because the actual peripherals live under
+# different integrations (``zha`` / ``matter`` for Zigbee /
+# Thread; ``bthome`` / ``xiaomi_ble`` for BLE) without a
+# ``via_device_id`` link back to the hub.
+#
+# Service-typed devices (``hassio``, ``hacs``, ``homekit``,
+# ``spotify``, ``anthropic``, ``backup``, ``sun``, ``met``, etc.)
+# are caught by the generic ``DeviceRecord.entry_type == "service"``
+# filter inside ``_scan_unused_devices`` and don't need explicit
+# entries here. HA's device-registry classification (``DeviceEntry.
+# entry_type = DeviceEntryType.SERVICE``) already declares these
+# as agents rather than physical hardware.
+#
+# - ``homeassistant_sky_connect`` / ``homeassistant_connect_zbt2``
+#   / ``homeassistant_yellow`` -- HA-shipped radio dongles and
+#   onboard radios.
+# - ``bluetooth`` -- the Bluetooth adapter integration. Devices
+#   here are physical adapters (USB dongles, on-board chips); BLE
+#   peripherals live on ``bthome`` / ``xiaomi_ble`` / etc.
+# - ``mobile_app`` -- HA Companion devices. Most users install
+#   the app to access HA from their phone, not to wire the
+#   phone's battery / connectivity sensors into automations.
+# - ``music_assistant`` -- MA registers a device per discovered
+#   speaker / streaming endpoint. Many wrap an underlying
+#   integration's device (Sonos, AirPlay, Spotify Connect)
+#   without setting ``via_device_id`` so cascade-up rescue
+#   misses them. The MA sidebar panel "uses" every MA device
+#   for its own UI, but that consumer isn't visible to RW's
+#   YAML / .storage scans.
+_UNUSED_DEVICE_SKIP_INTEGRATIONS: frozenset[str] = frozenset(
+    {
+        "bluetooth",
+        "homeassistant_connect_zbt2",
+        "homeassistant_sky_connect",
+        "homeassistant_yellow",
+        "mobile_app",
+        "music_assistant",
+    },
+)
+
+
+# Deviceless entities on these platforms are skipped from the
+# unused-deviceless-entities check unconditionally. ``automation``
+# is an agent the user runs (not consumed by other config);
+# ``group`` is a UI container the user interacts with directly;
+# ``cloud`` covers HA Cloud's remote-UI / voice plumbing entities.
+# ``script`` is intentionally NOT skipped -- ``service: script.foo``
+# in YAML is a real consumed-from-config reference shape, so an
+# unreferenced script entity is a legitimate finding.
+_UNUSED_DEVICELESS_SKIP_PLATFORMS: frozenset[str] = frozenset(
+    {"automation", "group", "cloud"},
+)
+
+
+# Deviceless entities in these domains are skipped from the
+# unused-deviceless-entities check unconditionally. ``stt`` and
+# ``tts`` are voice-pipeline plumbing (rarely referenced by
+# entity_id, even when actively in use).
+_UNUSED_DEVICELESS_SKIP_DOMAINS: frozenset[str] = frozenset(
+    {"stt", "tts"},
+)
+
+
+# Best-guess "where would the user edit this" file map for
+# YAML-defined deviceless entities (rendered in the per-domain
+# rollup). When an entity has ``config_entry_id is None`` we fall
+# back to this map keyed by the entity-registry platform; misses
+# render as "(YAML-defined; file not auto-detected)".
+_PLATFORM_TO_YAML_FILE: dict[str, str] = {
+    "automation": "automations.yaml",
+    "script": "scripts.yaml",
+    "template": "template.yaml",
+    "utility_meter": "utility_meters.yaml",
+    "group": "groups.yaml",
+    "scene": "scenes.yaml",
+}
+
+
 # -- Dataclasses ---------------------------------------------------------
 
 
@@ -267,11 +380,31 @@ class Config:
     immutable argument.
     """
 
-    exclude_paths: list[str]
     exclude_integrations: list[str]
     exclude_entities: list[str]
     exclude_entity_id_regex: str
     check_disabled_entities: bool
+    # Subset of ``CHECK_ALL`` selected by the user. Empty
+    # frozenset means "all checks" -- argparse normalises an
+    # empty blueprint input to ``CHECK_ALL`` so the logic
+    # module can treat the field as authoritative. Defaults
+    # to ``CHECK_ALL`` so legacy callers (existing tests
+    # built before ``enabled_checks`` was added) get the
+    # full set without rewriting every fixture.
+    enabled_checks: frozenset[str] = field(
+        default_factory=lambda: CHECK_ALL,
+    )
+    # Joined alternation regex of the multi-line
+    # ``exclude_device_name_regex`` blueprint input. Empty string
+    # disables the filter. Used by the unused-device check
+    # to skip devices whose effective name (``name_by_user``
+    # or ``name``) matches.
+    exclude_device_name_regex: str = ""
+    # When True, the ``homeassistant.exposed_entities``
+    # storage scan is skipped from the reference set --
+    # voice-assistant-only references no longer rescue an
+    # entity from the unused-* checks.
+    exclude_exposed_entities: bool = False
     # Per-instance notification ID prefix, ending with
     # the canonical ``__`` separator. Every notification
     # this module mints must start with this string so
@@ -306,6 +439,56 @@ class RegistryEntry:
     disabled: bool
     name: str | None
     original_name: str | None
+    # Device the entity is bound to in the registry. ``None``
+    # for deviceless entities (helpers, top-level integrations
+    # without a device shape, etc.). Threaded into the truth
+    # set so the unused-* checks can partition entities into
+    # device-bound vs deviceless without reading the registry
+    # twice.
+    device_id: str | None = None
+
+
+@dataclass(frozen=True)
+class DeviceRecord:
+    """One row from the device registry as a value type.
+
+    Built once per run from ``device_registry.async_get(hass)``
+    plus a back-resolve of each device's ``primary_config_entry``
+    against the parsed ``core.config_entries``. Threaded into
+    ``TruthSet.device_records`` so the unused-device check can
+    classify devices, build per-device notification bodies, and
+    walk ``via_device_id`` for cascade-up rescue without making
+    further registry calls.
+
+    ``name`` follows HA's display rule: ``name_by_user`` if the
+    user renamed the device, otherwise ``name``. Falls back to
+    ``"(unnamed)"`` when neither is set so notification bodies
+    don't render an empty link.
+
+    ``integration`` is the config-entry domain (``shelly``,
+    ``mqtt``, ``zwave_js``, ...) of the device's primary config
+    entry. Drives the ``_UNUSED_DEVICE_SKIP_INTEGRATIONS`` test
+    and the ``exclude_integrations`` cross-check.
+
+    ``entry_type`` mirrors HA's ``DeviceEntry.entry_type``:
+    ``"service"`` for devices an integration registers as agents
+    rather than physical hardware (HACS update buttons, Spotify,
+    cloud-API conversation agents, sun / weather / backup
+    integrations, etc.), ``None`` for everything else. The
+    unused-devices check skips ``"service"`` devices
+    unconditionally -- a service-style device is by definition
+    not a thing the reference graph would ever point at.
+    """
+
+    device_id: str
+    name: str
+    manufacturer: str | None
+    model: str | None
+    integration: str
+    config_entry_title: str | None
+    via_device_id: str | None
+    config_entries: tuple[str, ...]
+    entry_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +538,23 @@ class TruthSet:
     config_entries_with_entities: frozenset[str] = field(
         default_factory=frozenset,
     )
+    # Per-device metadata used by the unused-device check.
+    # Populated by the handler from the live device registry +
+    # back-resolved config-entry titles. Empty for legacy callers
+    # that don't enable the unused-* checks.
+    device_records: dict[str, DeviceRecord] = field(default_factory=dict)
+    # Reverse index: device_id -> set of registered entity_ids
+    # bound to that device. Built off the entity registry so the
+    # unused-device check can iterate "all entities on this
+    # device" in O(1) without rescanning ``registry``.
+    device_to_entities: dict[str, frozenset[str]] = field(
+        default_factory=dict,
+    )
+    # config_entry_id -> human title from the parsed
+    # ``core.config_entries``. Used in the unused-device
+    # notification body to disambiguate multi-instance
+    # integrations (e.g. which Apple TV).
+    config_entry_titles: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -413,10 +613,10 @@ class Owner:
     the notification body *and* the matching key for the
     ``exclude_integrations`` blueprint input. Whenever
     ``integration`` is non-None, the owner is filterable
-    by that value; when None, the notification omits the
-    ``Integration:`` line and ``exclude_integrations``
-    cannot reach the owner (users should reach for
-    ``exclude_paths`` instead).
+    by that value; when None (legacy YAML adapters that
+    don't carry an integration label), users fall back to
+    ``exclude_entity_id_regex`` against the broken-ref
+    values to silence findings.
 
     ``block_path`` describes where the owner lives in
     hand-editable YAML files, e.g.
@@ -525,8 +725,24 @@ class OwnerResult:
     # a known-broken ref doesn't false-flag as "no entity
     # matches" -- the broken value is by definition not in
     # the surviving findings list, but it's a legitimate
-    # exclusion target.
+    # exclusion target. Also consumed by
+    # ``_collect_referenced_entity_ids`` so the unused-*
+    # checks see every ref the walker emitted across owners,
+    # including ones the user is intentionally suppressing.
     seen_entity_refs: frozenset[str] = field(default_factory=frozenset)
+    # Every device-kind ref value the walker emitted for
+    # this owner that resolved against ``truth_set.device_ids``.
+    # Captured after the user-target exclusion filter, which in
+    # practice never matches a hex device ID since
+    # ``exclude_entities`` / ``exclude_entity_id_regex`` target
+    # entity-id strings -- a pathological config could of course
+    # write either to match a 32-char hex string, but real users
+    # don't. Consumed by ``_collect_referenced_device_ids`` so
+    # the unused-device check rescues devices whose only "use"
+    # in user config is a valid ``device_id:`` reference -- the
+    # canonical case is a Pico remote bound to an automation via
+    # ``lutron_caseta_button_event`` device-id.
+    seen_device_refs: frozenset[str] = field(default_factory=frozenset)
     # Stamped at construction time (in
     # ``_build_owner_result``) from ``Config.instance_id``
     # so ``to_notification`` can hand the dispatcher the
@@ -767,20 +983,6 @@ def _walk_tree(
 # -- Exclusion helpers ---------------------------------------------------
 
 
-def _is_path_excluded(path: str, patterns: list[str]) -> bool:
-    """True if ``path`` matches any fnmatch-style glob in ``patterns``."""
-    if not patterns:
-        return False
-    from fnmatch import fnmatch
-
-    for pat in patterns:
-        if not pat:
-            continue
-        if fnmatch(path, pat):
-            return True
-    return False
-
-
 def _is_integration_excluded(
     integration: str | None,
     excluded: list[str],
@@ -882,7 +1084,9 @@ def _is_entity_excluded(
 #   from ``item.name`` / ``item.alias`` / ``item.id``
 #   if present, else index); scalar/other -> file-level
 #   owner. Integration = None (not filterable by
-#   integration -- use ``exclude_paths`` instead).
+#   ``exclude_integrations``; fall back to
+#   ``exclude_entity_id_regex`` against the broken-ref
+#   values).
 #
 # Every adapter sets ``yaml_only`` by looking up the
 # owner entity in ``TruthSet.registry`` and checking
@@ -1263,8 +1467,9 @@ def _scan_generic_yaml(
 
     Integration is ``None``, so the notification omits
     the ``Integration:`` line and ``exclude_integrations``
-    cannot filter these -- users reach for
-    ``exclude_paths`` instead.
+    cannot filter these. Users fall back to
+    ``exclude_entity_id_regex`` against the broken-ref
+    values to silence findings from these owners.
     """
     owners: list[tuple[Owner, object]] = []
     parsed = source.parsed
@@ -1330,8 +1535,20 @@ class _OwnerStats:
     # intentionally suppressing -- the ref value the user
     # excluded by definition isn't in the surviving
     # findings list, but it WAS seen and is a legitimate
-    # exclusion target.
+    # exclusion target. Also consumed by the unused-* checks
+    # as the "what's referenced anywhere" set across owners.
     seen_entity_refs: set[str] = field(default_factory=set)
+    # Mirror of ``OwnerResult.seen_device_refs``: every
+    # device-kind ref value the walker emitted for this owner
+    # that resolved against ``truth_set.device_ids``. Captured
+    # at the device-resolution branch in ``_collect_findings``
+    # (i.e. after the user-target exclusion filter, which in
+    # practice never matches a hex device ID since
+    # ``exclude_entities`` / ``exclude_entity_id_regex`` target
+    # entity-id strings). The unused-device check unions these
+    # across owners as the "what device_ids are referenced
+    # anywhere" rescue set.
+    seen_device_refs: set[str] = field(default_factory=set)
 
 
 def _classify_ref_origin(ref: Ref) -> str:
@@ -1383,10 +1600,11 @@ def _collect_findings(
             # Capture every customize key as a seen entity
             # ref BEFORE the user-target exclusion runs --
             # the canonical reason to keep an
-            # ``exclude_entities`` entry around is
-            # silencing a known-broken customize key, and
-            # the validator must consider that key a
-            # legitimate exclusion target.
+            # ``exclude_entities`` entry around is silencing
+            # a known-broken customize key, and the validator
+            # must consider that key a legitimate exclusion
+            # target. The unused-* checks also consume this
+            # set across owners.
             stats.seen_entity_refs.add(eid)
             if _is_entity_excluded(
                 eid,
@@ -1421,10 +1639,10 @@ def _collect_findings(
 
         origin = _classify_ref_origin(ref)
 
-        # Capture the entity-kind ref value before any
-        # filter so the directive validator can see what
-        # the user could legitimately be suppressing
-        # (broken refs included).
+        # filter so the directive validator can see what the
+        # user could legitimately be suppressing (broken refs
+        # included), and so unused-* checks see what the
+        # walker emitted across owners.
         if ref.kind == "entity":
             stats.seen_entity_refs.add(ref.value)
 
@@ -1480,6 +1698,12 @@ def _collect_findings(
         else:  # device
             if ref.value in truth_set.device_ids:
                 stats.refs_valid += 1
+                # Capture every resolved device-kind ref so
+                # ``_collect_referenced_device_ids`` can union
+                # them across owners; broken device-kind refs
+                # surface as findings and don't belong in the
+                # rescue set.
+                stats.seen_device_refs.add(ref.value)
             else:
                 stats.refs_broken += 1
                 findings.append(Finding(ref=ref, disabled=False))
@@ -1652,6 +1876,7 @@ def _build_owner_result(
         refs_broken=stats.refs_broken,
         refs_service_skipped=stats.refs_service_skipped,
         seen_entity_refs=frozenset(stats.seen_entity_refs),
+        seen_device_refs=frozenset(stats.seen_device_refs),
         instance_id=config.instance_id,
     )
 
@@ -1690,6 +1915,18 @@ def _evaluate_sources(
     with zero findings (the service wrapper uses these
     for the ``owners_total`` / ``owners_with_refs`` /
     ``owners_without_refs`` stats).
+
+    Source-side exclusions (``exclude_entities`` /
+    ``exclude_entity_id_regex`` against ``owner.entity_id``,
+    and ``exclude_integrations`` against ``owner.integration``)
+    suppress an owner's broken-reference findings WITHOUT
+    skipping the tree walk. The walk still populates
+    ``seen_entity_refs`` / ``seen_device_refs`` on the
+    result so refs the excluded owner makes to OTHER
+    entities continue to feed the unused-* check's rescue
+    set. Skipping the walk early would invalidate the
+    rescue set: an entity referenced only by an excluded
+    owner would otherwise be falsely flagged as unused.
     """
     results: list[OwnerResult] = []
     for source in sources:
@@ -1697,32 +1934,29 @@ def _evaluate_sources(
         owners = adapter(source, truth_set)
 
         for owner, tree in owners:
-            # Source-side entity exclusion. The owner's
-            # entity_id, when available, is checked
-            # against the unified entity-exclude list.
-            if owner.entity_id is not None and _is_entity_excluded(
-                owner.entity_id,
-                config.exclude_entities,
-                config.exclude_entity_id_regex,
-            ):
-                continue
-
-            # Source-side integration exclusion. Generic
-            # YAML owners have integration=None and are
-            # never integration-excluded -- users reach
-            # for exclude_paths for those.
-            if _is_integration_excluded(
-                owner.integration,
-                config.exclude_integrations,
-            ):
-                continue
-
             findings, stats = _collect_findings(
                 config,
                 owner,
                 tree,
                 truth_set,
             )
+
+            # Source-side exclusions silence findings AFTER
+            # the walk so refs into the rescue set are kept.
+            owner_excluded = (
+                owner.entity_id is not None
+                and _is_entity_excluded(
+                    owner.entity_id,
+                    config.exclude_entities,
+                    config.exclude_entity_id_regex,
+                )
+            ) or _is_integration_excluded(
+                owner.integration,
+                config.exclude_integrations,
+            )
+            if owner_excluded:
+                findings = []
+
             result = _build_owner_result(
                 config,
                 owner,
@@ -2365,6 +2599,829 @@ def _build_source_orphans_notification(
     )
 
 
+# -- Unused-device + unused-deviceless detection ------------------------
+#
+# The unused-* checks are the inverse of broken-references: rather
+# than asking "every reference resolves to something live", they
+# ask "every live thing is referenced somewhere". They reuse the
+# already-built per-owner reference set plus three extra storage
+# scans (``homeassistant.exposed_entities``, ``.storage/energy``,
+# ``.storage/person``) so voice-exposure / energy-dashboard /
+# person-card bindings count as references.
+#
+# Devices: a device is "unused" when no enabled entity on it is
+# referenced AND the device itself isn't device-id-referenced AND
+# no descendant device (via ``via_device_id``) has a referenced
+# entity. Cascade-up via ``via_device_id`` rescues parents from
+# their children's references; cycle protection (self-loops,
+# A->B->C->A) is mandatory because real registries have been seen
+# in the wild containing self-referencing ``via_device_id``.
+#
+# Deviceless entities: a deviceless entity (registry
+# ``device_id is None``) is "unused" when it isn't referenced.
+# Skip-lists handle platforms / domains the user interacts with
+# directly and shouldn't get prune-cleanup nags about
+# (``automation``, ``script``, ``group``, ``stt``, ``tts``, etc.).
+
+
+@dataclass(frozen=True)
+class UnusedDevice:
+    """One device flagged as unused this run.
+
+    Stable across runs (the device_id is registry-driven), so
+    notification IDs derived from it survive HA restarts.
+    """
+
+    device_id: str
+    name: str
+    integration: str
+    config_entry_title: str | None
+    manufacturer: str | None
+    model: str | None
+    enabled_entity_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UnusedDevicelessEntity:
+    """One deviceless entity flagged as unused this run.
+
+    ``unique_id`` is the registry's unique_id for the entity --
+    needed for ``automation.*`` rollup bullets to render an
+    editor link (``/config/automation/edit/<unique_id>``).
+    Scripts use the object_id from the entity_id; UI helpers
+    use the entity's ``config_entry_id``; YAML-only entries
+    fall back to a bare code span.
+    """
+
+    entity_id: str
+    domain: str
+    platform: str
+    unique_id: str | None
+    config_entry_id: str | None
+    config_entry_title: str | None
+    disabled: bool
+
+
+@dataclass(frozen=True)
+class UnusedDevicesResult:
+    """Bundle of unused-device flags plus pool + exclusion counters.
+
+    ``unused`` is the final flagged list (post-skip + post-
+    user-exclusion + post-activity + post-cascade-rescue).
+    ``total`` is the pool size BEFORE user exclusions ran --
+    devices that passed the hardcoded skip list and the zero-
+    enabled-entity filter, i.e. the candidates the user's
+    ``exclude_integrations`` and ``exclude_device_name_regex``
+    could affect. ``excluded`` is the count of those silenced
+    by either user directive. Same ``total + excluded + count``
+    shape DW and EDW expose for their per-run candidate pools.
+    """
+
+    unused: list[UnusedDevice]
+    total: int
+    excluded: int
+
+
+def _cascade_up_rescue(
+    devices: dict[str, DeviceRecord],
+    starting_device: str,
+) -> set[str]:
+    """Return ancestor device IDs reached from ``starting_device``.
+
+    Walks ``via_device_id`` upward from the starting device,
+    marking every parent on the way. The starting device itself
+    is NOT included -- callers already know it's referenced and
+    rescue it independently; this helper only returns ancestors.
+
+    Cycle protection is mandatory. A live HA registry can
+    contain a self-referencing ``via_device_id`` (a Lutron Caseta
+    entry whose ``via_device_id`` points to itself was found
+    during plan design) and a naive walk would spin forever.
+    The walk tracks visited IDs and stops on a repeat, which
+    handles both self-loops and multi-hop cycles
+    (A -> B -> C -> A).
+
+    Cascade direction: UP only, never DOWN. If a parent device
+    has a referenced entity, that does NOT rescue its sibling-
+    children -- those are independent physical things in their
+    own right (e.g. Pico remotes on a Lutron Smart Bridge are
+    independently referenced via device_id triggers, not via
+    their bridge).
+    """
+    rescued: set[str] = set()
+    seen: set[str] = {starting_device}
+    cur = devices.get(starting_device)
+    parent = cur.via_device_id if cur else None
+    while parent and parent not in seen:
+        seen.add(parent)
+        rescued.add(parent)
+        cur = devices.get(parent)
+        if cur is None:
+            break
+        parent = cur.via_device_id
+    return rescued
+
+
+def _collect_referenced_entity_ids(
+    results: list[OwnerResult],
+    extended_reference_entity_ids: frozenset[str],
+) -> frozenset[str]:
+    """Union every reference observed this run + extended sources.
+
+    Combines the entity-kind ref values seen during the
+    per-owner walk (``OwnerResult.seen_entity_refs``) with
+    extended-source entity_ids harvested by
+    ``_build_extended_reference_set`` (voice exposures,
+    energy dashboard, person trackers). The resulting set is
+    what the unused-* checks treat as "referenced anywhere
+    this run".
+
+    Source orphans are a separate concern (registry entries with
+    no definer); they don't intersect with the referenced set.
+    """
+    refs: set[str] = set()
+    for r in results:
+        refs.update(r.seen_entity_refs)
+    refs.update(extended_reference_entity_ids)
+    return frozenset(refs)
+
+
+def _collect_referenced_device_ids(
+    results: list[OwnerResult],
+) -> frozenset[str]:
+    """Return device_ids that appeared as device-kind refs this run.
+
+    The structural walk emits ``Ref(kind="device")`` for keys in
+    ``_DEVICE_KEYS`` whose values match ``_DEVICE_ID_RE``. Resolved
+    device-kind refs are captured per-owner in
+    ``OwnerResult.seen_device_refs``; the unused-device check
+    unions them across owners as the "what device_ids are
+    referenced anywhere" rescue set. A device whose only "use"
+    in user config is a valid ``device_id:`` reference (Pico
+    remotes triggering automations via
+    ``lutron_caseta_button_event``, Z-Wave devices used via
+    device-id automation triggers) gets rescued through this
+    set instead of being misclassified as unused.
+    """
+    refs: set[str] = set()
+    for r in results:
+        refs.update(r.seen_device_refs)
+    return frozenset(refs)
+
+
+def _scan_unused_devices(
+    config: Config,
+    truth_set: TruthSet,
+    referenced_entity_ids: frozenset[str],
+    referenced_device_ids: frozenset[str],
+) -> UnusedDevicesResult:
+    """Identify devices with no live reference path.
+
+    A device is flagged when ALL of these hold:
+
+    - ``DeviceRecord.entry_type`` is not ``"service"``. Devices
+      HA classifies as service-typed are agents (HACS update
+      buttons, cloud-API conversation agents, weather forecasts,
+      sun, backup, etc.), not physical hardware -- the reference
+      graph would never point at them by design.
+    - Integration is not in ``_UNUSED_DEVICE_SKIP_INTEGRATIONS``.
+    - Device name doesn't match ``exclude_device_name_regex``.
+    - Integration isn't in ``Config.exclude_integrations``.
+    - At least one enabled, NOT user-excluded entity is bound
+      to the device. Zero-enabled-entity devices (BLE proxies,
+      RF radios as scanners, event-only Pico remotes) can't be
+      "used" via entity_id and rarely via device_id; same path
+      drops devices whose every enabled entity matches
+      ``exclude_entities`` / ``exclude_entity_id_regex`` since
+      from the user's perspective those entities don't exist.
+    - None of the device's enabled entities are in
+      ``referenced_entity_ids`` (the activity check looks at
+      every enabled entity, not just visible ones -- a
+      reference is a reference even if the user excluded the
+      entity from notification surfaces).
+    - The device's own ``device_id`` isn't in
+      ``referenced_device_ids``.
+    - No descendant device's referenced entity rescues this
+      one via ``via_device_id`` cascade-up.
+
+    Cascade-up is computed by iterating every "active" device
+    (one with at least one referenced entity OR appearing as a
+    referenced device_id) and unioning ``_cascade_up_rescue``
+    over them. The result is a set of "rescued by descendant"
+    device IDs the candidate set is filtered against.
+
+    Returns an ``UnusedDevicesResult`` carrying the flagged
+    list plus the candidate-pool counters (``total``,
+    ``excluded``) so the diagnostic state matches the shape
+    DW and EDW use for their pools.
+    """
+    # Build the candidate pool. ``total`` counts everything
+    # the user could silence -- post hardcoded-skip and post
+    # zero-visible-entity filter, but BEFORE the user's
+    # ``exclude_integrations`` / ``exclude_device_name_regex``
+    # ran. ``excluded`` is what those two directives silenced
+    # within that pool. ``candidates`` is the survivors that
+    # the activity / cascade check then evaluates.
+    #
+    # "Visible" = enabled AND not silenced by
+    # ``exclude_entities`` / ``exclude_entity_id_regex``.
+    # A device whose every enabled entity is user-excluded
+    # has no surface the user wants to hear about and so
+    # can't be "unused" from their perspective.
+    total = 0
+    excluded = 0
+    candidates: list[tuple[DeviceRecord, tuple[str, ...]]] = []
+    for dev in truth_set.device_records.values():
+        if dev.entry_type == "service":
+            continue
+        if dev.integration in _UNUSED_DEVICE_SKIP_INTEGRATIONS:
+            continue
+        ents_pre = truth_set.device_to_entities.get(
+            dev.device_id,
+            frozenset(),
+        )
+        visible_ents = tuple(
+            eid
+            for eid in sorted(ents_pre)
+            if eid not in truth_set.disabled_entity_ids
+            and not _is_entity_excluded(
+                eid,
+                config.exclude_entities,
+                config.exclude_entity_id_regex,
+            )
+        )
+        if not visible_ents:
+            continue
+        total += 1
+        if _is_integration_excluded(
+            dev.integration,
+            config.exclude_integrations,
+        ):
+            excluded += 1
+            continue
+        if config.exclude_device_name_regex and matches_pattern(
+            dev.name,
+            config.exclude_device_name_regex,
+        ):
+            excluded += 1
+            continue
+        candidates.append((dev, visible_ents))
+
+    # Identify devices with at least one referenced entity
+    # (or referenced via device_id). These seed the cascade-
+    # up walk that rescues their ancestors.
+    active_devices: set[str] = set(referenced_device_ids)
+    for dev in truth_set.device_records.values():
+        ents = truth_set.device_to_entities.get(dev.device_id, frozenset())
+        if any(eid in referenced_entity_ids for eid in ents):
+            active_devices.add(dev.device_id)
+
+    rescued_by_cascade: set[str] = set()
+    for did in active_devices:
+        rescued_by_cascade.update(
+            _cascade_up_rescue(truth_set.device_records, did),
+        )
+
+    def _flag(dev: DeviceRecord) -> bool:
+        if dev.device_id in active_devices:
+            return False
+        if dev.device_id in rescued_by_cascade:
+            return False
+        return True
+
+    # Emit unused-device records for candidates that are
+    # neither directly active nor rescued by cascade. The
+    # body lists the visible enabled entities (i.e. the same
+    # set that brought the device into the candidate pool),
+    # so a partially-excluded device's notification only
+    # surfaces the entities the user actually cares about.
+    unused: list[UnusedDevice] = []
+    for dev, visible_ents in candidates:
+        if not _flag(dev):
+            continue
+        unused.append(
+            UnusedDevice(
+                device_id=dev.device_id,
+                name=dev.name,
+                integration=dev.integration,
+                config_entry_title=dev.config_entry_title,
+                manufacturer=dev.manufacturer,
+                model=dev.model,
+                enabled_entity_ids=visible_ents,
+            ),
+        )
+    return UnusedDevicesResult(
+        unused=unused,
+        total=total,
+        excluded=excluded,
+    )
+
+
+def _scan_unused_deviceless_entities(
+    config: Config,
+    truth_set: TruthSet,
+    referenced_entity_ids: frozenset[str],
+) -> list[UnusedDevicelessEntity]:
+    """Identify deviceless entities not referenced anywhere.
+
+    Deviceless = entity-registry ``device_id is None``. The
+    skip-lists drop entities whose platform is in
+    ``_UNUSED_DEVICELESS_SKIP_PLATFORMS`` or whose entity-ID
+    domain is in ``_UNUSED_DEVICELESS_SKIP_DOMAINS``. The
+    user's ``exclude_integrations`` is also honoured against
+    the platform field so the same dropdown silences both the
+    device-side and deviceless-side checks.
+
+    Built-in entities surfaced via ``hass.states`` but not in
+    the registry (sun.sun, weather.home before HA wires a
+    config entry) are not candidates -- they have no registry
+    row, so ``device_id is None`` doesn't even apply.
+    """
+    out: list[UnusedDevicelessEntity] = []
+    for eid, entry in truth_set.registry.items():
+        if entry.device_id is not None:
+            continue
+        if entry.platform in _UNUSED_DEVICELESS_SKIP_PLATFORMS:
+            continue
+        domain = eid.split(".", 1)[0]
+        if domain in _UNUSED_DEVICELESS_SKIP_DOMAINS:
+            continue
+        if _is_integration_excluded(
+            entry.platform,
+            config.exclude_integrations,
+        ):
+            continue
+        if _is_entity_excluded(
+            eid,
+            config.exclude_entities,
+            config.exclude_entity_id_regex,
+        ):
+            continue
+        if eid in referenced_entity_ids:
+            continue
+        # Script entities accept both ``script.<entity_object_id>``
+        # and ``script.<unique_id>`` as valid references because
+        # the script integration registers each script as a
+        # service callable by its block-key (= unique_id) AND
+        # exposes a state entity under its alias-slug (=
+        # entity_id object portion). When the two differ -- e.g.
+        # block-key has a typo and alias slugs to a corrected
+        # spelling -- a service-call ref to ``script.<unique_id>``
+        # rescues the same entity even though the entity_id is
+        # spelled differently.
+        if (
+            entry.platform == "script"
+            and entry.unique_id
+            and f"script.{entry.unique_id}" in referenced_entity_ids
+        ):
+            continue
+        ce_id = entry.config_entry_id
+        ce_title: str | None = None
+        if ce_id and ce_id in truth_set.config_entry_titles:
+            ce_title = truth_set.config_entry_titles[ce_id]
+        out.append(
+            UnusedDevicelessEntity(
+                entity_id=eid,
+                domain=domain,
+                platform=entry.platform,
+                unique_id=entry.unique_id,
+                config_entry_id=ce_id,
+                config_entry_title=ce_title,
+                disabled=entry.disabled,
+            ),
+        )
+    return out
+
+
+def _unused_device_notification_id(
+    config: Config,
+    device_id: str,
+) -> str:
+    """Stable per-device notification ID.
+
+    Format keeps the AUTOMATIONS.md three-``__`` field
+    separator rule intact: prefix already ends with ``__``,
+    the device-id segment is appended via single underscore
+    after the ``unused_device`` infix.
+    """
+    return (
+        f"{config.notification_prefix}"
+        f"unused_device_{_sanitize_notification_id(device_id)}"
+    )
+
+
+def _build_unused_device_notification(
+    config: Config,
+    dev: UnusedDevice,
+) -> PersistentNotification:
+    """One persistent notification per unused device.
+
+    Body lays out the device identity (clickable link to
+    the device panel via ``device_header_line``), the
+    integration + config-entry title (disambiguates multi-
+    instance integrations like several Apple TVs), the
+    manufacturer / model, and the enabled entities -- plus a
+    hint listing the two ways to silence false positives
+    (regex against device name, or integration name in the
+    dropdown).
+    """
+    lines: list[str] = []
+    lines.append(
+        device_header_line(dev.name or "(unnamed device)", dev.device_id),
+    )
+    integration_link_md = integration_link(dev.integration, dev.integration)
+    if dev.config_entry_title:
+        title_part = md_escape(dev.config_entry_title)
+        lines.append(f"Integration: {integration_link_md} -- {title_part}")
+    else:
+        lines.append(f"Integration: {integration_link_md}")
+    if dev.manufacturer or dev.model:
+        mm_parts: list[str] = []
+        if dev.manufacturer:
+            mm_parts.append(md_escape(dev.manufacturer))
+        if dev.model:
+            mm_parts.append(md_escape(dev.model))
+        lines.append("Manufacturer / model: " + " / ".join(mm_parts))
+    lines.append("")
+    lines.append(
+        f"Enabled entities ({len(dev.enabled_entity_ids)}):",
+    )
+    if dev.enabled_entity_ids:
+        for eid in dev.enabled_entity_ids:
+            lines.append(f"- `{eid}`")
+    else:
+        lines.append("- (none)")
+    lines.append("")
+    lines.append(
+        "If you intentionally don't reference this device, silence it via"
+        " `exclude_device_name_regex` (matches device name),"
+        " `exclude_integrations` (matches the integration domain), or"
+        " `exclude_entities` / `exclude_entity_id_regex` (a device drops"
+        " from the check once every visible entity is excluded).",
+    )
+    return PersistentNotification(
+        active=True,
+        notification_id=_unused_device_notification_id(config, dev.device_id),
+        title=f"Unused device: {dev.name}",
+        message="\n".join(lines),
+        instance_id=config.instance_id,
+    )
+
+
+def _unused_deviceless_notification_id(
+    config: Config,
+    platform: str,
+) -> str:
+    """Stable per-integration notification ID for deviceless rollups."""
+    return (
+        f"{config.notification_prefix}"
+        f"unused_deviceless_{_sanitize_notification_id(platform)}"
+    )
+
+
+def _deviceless_source_label(
+    entity: UnusedDevicelessEntity,
+) -> str:
+    """Best-guess source string for an unused deviceless entity.
+
+    Priority:
+      - Config-entry title when the entity is config-entry-
+        owned (``config_entry_id`` set, title resolved).
+      - ``_PLATFORM_TO_YAML_FILE`` lookup when the entity is
+        YAML-defined (``config_entry_id is None``) and the
+        platform is in the small built-in map.
+      - Generic fallback -- "(YAML-defined; file not auto-
+        detected)" -- everything else.
+    """
+    if entity.config_entry_title:
+        return entity.config_entry_title
+    if entity.config_entry_id is None:
+        yaml_file = _PLATFORM_TO_YAML_FILE.get(entity.platform)
+        if yaml_file:
+            return yaml_file
+    return "(YAML-defined; file not auto-detected)"
+
+
+def _deviceless_entity_label(entity: UnusedDevicelessEntity) -> str:
+    """Render the per-entity bullet head as a clickable link when possible.
+
+    Dispatch:
+
+    - ``automation.*`` with ``unique_id`` -> editor link
+      (``/config/automation/edit/<unique_id>``).
+    - ``script.*`` -> editor link
+      (``/config/script/edit/<object_id>``). Script editor URLs route on
+      the entity's object_id; ``unique_id`` and object_id are typically
+      the same string, but the object_id is the one that always works.
+    - any entity with ``config_entry_id`` set (UI helpers,
+      ``utility_meter``, ``template`` helpers, etc.) -> entities-page
+      filter link narrowed to that helper's config entry.
+    - YAML-only deviceless entities (no ``config_entry_id``) -> bare
+      ``code-spanned`` entity_id. HA's frontend has no per-entity URL
+      filter, and the rollup's ``source:`` label already names the file
+      / definition, so a "search the entities list" prose link would
+      add noise without help.
+
+    Link text is always the code-span entity_id so the rendered bullet
+    keeps the entity_id visible regardless of whether a link wraps it.
+    """
+    label = f"`{entity.entity_id}`"
+    if entity.domain == "automation" and entity.unique_id:
+        return automation_edit_link(label, entity.unique_id)
+    if entity.domain == "script":
+        # Script editor routes on object_id, which is also the unique_id
+        # for HA-managed scripts. Fall back to object_id from entity_id
+        # for legacy YAML scripts that don't carry a registry unique_id.
+        slug = entity.unique_id or entity.entity_id.split(".", 1)[1]
+        return script_edit_link(label, slug)
+    if entity.config_entry_id:
+        return config_entry_link(label, entity.config_entry_id)
+    return label
+
+
+def _unused_deviceless_integration_header(platform: str) -> str:
+    """Per-rollup ``Integration:`` header line.
+
+    The default link target for a rollup is HA's per-integration
+    page (``/config/integrations/integration/<platform>``),
+    which works fine for config-flow integrations like
+    ``utility_meter`` (lists every config entry of that
+    integration). Two built-in domains route there but the
+    page is empty or misleading; redirect to a more useful
+    list-all surface instead:
+
+    - ``script`` -- the per-integration page is empty (no
+      config flow). Link to the script-list dashboard
+      (``/config/script/dashboard``).
+    - ``template`` -- the per-integration page only lists
+      UI-managed template helpers, not the larger set of
+      YAML-defined templates the rollup covers. Link to the
+      entities table filtered to the ``template`` domain
+      so the user sees every template entity in one place.
+    """
+    if platform == "script":
+        return f"Integration: {script_dashboard_link(platform)}"
+    if platform == "template":
+        return f"Integration: {domain_entities_link(platform, 'template')}"
+    return f"Integration: {integration_link(platform, platform)}"
+
+
+def _build_unused_deviceless_notifications(
+    config: Config,
+    entities: list[UnusedDevicelessEntity],
+    platforms_seen_active: frozenset[str],
+) -> list[PersistentNotification]:
+    """One per-integration rollup + dismiss specs for cleared platforms.
+
+    Grouping is by entity-registry ``platform`` (the
+    integration the entity belongs to) so each rollup
+    points at exactly the knob that silences it: add the
+    platform name to **Exclude integrations**. The body's
+    ``Integration:`` header line links to the integration's
+    config page so the user can review / disable / remove
+    the integration directly when the entire rollup is
+    actionable.
+
+    For platforms in ``platforms_seen_active`` (a rollup
+    fired on a previous run but cleared this run), emit
+    an inactive spec so the prior notification auto-
+    dismisses. The sweep dispatcher already cleans up
+    arbitrary stale notifications under the per-instance
+    prefix; this argument is a secondary safety net for
+    callers that aren't using the sweep dispatcher.
+    """
+    by_platform: dict[str, list[UnusedDevicelessEntity]] = {}
+    for e in entities:
+        by_platform.setdefault(e.platform, []).append(e)
+
+    out: list[PersistentNotification] = []
+    for platform, items in sorted(by_platform.items()):
+        items_sorted = sorted(items, key=lambda e: e.entity_id)
+        lines: list[str] = []
+        lines.append(_unused_deviceless_integration_header(platform))
+        lines.append("")
+        lines.append(
+            f"{len(items_sorted)} entities from this integration are not"
+            " referenced anywhere in your configuration. Add"
+            f" `{md_escape(platform)}` to **Exclude integrations** to"
+            " silence the whole rollup.",
+        )
+        lines.append("")
+        for e in items_sorted:
+            tag = " *(disabled)*" if e.disabled else ""
+            source_label = md_escape(_deviceless_source_label(e))
+            head = _deviceless_entity_label(e)
+            lines.append(
+                f"- {head}{tag} -- source: `{source_label}`",
+            )
+        out.append(
+            PersistentNotification(
+                active=True,
+                notification_id=_unused_deviceless_notification_id(
+                    config,
+                    platform,
+                ),
+                title=(f"Unused {platform} entities ({len(items_sorted)})"),
+                message="\n".join(lines),
+                instance_id=config.instance_id,
+            ),
+        )
+
+    # Emit dismiss specs for platforms that previously had
+    # a rollup but cleared this run.
+    for platform in platforms_seen_active - frozenset(by_platform):
+        out.append(
+            PersistentNotification(
+                active=False,
+                notification_id=_unused_deviceless_notification_id(
+                    config,
+                    platform,
+                ),
+                title="",
+                message="",
+            ),
+        )
+    return out
+
+
+# -- Extended reference-set scans ---------------------------------------
+#
+# Three additional ``.storage/*`` files extend the reference
+# set used by the unused-* checks. Broken-references uses the
+# narrower set already (per-owner walks); the unused-* checks
+# need a fuller "what counts as referenced" so an entity that's
+# only consumed by the voice / energy / person UIs isn't
+# false-positive-flagged as unused.
+
+
+def _scan_exposed_entities(
+    parsed: object,
+) -> set[str]:
+    """Extract entity_ids exposed to at least one voice assistant.
+
+    ``homeassistant.exposed_entities`` shape::
+
+        data:
+          exposed_entities:
+            <entity_id>:
+              <assistant>:
+                should_expose: true|false
+                ...
+
+    Only emit an entity_id when at least one assistant has
+    ``should_expose: true``. Entries where every assistant
+    declines exposure (the user opted-out everywhere) don't
+    count as "referenced". Defensive against shape drift:
+    missing or non-dict ``assistants`` value at any level
+    skips the entry without raising.
+    """
+    out: set[str] = set()
+    if not isinstance(parsed, dict):
+        return out
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        return out
+    exposed = data.get("exposed_entities")
+    if not isinstance(exposed, dict):
+        return out
+    for eid, assistants in exposed.items():
+        if not isinstance(eid, str):
+            continue
+        if not isinstance(assistants, dict):
+            continue
+        any_exposed = False
+        for assistant in assistants.values():
+            if not isinstance(assistant, dict):
+                continue
+            if assistant.get("should_expose") is True:
+                any_exposed = True
+                break
+        if any_exposed:
+            out.add(eid)
+    return out
+
+
+def _scan_energy_storage(
+    parsed: object,
+) -> set[str]:
+    """Extract entity_ids from ``.storage/energy``.
+
+    ``data.energy_sources`` is a list of typed source dicts;
+    the relevant fields per-type are ``entity_id`` (gas /
+    water sources), ``stat_consumption`` /
+    ``stat_consumption_water`` (consumption stats), plus
+    ``stat_energy_from`` / ``stat_energy_to`` for grid
+    sources. ``data.device_consumption`` is a list of dicts
+    with ``stat_consumption`` (and the ``..._water`` variant).
+    All known fields are best-effort harvested -- HA may add
+    new typed fields in future versions, but every variant
+    used in HA 2024+ is covered here.
+    """
+    out: set[str] = set()
+    if not isinstance(parsed, dict):
+        return out
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        return out
+    energy_sources = data.get("energy_sources")
+    if isinstance(energy_sources, list):
+        for src in energy_sources:
+            if not isinstance(src, dict):
+                continue
+            for key in (
+                "entity_id",
+                "stat_consumption",
+                "stat_consumption_water",
+                "stat_energy_from",
+                "stat_energy_to",
+                "stat_cost",
+                "stat_compensation",
+            ):
+                v = src.get(key)
+                if isinstance(v, str) and v:
+                    out.add(v)
+    device_consumption = data.get("device_consumption")
+    if isinstance(device_consumption, list):
+        for dev in device_consumption:
+            if not isinstance(dev, dict):
+                continue
+            for key in ("stat_consumption", "stat_consumption_water"):
+                v = dev.get(key)
+                if isinstance(v, str) and v:
+                    out.add(v)
+    return out
+
+
+def _scan_person_storage(
+    parsed: object,
+) -> set[str]:
+    """Extract device-tracker entity_ids bound to person cards."""
+    out: set[str] = set()
+    if not isinstance(parsed, dict):
+        return out
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        return out
+    items = data.get("items")
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        trackers = item.get("device_trackers")
+        if isinstance(trackers, list):
+            for t in trackers:
+                if isinstance(t, str) and t:
+                    out.add(t)
+    return out
+
+
+def _build_extended_reference_set(
+    config_dir: str,
+    config: Config,
+) -> frozenset[str]:
+    """Read the three extended-source storage files into one set.
+
+    Gated by ``config.exclude_exposed_entities`` -- when True,
+    the ``homeassistant.exposed_entities`` scan is skipped
+    entirely. The other two scans always run; they're
+    user-controlled config (energy dashboard configuration,
+    person card binding) that's authoritative regardless of
+    whether the user exposes anything to voice.
+
+    Missing files are silently ignored; this matches the
+    rest of RW's source-discovery behavior.
+    """
+    import os
+
+    out: set[str] = set()
+
+    if not config.exclude_exposed_entities:
+        ee_path = os.path.join(
+            config_dir,
+            ".storage",
+            "homeassistant.exposed_entities",
+        )
+        if os.path.isfile(ee_path):
+            parsed = _read_json_file(ee_path)
+            if parsed is not None:
+                out.update(_scan_exposed_entities(parsed))
+
+    energy_path = os.path.join(config_dir, ".storage", "energy")
+    if os.path.isfile(energy_path):
+        parsed = _read_json_file(energy_path)
+        if parsed is not None:
+            out.update(_scan_energy_storage(parsed))
+
+    person_path = os.path.join(config_dir, ".storage", "person")
+    if os.path.isfile(person_path):
+        parsed = _read_json_file(person_path)
+        if parsed is not None:
+            out.update(_scan_person_storage(parsed))
+
+    return frozenset(out)
+
+
 # -- Source enumeration and evaluation ----------------------------------
 
 
@@ -2474,10 +3531,11 @@ class DirectiveInputs:
 
     enabled: bool
     integration_candidates: frozenset[str]
+    device_name_candidates: frozenset[str]
     exclude_integrations: list[str]
     exclude_entities: list[str]
-    exclude_paths: list[str]
     exclude_entity_id_regex_lines: list[JoinedRegexLine]
+    exclude_device_name_regex_lines: list[JoinedRegexLine]
 
 
 @dataclass
@@ -2492,8 +3550,6 @@ class EvaluationResult:
 
     results: list[OwnerResult]
     notifications: list[PersistentNotification]
-    paths_included: int
-    paths_excluded: int
     owners_total: int
     owners_with_refs: int
     owners_without_refs: int
@@ -2509,11 +3565,10 @@ class EvaluationResult:
     refs_service_skipped: int
     source_orphan_count: int
     source_orphan_candidates: int
-    # Every source path the scanner saw this run (included
-    # + excluded), in discovery order. The directive
-    # validator runs the user's ``exclude_paths`` globs
-    # against this set to flag patterns that match no path
-    # this run -- i.e. likely-stale entries.
+    # Every source path the scanner saw this run, in
+    # discovery order. Surfaced as a diagnostic state
+    # attribute for operator visibility into what the scan
+    # touched.
     paths_walked: list[str] = field(default_factory=list)
     # Include / exclude directives that bound to no live
     # candidate this run. Empty when the
@@ -2522,21 +3577,30 @@ class EvaluationResult:
     unmatched_directives: list[UnmatchedDirective] = field(
         default_factory=list,
     )
+    # Counts surfaced as diagnostic state attributes for the
+    # unused-* checks. ``unused_device_total`` is the candidate
+    # pool size (post hardcoded-skip + post zero-entity filter)
+    # and ``unused_device_excluded`` is the slice of that pool
+    # silenced by ``exclude_integrations`` /
+    # ``exclude_device_name_regex``. Same total + excluded +
+    # count shape DW and EDW expose for their pools.
+    unused_device_count: int = 0
+    unused_device_total: int = 0
+    unused_device_excluded: int = 0
+    unused_deviceless_count: int = 0
 
 
 def _validate_rw_directives(
     inputs: DirectiveInputs,
     truth_set: TruthSet,
-    paths_walked: list[str],
     results: list[OwnerResult],
 ) -> list[UnmatchedDirective]:
     """Compose the per-category validators into RW's unmatched list.
 
     Pure: takes the candidate sets the handler assembled
-    from the live truth set + the paths the scanner walked
-    + the per-owner results from this run, returns the
-    unmatched bullets in the canonical order
-    (integrations, entities, paths, regexes).
+    from the live truth set + the per-owner results from
+    this run, returns the unmatched bullets in the canonical
+    order (integrations, entities, regexes).
 
     The entity-side candidate set unions
     ``truth_set.entity_ids`` (registered entities, which
@@ -2593,17 +3657,17 @@ def _validate_rw_directives(
         ),
     )
     out.extend(
-        validate_directives_path(
-            field="exclude_paths",
-            directives=inputs.exclude_paths,
-            candidates=frozenset(paths_walked),
-        ),
-    )
-    out.extend(
         validate_directives_regex(
             field="exclude_entity_id_regex",
             lines=inputs.exclude_entity_id_regex_lines,
             candidates=entity_candidates_frozen,
+        ),
+    )
+    out.extend(
+        validate_directives_regex(
+            field="exclude_device_name_regex",
+            lines=inputs.exclude_device_name_regex_lines,
+            candidates=inputs.device_name_candidates,
         ),
     )
     return out
@@ -2612,10 +3676,11 @@ def _validate_rw_directives(
 _DISABLED_DIRECTIVES = DirectiveInputs(
     enabled=False,
     integration_candidates=frozenset(),
+    device_name_candidates=frozenset(),
     exclude_integrations=[],
     exclude_entities=[],
-    exclude_paths=[],
     exclude_entity_id_regex_lines=[],
+    exclude_device_name_regex_lines=[],
 )
 
 
@@ -2623,7 +3688,6 @@ def run_evaluation(
     config_dir: str,
     config: Config,
     truth_set: TruthSet,
-    exclude_paths_list: list[str],
     max_notifications: int,
     directive_inputs: DirectiveInputs | None = None,
 ) -> EvaluationResult:
@@ -2654,17 +3718,8 @@ def run_evaluation(
         )
     all_sources.extend(json_sources)
 
-    # Filter by exclude_paths
-    included: list[SourceInput] = []
-    paths_excluded = 0
-    for src in all_sources:
-        if _is_path_excluded(src.path, exclude_paths_list):
-            paths_excluded += 1
-        else:
-            included.append(src)
-
     # Evaluate
-    results = _evaluate_sources(config, included, truth_set)
+    results = _evaluate_sources(config, all_sources, truth_set)
 
     # Source-orphan detection reuses the parsed YAML trees
     # already loaded for discovery and adds parsed
@@ -2674,12 +3729,15 @@ def run_evaluation(
     # fields like ``description:`` don't bleed in.
     yaml_parsed = [(rel, parsed) for rel, _src, parsed in yaml_sources]
     storage_parsed = _enumerate_storage_helpers(config_dir)
-    orphans = _find_source_orphans(
-        config,
-        truth_set,
-        yaml_parsed,
-        storage_parsed,
-    )
+    if CHECK_SOURCE_ORPHANS in config.enabled_checks:
+        orphans = _find_source_orphans(
+            config,
+            truth_set,
+            yaml_parsed,
+            storage_parsed,
+        )
+    else:
+        orphans = []
     source_orphan_candidates = sum(
         [
             1
@@ -2689,26 +3747,122 @@ def run_evaluation(
         ]
     )
 
+    # Build the extended reference set (voice exposures,
+    # energy dashboard, person trackers) once. Skipped when
+    # neither unused-* check is enabled -- there's no
+    # consumer for the data in that case.
+    needs_unused_checks = (
+        CHECK_UNUSED_DEVICES in config.enabled_checks
+        or CHECK_UNUSED_DEVICELESS_ENTITIES in config.enabled_checks
+    )
+    if needs_unused_checks:
+        extended_refs = _build_extended_reference_set(config_dir, config)
+    else:
+        extended_refs = frozenset()
+
+    # Unused-device check.
+    unused_dev_count = 0
+    unused_dev_total = 0
+    unused_dev_excluded = 0
+    unused_dev_cappables: list[CappableResult] = []
+    if CHECK_UNUSED_DEVICES in config.enabled_checks:
+        referenced_entity_ids = _collect_referenced_entity_ids(
+            results,
+            extended_refs,
+        )
+        referenced_device_ids = _collect_referenced_device_ids(results)
+        ud_result = _scan_unused_devices(
+            config,
+            truth_set,
+            referenced_entity_ids,
+            referenced_device_ids,
+        )
+        unused_dev_count = len(ud_result.unused)
+        unused_dev_total = ud_result.total
+        unused_dev_excluded = ud_result.excluded
+        unused_dev_cappables = [
+            IssueNotification(
+                notification=_build_unused_device_notification(
+                    config,
+                    dev,
+                )
+            )
+            for dev in ud_result.unused
+        ]
+
     # Build notifications. ``instance_id`` is threaded
     # through so the cap-summary spec (built inside the
     # helper) carries it; the per-owner specs are stamped
     # at construction time in ``_build_owner_result``.
+    #
+    # Single shared cap across broken-references owners +
+    # unused-device per-device notifications. Each check
+    # contributes its own ``CappableResult`` entries to the
+    # combined list; ``prepare_notifications`` sorts them by
+    # ``(notification_title, notification_id)`` and applies
+    # ``max_notifications`` once. A noisy host that hasn't
+    # tuned exclusions could otherwise overflow the panel
+    # with dozens of per-device unused notifications;
+    # sharing the cap with broken-refs forces both check
+    # types to compete for the same N slots.
+    cappables: list[CappableResult] = []
+    if CHECK_BROKEN_REFERENCES in config.enabled_checks:
+        cappables.extend(results)
+    cappables.extend(unused_dev_cappables)
     notifications = prepare_notifications(
-        results,
+        cappables,
         max_notifications=max_notifications,
         cap_notification_id=f"{config.notification_prefix}cap",
         cap_title="Notification cap reached",
-        cap_item_label="owners with broken references",
+        cap_item_label="findings",
         instance_id=config.instance_id,
     )
-    # The orphan summary sits outside the per-owner cap --
-    # it's a single notification regardless of orphan
-    # count. The builder emits an inactive placeholder when
-    # there are no orphans so any previously-active summary
-    # gets dismissed.
+    # Broken-references disabled but a prior run had it on:
+    # explicitly dismiss the orphaned per-owner specs. The
+    # sweep dispatcher would catch them too, but explicit
+    # dismissal is faster (one PN service call rather than
+    # waiting for the sweep to enumerate stale prefixes).
+    if CHECK_BROKEN_REFERENCES not in config.enabled_checks:
+        notifications.extend(
+            r.to_notification(suppress=True) for r in results if r.has_issue
+        )
+
+    # The orphan summary sits outside the cap -- single
+    # notification regardless of orphan count. The builder
+    # emits an inactive placeholder when there are no
+    # orphans so any previously-active summary dismisses.
     notifications.append(
         _build_source_orphans_notification(config, orphans),
     )
+
+    # Unused-deviceless-entity check.
+    unused_dl_count = 0
+    if CHECK_UNUSED_DEVICELESS_ENTITIES in config.enabled_checks:
+        # Recompute the referenced set here (unused-devices
+        # path may not have run). Cheap relative to the
+        # registry walk in the scanner itself.
+        referenced_entity_ids = _collect_referenced_entity_ids(
+            results,
+            extended_refs,
+        )
+        unused_dl = _scan_unused_deviceless_entities(
+            config,
+            truth_set,
+            referenced_entity_ids,
+        )
+        unused_dl_count = len(unused_dl)
+        # Per-integration rollup; sweep dispatcher cleans up
+        # cleared platforms so we pass an empty
+        # ``platforms_seen_active`` here (the only purpose
+        # of that arg is the secondary safety net for non-
+        # sweep callers; tests cover both paths).
+        notifications.extend(
+            _build_unused_deviceless_notifications(
+                config,
+                unused_dl,
+                platforms_seen_active=frozenset(),
+            ),
+        )
 
     # Compute summary stats.
     owners_total = len(results)
@@ -2742,15 +3896,12 @@ def run_evaluation(
         if directive_inputs is not None
         else _DISABLED_DIRECTIVES,
         truth_set,
-        paths_walked,
         results,
     )
 
     return EvaluationResult(
         results=results,
         notifications=notifications,
-        paths_included=len(included),
-        paths_excluded=paths_excluded,
         paths_walked=paths_walked,
         owners_total=owners_total,
         owners_with_refs=owners_with_refs,
@@ -2768,4 +3919,8 @@ def run_evaluation(
         source_orphan_count=len(orphans),
         source_orphan_candidates=source_orphan_candidates,
         unmatched_directives=unmatched_directives,
+        unused_device_count=unused_dev_count,
+        unused_device_total=unused_dev_total,
+        unused_device_excluded=unused_dev_excluded,
+        unused_deviceless_count=unused_dl_count,
     )

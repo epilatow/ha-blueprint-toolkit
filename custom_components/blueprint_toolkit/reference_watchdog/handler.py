@@ -117,7 +117,6 @@ _SCHEMA = vol.Schema(
     {
         vol.Required("instance_id"): cv.entity_id,
         vol.Required("trigger_id"): vol.Coerce(str),
-        vol.Required("exclude_paths_raw"): vol.Coerce(str),
         vol.Required("exclude_integrations_raw"): cv_ha_domain_list,
         vol.Required("exclude_entities_raw"): cv.entity_ids,
         vol.Required("exclude_entity_id_regex_raw"): vol.Coerce(str),
@@ -129,6 +128,11 @@ _SCHEMA = vol.Schema(
             vol.Coerce(int), vol.Range(min=0, max=1000)
         ),
         vol.Required("validate_includes_excludes_raw"): cv.boolean,
+        vol.Required("enabled_checks_raw"): vol.All(
+            cv.ensure_list, [vol.Coerce(str)]
+        ),
+        vol.Required("exclude_device_name_regex_raw"): vol.Coerce(str),
+        vol.Required("exclude_exposed_entities_raw"): cv.boolean,
         vol.Required("debug_logging_raw"): cv.boolean,
     },
     extra=vol.ALLOW_EXTRA,
@@ -205,17 +209,36 @@ async def _async_argparse(
     exclude_entity_id_regex = eid_regex_result.joined
     errors.extend(eid_regex_result.errors)
 
+    # Same multi-line validation for the device-name regex.
+    dev_regex_result = validate_and_join_regex_patterns(
+        data["exclude_device_name_regex_raw"],
+        "exclude_device_name_regex",
+    )
+    exclude_device_name_regex = dev_regex_result.joined
+    errors.extend(dev_regex_result.errors)
+
+    # Enabled-checks cross-validation: each requested
+    # check must be in CHECK_ALL. Empty list means "all
+    # checks" (mirrors DW's enabled_checks semantics).
+    enabled_checks_raw: list[str] = list(data["enabled_checks_raw"])
+    unknown_checks = [c for c in enabled_checks_raw if c not in logic.CHECK_ALL]
+    if unknown_checks:
+        bad = ", ".join(sorted(unknown_checks))
+        valid = ", ".join(sorted(logic.CHECK_ALL))
+        errors.append(
+            f"enabled_checks: unknown value(s) {bad}. Valid values: {valid}."
+        )
+    enabled_checks: frozenset[str] = (
+        logic.CHECK_ALL
+        if not enabled_checks_raw
+        else frozenset(enabled_checks_raw)
+    )
+
     # Argparse complete; emit accumulated errors (or
     # dismiss any prior config_error notification).
     await _emit_config_error(hass, instance_id, errors)
     if errors:
         return
-
-    # Multi-line: one path per line, stripped, empty
-    # lines dropped.
-    exclude_paths: list[str] = [
-        p.strip() for p in data["exclude_paths_raw"].splitlines() if p.strip()
-    ]
 
     await _async_service_layer(
         hass,
@@ -223,7 +246,6 @@ async def _async_argparse(
         now=now,
         instance_id=instance_id,
         trigger_id=data["trigger_id"],
-        exclude_paths=exclude_paths,
         exclude_integrations=list(data["exclude_integrations_raw"]),
         exclude_entities=list(data["exclude_entities_raw"]),
         exclude_entity_id_regex=exclude_entity_id_regex,
@@ -232,6 +254,10 @@ async def _async_argparse(
         check_interval_minutes=data["check_interval_minutes_raw"],
         max_notifications=data["max_source_notifications_raw"],
         validate_includes_excludes=data["validate_includes_excludes_raw"],
+        enabled_checks=enabled_checks,
+        exclude_device_name_regex=exclude_device_name_regex,
+        exclude_device_name_regex_lines=dev_regex_result.lines,
+        exclude_exposed_entities=data["exclude_exposed_entities_raw"],
         debug_logging=data["debug_logging_raw"],
     )
 
@@ -248,7 +274,6 @@ async def _async_service_layer(
     now: datetime,
     instance_id: str,
     trigger_id: str,
-    exclude_paths: list[str],
     exclude_integrations: list[str],
     exclude_entities: list[str],
     exclude_entity_id_regex: str,
@@ -257,6 +282,10 @@ async def _async_service_layer(
     check_interval_minutes: int,
     max_notifications: int,
     validate_includes_excludes: bool,
+    enabled_checks: frozenset[str],
+    exclude_device_name_regex: str,
+    exclude_device_name_regex_lines: list[JoinedRegexLine],
+    exclude_exposed_entities: bool,
     debug_logging: bool,
 ) -> None:
     """Run a scan + dispatch notifications + persist diagnostics."""
@@ -276,11 +305,13 @@ async def _async_service_layer(
     tag = f"[{_SERVICE_TAG}: {automation_friendly_name(hass, instance_id)}]"
 
     config = logic.Config(
-        exclude_paths=exclude_paths,
         exclude_integrations=exclude_integrations,
         exclude_entities=exclude_entities,
         exclude_entity_id_regex=exclude_entity_id_regex,
         check_disabled_entities=check_disabled_entities,
+        enabled_checks=enabled_checks,
+        exclude_device_name_regex=exclude_device_name_regex,
+        exclude_exposed_entities=exclude_exposed_entities,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
     )
@@ -301,13 +332,17 @@ async def _async_service_layer(
     rw_integration_candidates = (
         frozenset(all_integration_ids(hass)) | _RW_SYNTHETIC_INTEGRATIONS
     )
+    rw_device_name_candidates = frozenset(
+        dev.name for dev in truth_set.device_records.values() if dev.name
+    )
     directive_inputs = logic.DirectiveInputs(
         enabled=validate_includes_excludes,
         integration_candidates=rw_integration_candidates,
+        device_name_candidates=rw_device_name_candidates,
         exclude_integrations=exclude_integrations,
         exclude_entities=exclude_entities,
-        exclude_paths=exclude_paths,
         exclude_entity_id_regex_lines=exclude_entity_id_regex_lines,
+        exclude_device_name_regex_lines=exclude_device_name_regex_lines,
     )
 
     config_dir = hass.config.config_dir
@@ -321,7 +356,6 @@ async def _async_service_layer(
         config_dir,
         config,
         truth_set,
-        exclude_paths,
         max_notifications,
         directive_inputs,
     )
@@ -353,8 +387,7 @@ async def _async_service_layer(
         runtime=(dt_util.now() - now).total_seconds(),
         extra_attributes={
             "last_trigger": trigger_id or "",
-            "paths_included": ev.paths_included,
-            "paths_excluded": ev.paths_excluded,
+            "paths_walked": len(ev.paths_walked),
             "owners_total": ev.owners_total,
             "owners_with_refs": ev.owners_with_refs,
             "owners_without_refs": ev.owners_without_refs,
@@ -371,6 +404,10 @@ async def _async_service_layer(
             "source_orphan_count": ev.source_orphan_count,
             "source_orphan_candidates": ev.source_orphan_candidates,
             "unmatched_directives": len(ev.unmatched_directives),
+            "unused_devices": ev.unused_device_total,
+            "unused_devices_excluded": ev.unused_device_excluded,
+            "unused_device_count": ev.unused_device_count,
+            "unused_deviceless_count": ev.unused_deviceless_count,
         },
     )
 
@@ -378,7 +415,9 @@ async def _async_service_layer(
         _LOGGER.warning(
             "%s owners=%d with_issues=%d findings=%d refs=%d"
             " (struct=%d jinja=%d sniff=%d svc_skipped=%d)"
-            " orphans=%d/%d unmatched_directives=%d",
+            " orphans=%d/%d unmatched_directives=%d"
+            " unused_devices=%d unused_devices_excluded=%d"
+            " unused_device_count=%d unused_deviceless=%d",
             tag,
             ev.owners_total,
             ev.owners_with_issues,
@@ -391,6 +430,10 @@ async def _async_service_layer(
             ev.source_orphan_count,
             ev.source_orphan_candidates,
             len(ev.unmatched_directives),
+            ev.unused_device_total,
+            ev.unused_device_excluded,
+            ev.unused_device_count,
+            ev.unused_deviceless_count,
         )
 
 
@@ -419,6 +462,7 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
     registry: dict[str, logic.RegistryEntry] = {}
     entity_by_unique_id: dict[tuple[str, str], str] = {}
     config_entries_with_entities: set[str] = set()
+    device_to_entities_acc: dict[str, set[str]] = {}
 
     ent_reg = er.async_get(hass)
     for entry in ent_reg.entities.values():
@@ -430,6 +474,10 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
             disabled_entity_ids.add(eid)
         platform = entry.platform or ""
         unique_id = str(entry.unique_id or "")
+        # ``device_id`` is None for deviceless entities
+        # (utility meters, helpers, top-level integrations
+        # without a device). The unused-deviceless-entities
+        # check partitions the registry on this field.
         registry[eid] = logic.RegistryEntry(
             entity_id=eid,
             platform=platform,
@@ -438,15 +486,70 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
             disabled=is_disabled,
             name=entry.name,
             original_name=entry.original_name,
+            device_id=entry.device_id,
         )
         if platform and unique_id:
             entity_by_unique_id[(platform, unique_id)] = eid
         if entry.config_entry_id:
             config_entries_with_entities.add(entry.config_entry_id)
+        if entry.device_id:
+            device_to_entities_acc.setdefault(entry.device_id, set()).add(eid)
+
+    # Walk the config-entry registry once to map
+    # config_entry_id -> domain + title. The domain answer
+    # drives ``DeviceRecord.integration``; the title is the
+    # disambiguation string in the unused-device notification
+    # body. This block plus the ``device_records`` walk below
+    # runs every RW invocation -- even when neither unused-*
+    # check is enabled -- because ``_validate_rw_directives``
+    # consumes ``device_records`` to validate
+    # ``exclude_device_name_regex`` regardless of
+    # ``enabled_checks``. Cost is bounded by the device-
+    # registry size and dominated by the rest of RW's work.
+    config_entry_titles: dict[str, str] = {}
+    config_entry_domains: dict[str, str] = {}
+    for ce in hass.config_entries.async_entries():
+        config_entry_titles[ce.entry_id] = ce.title or ""
+        config_entry_domains[ce.entry_id] = ce.domain or ""
 
     dev_reg = dr.async_get(hass)
+    device_records: dict[str, logic.DeviceRecord] = {}
     for device in dev_reg.devices.values():
         device_ids.add(device.id)
+        # Display rule: ``name_by_user`` if the user renamed
+        # the device, else ``name``. Fallback to "(unnamed)"
+        # so notification body always renders a non-empty
+        # link text.
+        name = device.name_by_user or device.name or "(unnamed)"
+        # ``primary_config_entry`` is the canonical entry for
+        # the device. Older HA releases didn't have this
+        # attribute; fall back to the first ``config_entries``
+        # member for backward compatibility.
+        primary_id = getattr(device, "primary_config_entry", None)
+        if not primary_id and device.config_entries:
+            primary_id = next(iter(device.config_entries))
+        integration = (
+            config_entry_domains.get(primary_id or "", "") if primary_id else ""
+        )
+        ce_title = (
+            config_entry_titles.get(primary_id or "") if primary_id else None
+        )
+        # ``entry_type`` is HA's ``DeviceEntryType`` -- a
+        # ``StrEnum`` with one member, ``SERVICE``. Coerce to
+        # ``str`` so the logic-layer comparison is import-free.
+        et = getattr(device, "entry_type", None)
+        entry_type_value = str(et) if et is not None else None
+        device_records[device.id] = logic.DeviceRecord(
+            device_id=device.id,
+            name=name,
+            manufacturer=device.manufacturer,
+            model=device.model,
+            integration=integration,
+            config_entry_title=ce_title,
+            via_device_id=device.via_device_id,
+            config_entries=tuple(device.config_entries or ()),
+            entry_type=entry_type_value,
+        )
 
     # Live states catch built-ins (sun.sun, weather.home)
     # not in the entity registry.
@@ -486,6 +589,11 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
         registry=registry,
         entity_by_unique_id=entity_by_unique_id,
         config_entries_with_entities=frozenset(config_entries_with_entities),
+        device_records=device_records,
+        device_to_entities={
+            did: frozenset(eids) for did, eids in device_to_entities_acc.items()
+        },
+        config_entry_titles=config_entry_titles,
     )
 
 

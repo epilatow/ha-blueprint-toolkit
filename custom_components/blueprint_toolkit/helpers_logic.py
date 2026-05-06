@@ -386,6 +386,18 @@ def script_edit_link(name: str, unique_id: str) -> str:
     return f"[{md_escape(name)}]({script_edit_url(unique_id)})"
 
 
+def script_dashboard_link(name: str) -> str:
+    """Markdown link to the script-list dashboard.
+
+    HA's per-integration page for ``script``
+    (``/config/integrations/integration/script``) is empty
+    because ``script`` is a built-in domain rather than a
+    config-flow integration. ``/config/script/dashboard`` is
+    the actual list-all-scripts page.
+    """
+    return f"[{md_escape(name)}](/config/script/dashboard)"
+
+
 def dashboard_link(name: str, slug: str) -> str:
     """Markdown link to a Lovelace dashboard view by slug."""
     return f"[{md_escape(name)}]({dashboard_url(slug)})"
@@ -727,28 +739,6 @@ def validate_directives_item(
         UnmatchedDirective(field=field, value=value, reason=reason)
         for value in directives
         if value not in candidates
-    ]
-
-
-def validate_directives_path(
-    *,
-    field: str,
-    directives: list[str],
-    candidates: AbstractSet[str],
-    reason: str = "no path matches",
-) -> list[UnmatchedDirective]:
-    """fnmatch-check a list of path globs against the candidate set.
-
-    Each directive is an fnmatch-style glob; an
-    ``UnmatchedDirective`` is emitted for any glob that
-    matches no path in ``candidates``.
-    """
-    import fnmatch  # noqa: PLC0415
-
-    return [
-        UnmatchedDirective(field=field, value=value, reason=reason)
-        for value in directives
-        if not any(fnmatch.fnmatch(p, value) for p in candidates)
     ]
 
 
@@ -1226,6 +1216,7 @@ __all__ = [
     "notification_prefix",
     "parse_entity_registry_update",
     "resolve_target_integrations",
+    "script_dashboard_link",
     "script_edit_link",
     "script_edit_url",
     "slugify",
@@ -1233,6 +1224,5 @@ __all__ = [
     "validate_and_join_regex_patterns",
     "validate_controlled_entity_domains",
     "validate_directives_item",
-    "validate_directives_path",
     "validate_directives_regex",
 ]

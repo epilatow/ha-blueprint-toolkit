@@ -206,10 +206,6 @@ Directive validation (watchdogs):
   `candidates` becomes an `UnmatchedDirective` with the supplied `field` and
   `reason`.
 
-- `validate_directives_path(*, field, directives, candidates, reason=...)` --
-  fnmatch-style glob check against a candidate set; flags any glob that
-  matches no path. Default reason: `"no path matches"`.
-
 - `validate_directives_regex(*, field, lines, candidates, reason=...)` --
   per-line regex check; flags any line whose compiled pattern doesn't match a
   candidate. Carries `UnmatchedDirective.line_number` so the body can render

@@ -282,7 +282,6 @@ def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
     payload = {
         "instance_id": "automation.rw_test",
         "trigger_id": "manual",
-        "exclude_paths_raw": "",
         "exclude_integrations_raw": [],
         "exclude_entities_raw": [],
         "exclude_entity_id_regex_raw": "",
@@ -290,6 +289,9 @@ def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
         "check_interval_minutes_raw": 60,
         "max_source_notifications_raw": 0,
         "validate_includes_excludes_raw": True,
+        "enabled_checks_raw": [],
+        "exclude_device_name_regex_raw": "",
+        "exclude_exposed_entities_raw": False,
         "debug_logging_raw": False,
     }
     payload.update(overrides)
@@ -543,6 +545,95 @@ class TestArgparseIntValidation:
         # ``vol.Range(min=0, max=1000)`` -> "value must be
         # at most 1000".
         assert "at most 1000" in joined
+
+
+# --------------------------------------------------------
+# Argparse: enabled_checks cross-validation
+# --------------------------------------------------------
+#
+# ``enabled_checks_raw`` is a list of strings; the schema
+# coerces shape but the membership check (each value must be
+# in ``logic.CHECK_ALL``) and the empty-list-defaults-to-
+# CHECK_ALL semantic live in argparse. These tests exercise
+# both the rejection path (unknown value names + offers the
+# valid set in the error) and the empty-list path (must
+# reach the service layer with the full CHECK_ALL set).
+
+
+class TestArgparseEnabledChecksValidation:
+    def setup_method(self) -> None:
+        self.capture = ArgparseCapture()
+        self._real_service_layer = handler._async_service_layer
+        handler._async_service_layer = self.capture  # type: ignore[assignment]
+        self.config_errors: list[list[str]] = []
+
+        async def _capture_errors(
+            _hass: Any,
+            _instance_id: str,
+            errors: list[str],
+        ) -> None:
+            self.config_errors.append(errors)
+
+        self._real_emit = handler._emit_config_error
+        handler._emit_config_error = _capture_errors  # type: ignore[assignment]
+
+    def teardown_method(self) -> None:
+        handler._async_service_layer = self._real_service_layer  # type: ignore[assignment]
+        handler._emit_config_error = self._real_emit  # type: ignore[assignment]
+
+    def test_unknown_check_value_rejected_with_valid_set(self) -> None:
+        # A bogus check name must surface as a config-error
+        # naming the offending value AND enumerating the
+        # valid set, so the user can correct the typo
+        # without consulting the docs.
+        import asyncio
+
+        from custom_components.blueprint_toolkit.reference_watchdog import (
+            logic,
+        )
+
+        h = MockHass()
+        call = FakeServiceCall(
+            _valid_argparse_payload(enabled_checks_raw=["bogus"]),
+        )
+        asyncio.run(handler._async_argparse(h, call, now=FrozenNow.value))  # type: ignore[arg-type]
+
+        assert self.capture.calls == [], (
+            "service layer must NOT run when enabled_checks contains "
+            "an unknown value"
+        )
+        assert len(self.config_errors) == 1
+        joined = "\n".join(self.config_errors[0])
+        assert "enabled_checks" in joined
+        assert "bogus" in joined
+        # Every valid value must appear so the user has the
+        # complete substitution set.
+        for valid in logic.CHECK_ALL:
+            assert valid in joined, (
+                f"valid check {valid!r} not enumerated in error: {joined!r}"
+            )
+
+    def test_empty_enabled_checks_defaults_to_check_all(self) -> None:
+        # The empty-list semantic mirrors DW: an empty
+        # ``enabled_checks`` selection means "all checks".
+        # The service layer must therefore receive
+        # ``CHECK_ALL`` (not an empty frozenset, which would
+        # silently disable every check).
+        import asyncio
+
+        from custom_components.blueprint_toolkit.reference_watchdog import (
+            logic,
+        )
+
+        h = MockHass()
+        call = FakeServiceCall(_valid_argparse_payload(enabled_checks_raw=[]))
+        asyncio.run(handler._async_argparse(h, call, now=FrozenNow.value))  # type: ignore[arg-type]
+
+        assert self.config_errors == [[]], (
+            f"empty enabled_checks must not error; got {self.config_errors}"
+        )
+        assert len(self.capture.calls) == 1
+        assert self.capture.calls[0]["enabled_checks"] == logic.CHECK_ALL
 
 
 # --------------------------------------------------------
