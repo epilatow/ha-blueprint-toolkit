@@ -158,21 +158,37 @@ async def process_persistent_notifications(
     notification it expects to be visible -- use
     ``process_persistent_notifications_with_sweep`` so
     orphans from prior runs get dismissed.
+
+    Skips ``create`` calls whose new title + message would
+    be byte-identical to what's already shown, and skips
+    ``dismiss`` calls whose ID isn't currently active.
+    HA's notification panel sorts by created_at and resorts
+    the column whenever a notification is recreated; the
+    skip avoids bubbling unchanged notifications to the
+    top on every periodic scan.
     """
+    existing = _existing_notification_content(hass)
     for n in notifications:
         if n.active:
             title_prefix = _automation_title_prefix(hass, n.instance_id)
             link_prefix = _automation_link_prefix(hass, n.instance_id)
+            new_title = f"{title_prefix}{n.title}"
+            new_message = f"{link_prefix}{n.message}"
+            current = existing.get(n.notification_id)
+            if current is not None and current == (new_title, new_message):
+                continue
             await hass.services.async_call(
                 "persistent_notification",
                 "create",
                 {
                     "notification_id": n.notification_id,
-                    "title": f"{title_prefix}{n.title}",
-                    "message": f"{link_prefix}{n.message}",
+                    "title": new_title,
+                    "message": new_message,
                 },
             )
         else:
+            if n.notification_id not in existing:
+                continue
             await hass.services.async_call(
                 "persistent_notification",
                 "dismiss",
@@ -195,6 +211,33 @@ def _active_notification_ids(hass: HomeAssistant) -> set[str] | None:
         return set(data.keys())
     except (AttributeError, TypeError):
         return None
+
+
+def _existing_notification_content(
+    hass: HomeAssistant,
+) -> dict[str, tuple[str | None, str | None]]:
+    """Return ``{id: (title, message)}`` for live PNs.
+
+    Used by the dispatcher to skip ``persistent_notification.create``
+    calls whose new title + message would be byte-identical to
+    what's already shown. HA's ``create`` always emits a state
+    change event regardless of whether content changed, which
+    bubbles the notification to the top of the panel and shifts
+    the column on every periodic scan -- annoying churn for the
+    user when none of our notifications actually changed.
+
+    HA's ``Notification`` is a ``TypedDict`` (a plain ``dict``
+    at runtime) keyed at ``hass.data["persistent_notification"]``.
+    Returns an empty dict when ``hass.data`` is unavailable
+    (test contexts that stub ``hass.data``) -- callers treat
+    that as "no existing content known" and dispatch every
+    spec normally, which preserves existing behaviour in tests.
+    """
+    try:
+        data = hass.data.get("persistent_notification", {})
+    except (AttributeError, TypeError):
+        return {}
+    return {nid: (n.get("title"), n.get("message")) for nid, n in data.items()}
 
 
 def _orphan_dismissals(

@@ -238,7 +238,11 @@ Notifications:
   `instance_id` field drives the `Automation: [name](edit-link)\n` prefix the
   dispatcher prepends.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
-  create/dismiss + automation-link prefix.
+  create/dismiss + automation-link prefix. Skips `create` calls whose new
+  title + message would be byte-identical to the currently-active
+  notification's content, and skips `dismiss` calls whose ID isn't currently
+  active. Per-scan churn-prevention so unchanged notifications don't bubble to
+  the top of HA's panel on every periodic invocation.
 - `process_persistent_notifications_with_sweep(...)` -- sweep variant;
   dismisses any prior-run notifications matching `sweep_prefix` not in the
   current batch.

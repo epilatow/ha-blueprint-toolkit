@@ -284,6 +284,27 @@ class _MockStates:
         self.stubs[entity_id] = _MockStateLike(state, dict(attributes))
 
 
+def _stub_existing_pn(
+    notification_id: str,
+    title: str | None = None,
+    message: str | None = None,
+) -> dict[str, str | None]:
+    """Stand-in for HA's ``Notification`` ``TypedDict``.
+
+    HA stores live notifications at
+    ``hass.data["persistent_notification"]`` as plain
+    dicts (the ``Notification`` ``TypedDict`` is a dict
+    at runtime). Tests stub entries with this shape to
+    exercise the dispatcher's no-op-skip path for create
+    / dismiss calls.
+    """
+    return {
+        "notification_id": notification_id,
+        "title": title,
+        "message": message,
+    }
+
+
 @dataclass
 class _MockHass:
     services: _MockServices = field(default_factory=_MockServices)
@@ -724,6 +745,13 @@ class TestProcessPersistentNotifications:
     @pytest.mark.asyncio
     async def test_inactive_dismisses(self) -> None:
         hass = _MockHass()
+        # Populate ``hass.data`` so the dispatcher sees the
+        # notification as currently active and fires a
+        # dismiss. The dispatcher skips dismisses for IDs
+        # not currently active to avoid event-bus churn.
+        hass.data["persistent_notification"] = {
+            "x": _stub_existing_pn(notification_id="x", title="", message=""),
+        }
 
         await helpers.process_persistent_notifications(
             hass,  # type: ignore[arg-type]
@@ -741,6 +769,85 @@ class TestProcessPersistentNotifications:
                 "persistent_notification",
                 "dismiss",
                 {"notification_id": "x"},
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_inactive_skips_dismiss_when_not_present(self) -> None:
+        # Inactive spec for an ID that's not currently
+        # active is a no-op (no service call). Avoids
+        # event-bus churn from spurious dismiss calls every
+        # periodic scan.
+        hass = _MockHass()
+        await helpers.process_persistent_notifications(
+            hass,  # type: ignore[arg-type]
+            [
+                helpers.PersistentNotification(
+                    active=False,
+                    notification_id="x",
+                    title="",
+                    message="",
+                ),
+            ],
+        )
+        assert hass.services.calls == []
+
+    @pytest.mark.asyncio
+    async def test_active_skips_create_when_content_unchanged(self) -> None:
+        # Existing notification with title + message
+        # byte-identical to the new spec: no service call
+        # fires. HA's create otherwise emits a state change
+        # that bubbles the notification to the top of the
+        # panel, churning the column on every periodic scan.
+        hass = _MockHass()
+        hass.data["persistent_notification"] = {
+            "x": _stub_existing_pn(
+                notification_id="x",
+                title="t",
+                message="m",
+            ),
+        }
+        await helpers.process_persistent_notifications(
+            hass,  # type: ignore[arg-type]
+            [
+                helpers.PersistentNotification(
+                    active=True,
+                    notification_id="x",
+                    title="t",
+                    message="m",
+                ),
+            ],
+        )
+        assert hass.services.calls == []
+
+    @pytest.mark.asyncio
+    async def test_active_creates_when_content_differs(self) -> None:
+        # Existing notification has different message body;
+        # the dispatcher fires create to update.
+        hass = _MockHass()
+        hass.data["persistent_notification"] = {
+            "x": _stub_existing_pn(
+                notification_id="x",
+                title="t",
+                message="OLD",
+            ),
+        }
+        await helpers.process_persistent_notifications(
+            hass,  # type: ignore[arg-type]
+            [
+                helpers.PersistentNotification(
+                    active=True,
+                    notification_id="x",
+                    title="t",
+                    message="NEW",
+                ),
+            ],
+        )
+        assert hass.services.calls == [
+            (
+                "persistent_notification",
+                "create",
+                {"notification_id": "x", "title": "t", "message": "NEW"},
             ),
         ]
 
@@ -868,6 +975,9 @@ class TestProcessPersistentNotifications:
             friendly_name="My Auto",
             id="42",
         )
+        hass.data["persistent_notification"] = {
+            "x": _stub_existing_pn(notification_id="x", title="", message=""),
+        }
         await helpers.process_persistent_notifications(
             hass,  # type: ignore[arg-type]
             [
