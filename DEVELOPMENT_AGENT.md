@@ -342,11 +342,14 @@ Run all seven checks in order. Checks 1-4 are integration-level sanity; 5-7
 are user-visible-behavior validation against the pre-deploy baselines.
 
 1. **HA back online.** Poll via SSH+internal-HTTP (the dev-machine HTTPS path
-   fails during restart):
+   fails during restart). Probe an unauthed endpoint -- `/manifest.json` is
+   served by the frontend integration and returns 200 without a bearer token;
+   `/api/` returns 401 to an unauthed request, so a `curl -sf` probe against
+   it loops forever even after HA is back:
 
    ```bash
    until ssh root@homeassistant \
-       curl -sf http://homeassistant:8123/api/ >/dev/null; do
+       curl -sf http://homeassistant:8123/manifest.json >/dev/null; do
        sleep 2
    done
    ```
