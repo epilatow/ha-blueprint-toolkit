@@ -703,9 +703,21 @@ class TypedServiceResponse:
     notification_message: str = ""
 
 
+# Service-data payload type for ``PersistentNotification.repair_callback``.
+# Constrained to JSON primitives because HA's issue
+# registry persists ``data`` to ``.storage`` via JSON
+# round-trip; nested objects and non-primitive values fail
+# silently or corrupt at restore. The flat-dict shape
+# matches every fix in scope (each takes a single
+# ``entity_id`` plus optionally one target value); a future
+# finding kind that needs a richer payload extends this
+# contract deliberately rather than smuggling nested data.
+RepairServiceData = dict[str, str | int | float | bool | None]
+
+
 @dataclass
 class PersistentNotification:
-    """A persistent notification to create or dismiss.
+    """A persistent notification or repair-issue spec.
 
     ``active=True`` means create (or refresh in place);
     ``active=False`` means dismiss. Pure data so logic
@@ -722,6 +734,34 @@ class PersistentNotification:
     notification builders that originate from a per-
     instance service call should set this; ad-hoc one-off
     notifications can leave it empty.
+
+    ``repair_callback`` opts the spec into the HA Repairs
+    surface. When set to ``(service_name, service_data)``
+    AND the dispatcher is told ``create_repairs=True``, the
+    spec is routed to the issue registry instead of
+    persistent notifications -- the issue's fix flow
+    invokes ``hass.services.async_call(DOMAIN, *spec.repair_callback)``
+    when the user clicks Submit. ``service_data`` must be a
+    flat dict of JSON primitives (see ``RepairServiceData``).
+    Other ``PersistentNotification`` fields remain meaningful
+    for the issue: ``title`` / ``message`` feed the issue's
+    translation placeholders, ``notification_id`` doubles as
+    the issue ID. Specs with ``repair_callback=None`` always
+    route to persistent notifications regardless of the
+    dispatcher's ``create_repairs`` flag, so a non-repairable
+    finding emitted alongside repairable ones still surfaces
+    correctly.
+
+    ``translation_key`` selects the entry under
+    ``strings.json``'s ``issues:`` block when a spec is
+    routed as a repair issue. Required (non-empty) for
+    every spec with ``repair_callback`` set; ignored for
+    notification-routed specs.
+
+    ``translation_placeholders`` carries dynamic values the
+    selected translation entry interpolates (``{entity_id}``,
+    ``{default_entity_id}``, etc). Ignored for notification-
+    routed specs.
     """
 
     active: bool
@@ -729,6 +769,9 @@ class PersistentNotification:
     title: str
     message: str
     instance_id: str | None = None
+    repair_callback: tuple[str, RepairServiceData] | None = None
+    translation_key: str = ""
+    translation_placeholders: dict[str, str] | None = None
 
 
 def _config_error_notification_id(service: str, instance_id: str) -> str:
@@ -1280,6 +1323,7 @@ __all__ = [
     "JoinedRegexResult",
     "LifecycleMutators",
     "PersistentNotification",
+    "RepairServiceData",
     "TypedServiceResponse",
     "UnmatchedDirective",
     "automation_edit_link",
