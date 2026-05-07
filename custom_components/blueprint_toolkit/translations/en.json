@@ -47,6 +47,54 @@
           }
         }
       }
+    },
+    "edw_entity_id_drift": {
+      "title": "Entity ID drift: {entity_id}",
+      "description": "Entity `{entity_id}` has drifted from its default ID `{default_entity_id}`. Click Submit to rename it back to the default.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Rename entity?",
+            "description": "Rename `{entity_id}` to `{default_entity_id}`.\n\nClick Submit to apply."
+          }
+        }
+      }
+    },
+    "edw_entity_name_drift": {
+      "title": "Entity name drift: {entity_id}",
+      "description": "Entity `{entity_id}` has a custom friendly name `{current_name}`; the default is `{default_name}`. Click Submit to reset to the default.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Reset entity name?",
+            "description": "Reset friendly name on `{entity_id}` from `{current_name}` to `{default_name}`.\n\nClick Submit to apply."
+          }
+        }
+      }
+    },
+    "dw_disabled_diagnostic_entity": {
+      "title": "Disabled diagnostic entity: {entity_id}",
+      "description": "Entity `{entity_id}` is disabled but the device watchdog needs it for monitoring. Click Submit to re-enable.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Re-enable entity?",
+            "description": "Set `disabled_by=None` on `{entity_id}`.\n\nClick Submit to apply."
+          }
+        }
+      }
+    },
+    "repair_cap_summary": {
+      "title": "{count} additional repairable findings suppressed",
+      "description": "The per-run repair cap is `{cap}`. Raise the `max_repairs` blueprint input or fix the visible repairs first to surface more.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Acknowledge",
+            "description": "{count} repairable findings were suppressed by the per-run cap of {cap}. Click Submit to dismiss this notice (it will re-appear next run if findings still exceed the cap)."
+          }
+        }
+      }
     }
   }
 }
