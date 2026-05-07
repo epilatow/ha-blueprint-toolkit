@@ -132,6 +132,93 @@ def _register_docs_static_route(hass: HomeAssistant) -> None:
     )
 
 
+def _register_fix_services(hass: HomeAssistant) -> None:
+    """Register the per-finding repair services.
+
+    Three services back the WatchdogFixFlow's Submit step:
+
+    - ``fix_edw_entity_id_drift`` -- ``er.async_update_entity(entity_id,
+      new_entity_id=...)``.
+    - ``fix_edw_entity_name_drift`` -- ``er.async_update_entity(entity_id,
+      name=...)``.
+    - ``fix_dw_disabled_diagnostic_entity`` -- ``er.async_update_entity(
+      entity_id, disabled_by=None)``.
+
+    Each takes a single-entity payload (no bulk variants) and is
+    registered idempotently -- ``hass.services.has_service`` guards
+    re-registration on options-driven entry reload. Schemas live
+    inline because the surface is small and the fields are
+    standard cv types.
+    """
+    import voluptuous as vol  # noqa: PLC0415
+    from homeassistant.helpers import (  # noqa: PLC0415
+        config_validation as cv,
+    )
+    from homeassistant.helpers import (  # noqa: PLC0415
+        entity_registry as er,
+    )
+
+    async def _fix_edw_entity_id_drift(call: Any) -> None:
+        ent_reg = er.async_get(hass)
+        ent_reg.async_update_entity(
+            call.data["entity_id"],
+            new_entity_id=call.data["new_entity_id"],
+        )
+
+    async def _fix_edw_entity_name_drift(call: Any) -> None:
+        ent_reg = er.async_get(hass)
+        ent_reg.async_update_entity(
+            call.data["entity_id"],
+            name=call.data["name"],
+        )
+
+    async def _fix_dw_disabled_diagnostic_entity(call: Any) -> None:
+        ent_reg = er.async_get(hass)
+        ent_reg.async_update_entity(
+            call.data["entity_id"],
+            disabled_by=None,
+        )
+
+    if not hass.services.has_service(DOMAIN, "fix_edw_entity_id_drift"):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_edw_entity_id_drift",
+            _fix_edw_entity_id_drift,
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): cv.entity_id,
+                    vol.Required("new_entity_id"): cv.entity_id,
+                },
+            ),
+        )
+    if not hass.services.has_service(DOMAIN, "fix_edw_entity_name_drift"):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_edw_entity_name_drift",
+            _fix_edw_entity_name_drift,
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): cv.entity_id,
+                    vol.Required("name"): vol.Coerce(str),
+                },
+            ),
+        )
+    if not hass.services.has_service(
+        DOMAIN,
+        "fix_dw_disabled_diagnostic_entity",
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_dw_disabled_diagnostic_entity",
+            _fix_dw_disabled_diagnostic_entity,
+            schema=vol.Schema(
+                {
+                    vol.Required("entity_id"): cv.entity_id,
+                },
+            ),
+        )
+
+
 async def _async_options_updated(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -301,6 +388,8 @@ async def async_setup_entry(
     await edw_handler.async_register(hass, entry)
     await dw_handler.async_register(hass, entry)
     await stsc_handler.async_register(hass, entry)
+
+    _register_fix_services(hass)
 
     # Conflicts surface to the user via Repairs rather
     # than by failing the setup. Real install errors raise
