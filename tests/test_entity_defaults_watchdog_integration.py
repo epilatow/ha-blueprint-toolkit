@@ -122,6 +122,8 @@ def _valid_payload(
     exclude_entity_name_regex: str = "",
     check_interval_minutes: int = 60,
     max_device_notifications: int = 0,
+    create_repairs: bool = False,
+    max_repairs: int = 5,
     validate_includes_excludes: bool = True,
 ) -> dict[str, Any]:
     """Build a fully-populated EDW service-call payload."""
@@ -137,6 +139,8 @@ def _valid_payload(
         "exclude_entity_name_regex_raw": exclude_entity_name_regex,
         "check_interval_minutes_raw": check_interval_minutes,
         "max_device_notifications_raw": max_device_notifications,
+        "create_repairs_raw": create_repairs,
+        "max_repairs_raw": max_repairs,
         "validate_includes_excludes_raw": validate_includes_excludes,
         "debug_logging_raw": False,
     }

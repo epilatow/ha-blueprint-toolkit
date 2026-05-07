@@ -145,6 +145,11 @@ class DriftDetail:
     expected_name: str | None
     has_redundant_prefix: bool = False
     recommended_override: str | None = None
+    # Default entity_id the registry would have if no
+    # rename had drifted it. Threaded through so the
+    # repair-spec builder can hand it to
+    # ``fix_edw_entity_id_drift`` as the target ID.
+    expected_entity_id: str | None = None
 
 
 @dataclass
@@ -562,6 +567,7 @@ def _check_entity_drift(
         expected_name=entity.expected_name,
         has_redundant_prefix=redundant,
         recommended_override=recommended,
+        expected_entity_id=entity.expected_entity_id,
     )
 
 

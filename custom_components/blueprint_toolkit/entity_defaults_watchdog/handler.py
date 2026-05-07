@@ -49,9 +49,11 @@ from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
     JoinedRegexLine,
+    PersistentNotification,
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
+    dispatch_findings_with_sweep,
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
@@ -59,7 +61,6 @@ from ..helpers import (
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
     notification_prefix,
-    process_persistent_notifications_with_sweep,
     register_blueprint_handler,
     resolve_target_integrations,
     schedule_periodic_with_jitter,
@@ -121,6 +122,10 @@ _SCHEMA = vol.Schema(
             vol.Coerce(int), vol.Range(min=1, max=10080)
         ),
         vol.Required("max_device_notifications_raw"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=1000)
+        ),
+        vol.Required("create_repairs_raw"): cv.boolean,
+        vol.Required("max_repairs_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=1000)
         ),
         vol.Required("validate_includes_excludes_raw"): cv.boolean,
@@ -251,6 +256,8 @@ async def _async_argparse(
         exclude_entity_name_regex_lines=en_regex_result.lines,
         check_interval_minutes=data["check_interval_minutes_raw"],
         max_notifications=data["max_device_notifications_raw"],
+        create_repairs=data["create_repairs_raw"],
+        max_repairs=data["max_repairs_raw"],
         validate_includes_excludes=data["validate_includes_excludes_raw"],
         debug_logging=data["debug_logging_raw"],
     )
@@ -280,6 +287,8 @@ async def _async_service_layer(
     exclude_entity_name_regex_lines: list[JoinedRegexLine],
     check_interval_minutes: int,
     max_notifications: int,
+    create_repairs: bool,
+    max_repairs: int,
     validate_includes_excludes: bool,
     debug_logging: bool,
 ) -> None:
@@ -407,10 +416,13 @@ async def _async_service_layer(
     # runs) get dismissed automatically. The unmatched-
     # directives spec is appended outside the per-device
     # cap so a typo'd exclusion always surfaces.
-    await process_persistent_notifications_with_sweep(
+    repair_specs = _build_repair_specs(ev.results, notif_prefix)
+    await dispatch_findings_with_sweep(
         hass,
-        list(ev.notifications) + [unmatched_spec],
+        list(ev.notifications) + repair_specs + [unmatched_spec],
         sweep_prefix=notif_prefix,
+        create_repairs=create_repairs,
+        repair_cap=max_repairs,
     )
 
     # Persist diagnostic state.
@@ -799,6 +811,84 @@ def _build_visible_aliased_inputs(
         )
 
     return infos, defensive_skipped
+
+
+# --------------------------------------------------------
+# Repair-spec builder
+# --------------------------------------------------------
+
+
+def _build_repair_specs(
+    results: list[logic.DeviceResult],
+    notif_prefix: str,
+) -> list[PersistentNotification]:
+    """Per-entity repair specs for entity-id + entity-name drift.
+
+    Each ``DriftDetail`` in a non-excluded device's
+    ``drifted_entities`` becomes one or two repair specs --
+    separate for the ID-rename and name-reset flows so the
+    user can fix them independently. Issue IDs follow the
+    canonical
+    ``{notif_prefix}repair_<kind>__<entity_id>``
+    shape so the dispatcher's sweep + the repairs.py flow
+    factory both route them by substring.
+    """
+    specs: list[PersistentNotification] = []
+    for r in results:
+        if r.device_excluded or not r.has_issue:
+            continue
+        for d in r.drifted_entities:
+            if d.id_drifted and d.expected_entity_id:
+                specs.append(
+                    PersistentNotification(
+                        active=True,
+                        notification_id=(
+                            f"{notif_prefix}repair_entity_id_drift__"
+                            f"{d.entity_id}"
+                        ),
+                        title="",
+                        message="",
+                        translation_key="edw_entity_id_drift",
+                        translation_placeholders={
+                            "entity_id": d.entity_id,
+                            "default_entity_id": d.expected_entity_id,
+                        },
+                        repair_callback=(
+                            "fix_edw_entity_id_drift",
+                            {
+                                "entity_id": d.entity_id,
+                                "new_entity_id": d.expected_entity_id,
+                            },
+                        ),
+                    ),
+                )
+            target_name = d.recommended_override or d.expected_name
+            if d.name_drifted and target_name:
+                specs.append(
+                    PersistentNotification(
+                        active=True,
+                        notification_id=(
+                            f"{notif_prefix}repair_entity_name_drift__"
+                            f"{d.entity_id}"
+                        ),
+                        title="",
+                        message="",
+                        translation_key="edw_entity_name_drift",
+                        translation_placeholders={
+                            "entity_id": d.entity_id,
+                            "current_name": d.current_name,
+                            "default_name": target_name,
+                        },
+                        repair_callback=(
+                            "fix_edw_entity_name_drift",
+                            {
+                                "entity_id": d.entity_id,
+                                "name": target_name,
+                            },
+                        ),
+                    ),
+                )
+    return specs
 
 
 # --------------------------------------------------------

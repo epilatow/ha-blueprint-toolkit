@@ -127,6 +127,33 @@ blueprint:
           max: 1000
           mode: box
 
+    create_repairs:
+      name: Create repairs for fixable findings
+      description: >
+        When enabled, findings with a deterministic fix
+        (entity-ID drift, entity-name drift) surface as
+        Home Assistant Repairs with a one-click Fix
+        button instead of as persistent notifications.
+        Other findings keep surfacing as notifications.
+      default: true
+      selector:
+        boolean: {}
+
+    max_repairs:
+      name: Max repairs
+      description: >
+        Cap on per-run repair issues. Set to 0 for
+        unlimited. Repairs are not bulk-dismissable in
+        HA's UI, so a cap is recommended; the cap-summary
+        repair indicates how many additional findings
+        were suppressed.
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 1000
+          mode: box
+
     validate_includes_excludes:
       name: Validate include / exclude directives
       description: >
@@ -183,6 +210,8 @@ actions:
       exclude_entity_name_regex_raw: !input exclude_entity_name_regex
       check_interval_minutes_raw: !input check_interval_minutes
       max_device_notifications_raw: !input max_device_notifications
+      create_repairs_raw: !input create_repairs
+      max_repairs_raw: !input max_repairs
       validate_includes_excludes_raw: !input validate_includes_excludes
       debug_logging_raw: !input debug_logging
 
