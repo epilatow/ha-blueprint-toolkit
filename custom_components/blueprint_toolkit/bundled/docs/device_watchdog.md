@@ -35,19 +35,21 @@ automatically when devices recover.
 
 ## Configuration
 
-| Parameter                             | Description                                                                                                                                                |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Include integrations                  | Integration IDs to monitor. Empty means all.                                                                                                               |
-| Exclude integrations                  | Integration IDs to skip even if included.                                                                                                                  |
-| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                     |
-| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                      |
-| Entity domains to monitor             | Only check entities in these domains                                                                                                                       |
-| Check interval (minutes)              | Minutes between watchdog evaluations                                                                                                                       |
-| Dead device threshold (minutes)       | Staleness threshold for state reports                                                                                                                      |
-| Enabled checks                        | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all.                                                   |
-| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                |
-| Validate include / exclude directives | Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below. |
-| Debug logging                         | Log debug info to HA logs                                                                                                                                  |
+| Parameter                             | Description                                                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Include integrations                  | Integration IDs to monitor. Empty means all.                                                                                                                  |
+| Exclude integrations                  | Integration IDs to skip even if included.                                                                                                                     |
+| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                        |
+| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                         |
+| Entity domains to monitor             | Only check entities in these domains                                                                                                                          |
+| Check interval (minutes)              | Minutes between watchdog evaluations                                                                                                                          |
+| Dead device threshold (minutes)       | Staleness threshold for state reports                                                                                                                         |
+| Enabled checks                        | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all.                                                      |
+| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                   |
+| Create repairs for fixable findings   | Default on. Routes disabled-diagnostic-entity findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. See **Repairs** below. |
+| Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                           |
+| Validate include / exclude directives | Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.    |
+| Debug logging                         | Log debug info to HA logs                                                                                                                                     |
 
 See the blueprint UI for default values.
 
@@ -80,6 +82,30 @@ or remove the stale entry and the notification clears on the next scan. The
 notification is informational, not a config error. Disable the toggle to skip
 the check; any prior unmatched-directives notification dismisses on the next
 scan.
+
+### Repairs
+
+When **Create repairs for fixable findings** is enabled (default), each
+disabled-recommended-diagnostic-entity finding surfaces as an HA Repair with a
+one-click Fix button instead of (or alongside) the per-device summary
+notification. Submit clears `disabled_by` on the named entity so it goes back
+to monitoring.
+
+Other finding categories (unavailable / stale devices) keep using
+notifications regardless of the toggle -- those don't have a deterministic
+single-click fix.
+
+The repair issue auto-clears once the entity is re-enabled (next scan no
+longer flags it and the dispatcher's sweep removes the stale issue).
+
+**Cap.** Repairs are not bulk-dismissable in HA's UI, so the **Max repairs**
+input limits per-run issue count (default 5; 0 = unlimited). When the cap is
+exceeded, a single cap-summary repair surfaces telling the user how many
+findings were suppressed; raise the cap or fix the visible issues to surface
+more.
+
+Disable **Create repairs** to keep today's notification-only behavior on this
+instance.
 
 ## Developer notes
 

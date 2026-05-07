@@ -710,7 +710,61 @@ against that field).
   bare `process_persistent_notifications` when touching a single known
   notification ID (e.g. `emit_config_error` against a fixed `__config_error`
   slot), so the call doesn't collateral-dismiss findings emitted by other
-  categories.
+  categories. Handlers that emit a mix of notification + repair specs use
+  `dispatch_findings_with_sweep` instead -- see "Repairs" below.
+
+## Repairs
+
+Findings whose fix is deterministic + automatable can route to HA's Repairs UI
+as one-click Fix issues instead of as persistent notifications. Each fixable
+finding produces one repair issue (per-entity granularity, no bulk variants).
+Today this covers EDW (entity-ID drift, entity-name drift) and DW (disabled
+diagnostic entity); other handlers don't gain the toggle because their
+findings aren't deterministically automatable.
+
+- **Spec extension.** `PersistentNotification` carries optional
+  `repair_callback: tuple[str, dict[str, JSONPrimitive]] | None = None`,
+  `translation_key: str = ""`, and `translation_placeholders` fields. A spec
+  with `repair_callback` set is a repair candidate; one with `None` is always
+  a notification. The payload type alias `RepairServiceData` enforces the
+  JSON-primitive-only constraint -- HA's issue registry persists `data` to
+  `.storage` via JSON round-trip, so nested objects fail silently or corrupt
+  at restore.
+- **Dispatcher.**
+  `dispatch_findings_with_sweep(hass, specs, sweep_prefix=, create_repairs=, repair_cap=)`
+  (in `helpers_lifecycle.py`) replaces
+  `process_persistent_notifications_with_sweep` for handlers emitting fixable
+  findings. With `create_repairs=False` every spec routes to notifications
+  (today's behavior). With `True`, specs with `repair_callback` route to the
+  issue registry, others stay on the notification path. Sweep mirrors the
+  notification-side semantics: prior- run issues / notifications under the
+  per-instance prefix not in the current batch get removed from their
+  respective backend.
+- **Cap.** `repair_cap > 0` keeps the visible repair count manageable (HA's
+  Repairs UI has no bulk-dismiss). Specs above the cap coalesce into a single
+  per-instance cap-summary repair (`{prefix}repair_cap_summary`). The
+  cap-summary slot is always emitted -- active when over cap, inactive
+  otherwise -- so a previously-active summary auto-dismisses when the next run
+  is back under cap.
+- **Fix services.** Each repairable finding kind backs a per-integration
+  service registered from `async_setup_entry`:
+  `fix_edw_entity_id_drift(entity_id, new_entity_id)`,
+  `fix_edw_entity_name_drift(entity_id, name)`,
+  `fix_dw_disabled_diagnostic_entity(entity_id)`. Each takes a single-entity
+  payload; the WatchdogFixFlow's Submit button calls them with the data the
+  dispatcher flattened onto the issue.
+- **Issue ID format.**
+  `blueprint_toolkit_{service}__{instance_id}__repair_<kind>__<entity_id>` --
+  the same `__` separator convention as notifications. The `__repair_`
+  substring is the routing key for `repairs.async_create_fix_flow` to pick the
+  `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
+  `InstallFailureFlow`.
+- **Translations.** Each repair-spec builder sets `translation_key=<kind>` on
+  the spec; the entries in `strings.json` / `translations/en.json` carry the
+  user-visible title + description with `{placeholder}` fields the builder
+  fills via `translation_placeholders`. Adding a new repairable finding means
+  adding both the per-spec `translation_key` and the matching `strings.json`
+  entry.
 
 ## URL generation
 

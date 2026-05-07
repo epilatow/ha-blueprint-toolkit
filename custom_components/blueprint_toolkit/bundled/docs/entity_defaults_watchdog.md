@@ -56,6 +56,8 @@ resolved.
 | Entity name exclude regex             | Skip entities whose name matches. One pattern per line.                                                                                                                                                             |
 | Check interval (minutes)              | Minutes between drift evaluations.                                                                                                                                                                                  |
 | Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                                                                         |
+| Create repairs for fixable findings   | Default on. Routes entity-ID drift and entity-name drift findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Other findings keep using notifications. See **Repairs** below.   |
+| Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                                                                                 |
 | Validate include / exclude directives | Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.                                       |
 | Debug Logging                         | Log debug info to HA logs.                                                                                                                                                                                          |
 
@@ -268,6 +270,37 @@ or remove the stale entry and the notification clears on the next scan. The
 notification is informational, not a config error. Disable the toggle to skip
 the check; any prior unmatched-directives notification dismisses on the next
 scan.
+
+### Repairs
+
+When **Create repairs for fixable findings** is enabled (default), each drift
+finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
+button instead of as a persistent notification. Two finding categories
+convert:
+
+- **Entity-ID drift** -- "rename `<entity_id>` to `<default_entity_id>`".
+  Submit calls the entity registry's rename API.
+- **Entity-name drift** -- "reset friendly name on `<entity_id>` from
+  `<current>` to `<default>`". Submit clears the user-set name override.
+
+Other drift categories (unmatched include / exclude directives, visible
+aliased entities, etc.) continue to surface as notifications regardless of the
+toggle. The per-device summary notification keeps its grouped body so users
+who want the full list still get it; the per-entity repair issues run
+alongside.
+
+The repair issue auto-clears once the underlying drift is resolved (next scan
+sees the entity at its default ID / name and the dispatcher's sweep removes
+the stale issue).
+
+**Cap.** Repairs are not bulk-dismissable in HA's UI, so the **Max repairs**
+input limits per-run issue count (default 5; 0 = unlimited). When the cap is
+exceeded, a single cap-summary repair surfaces telling the user how many
+findings were suppressed; raise the cap or fix the visible issues to surface
+more.
+
+Disable **Create repairs** to keep today's notification-only behavior on this
+instance.
 
 ## Developer notes
 
