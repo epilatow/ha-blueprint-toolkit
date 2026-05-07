@@ -502,14 +502,16 @@ async def dispatch_findings_with_sweep(
     """
     notif_specs: list[PersistentNotification] = []
     repair_specs: list[PersistentNotification] = []
-    if create_repairs:
-        for spec in notifications:
-            if spec.repair_callback is not None:
-                repair_specs.append(spec)
-            else:
-                notif_specs.append(spec)
-    else:
-        notif_specs = list(notifications)
+    for spec in notifications:
+        if spec.repair_callback is None:
+            notif_specs.append(spec)
+        elif create_repairs:
+            repair_specs.append(spec)
+        # When create_repairs=False, repair-marked specs drop
+        # entirely -- the handler emits the per-device summary
+        # notification alongside (which still routes here as a
+        # repair_callback=None spec), so the user sees the
+        # finding once via the original notification surface.
 
     cap_summary_id = f"{sweep_prefix}{_REPAIR_CAP_SUMMARY_SUFFIX}"
     if create_repairs and repair_cap > 0 and len(repair_specs) > repair_cap:

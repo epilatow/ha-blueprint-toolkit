@@ -99,6 +99,15 @@ class EdwInstanceState:
     # we can detect blueprint-input changes and re-arm.
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
+    # Latest exclusion config from the most recent service
+    # call. Read by ``fix_edw_*`` services to short-circuit
+    # the entity-registry mutation when the user has added
+    # the entity to an exclusion list since the repair issue
+    # was created. Empty default keeps the pre-call window
+    # safe (no instance state -> no exclusions -> the fix
+    # falls through; the next scan will reconcile).
+    excluded_entities: list[str] = field(default_factory=list)
+    excluded_entity_id_regex: str = ""
 
 
 # --------------------------------------------------------
@@ -297,6 +306,12 @@ async def _async_service_layer(
         instance_id,
         EdwInstanceState(instance_id=instance_id),
     )
+    # Refresh exclusion snapshot so per-finding fix services
+    # can short-circuit when the user has added the entity
+    # to an exclusion list since the repair issue was
+    # created.
+    state.excluded_entities = list(exclude_entities)
+    state.excluded_entity_id_regex = exclude_entity_id_regex
 
     # Make sure the periodic timer is armed with the
     # current interval (handles first-run + interval

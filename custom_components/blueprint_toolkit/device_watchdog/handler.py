@@ -99,6 +99,12 @@ class DwInstanceState:
     # we can detect blueprint-input changes and re-arm.
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
+    # Latest exclusion config from the most recent service
+    # call. Read by ``fix_dw_disabled_diagnostic_entity`` to
+    # short-circuit the entity-registry mutation when the
+    # user has added the entity to an exclusion list since
+    # the repair issue was created.
+    excluded_entity_id_regex: str = ""
 
 
 # --------------------------------------------------------
@@ -297,6 +303,11 @@ async def _async_service_layer(
         instance_id,
         DwInstanceState(instance_id=instance_id),
     )
+    # Refresh exclusion snapshot so the
+    # fix_dw_disabled_diagnostic_entity service can short-
+    # circuit when the user has added the entity to an
+    # exclusion regex since the repair issue was created.
+    state.excluded_entity_id_regex = exclude_entity_id_regex
 
     # Make sure the periodic timer is armed with the
     # current interval (handles first-run + interval

@@ -132,6 +132,46 @@ def _register_docs_static_route(hass: HomeAssistant) -> None:
     )
 
 
+_FIX_SERVICES = (
+    "fix_edw_entity_id_drift",
+    "fix_edw_entity_name_drift",
+    "fix_dw_disabled_diagnostic_entity",
+)
+
+
+def _entity_excluded_anywhere(hass: HomeAssistant, entity_id: str) -> bool:
+    """True when any active EDW / DW instance excludes ``entity_id``.
+
+    Walks the per-instance state on the integration's config-
+    entry bucket. A repair issue can outlive its underlying
+    finding when the user adds an exclusion between the scan
+    that created the issue and the click on Submit; this guard
+    lets the fix service surface the conflict in the Repairs
+    UI rather than mutating an entity the user told the
+    watchdog to ignore.
+    """
+    from homeassistant.helpers import (  # noqa: PLC0415
+        config_validation as cv,
+    )
+
+    from .helpers import matches_pattern  # noqa: PLC0415
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        return False
+    bucket = entries[0].runtime_data.handlers if entries[0].runtime_data else {}
+    for service_key in ("entity_defaults_watchdog", "device_watchdog"):
+        instances = bucket.get(service_key, {}).get("instances", {})
+        for inst in instances.values():
+            excluded = list(getattr(inst, "excluded_entities", []) or [])
+            if entity_id in cv.ensure_list(excluded):
+                return True
+            regex = getattr(inst, "excluded_entity_id_regex", "") or ""
+            if regex and matches_pattern(entity_id, regex):
+                return True
+    return False
+
+
 def _register_fix_services(hass: HomeAssistant) -> None:
     """Register the per-finding repair services.
 
@@ -149,8 +189,16 @@ def _register_fix_services(hass: HomeAssistant) -> None:
     re-registration on options-driven entry reload. Schemas live
     inline because the surface is small and the fields are
     standard cv types.
+
+    Each service guards on ``_entity_excluded_anywhere`` so a
+    repair issue created before the user added the entity to an
+    exclusion list raises ``HomeAssistantError`` rather than
+    mutating the entity behind the user's back.
     """
     import voluptuous as vol  # noqa: PLC0415
+    from homeassistant.exceptions import (  # noqa: PLC0415
+        HomeAssistantError,
+    )
     from homeassistant.helpers import (  # noqa: PLC0415
         config_validation as cv,
     )
@@ -158,7 +206,17 @@ def _register_fix_services(hass: HomeAssistant) -> None:
         entity_registry as er,
     )
 
+    def _check_excluded(entity_id: str) -> None:
+        if _entity_excluded_anywhere(hass, entity_id):
+            msg = (
+                f"`{entity_id}` is excluded by an active watchdog instance. "
+                "Remove the exclusion (or wait for the next scan to clear "
+                "this repair) before applying the fix."
+            )
+            raise HomeAssistantError(msg)
+
     async def _fix_edw_entity_id_drift(call: Any) -> None:
+        _check_excluded(call.data["entity_id"])
         ent_reg = er.async_get(hass)
         ent_reg.async_update_entity(
             call.data["entity_id"],
@@ -166,6 +224,7 @@ def _register_fix_services(hass: HomeAssistant) -> None:
         )
 
     async def _fix_edw_entity_name_drift(call: Any) -> None:
+        _check_excluded(call.data["entity_id"])
         ent_reg = er.async_get(hass)
         ent_reg.async_update_entity(
             call.data["entity_id"],
@@ -173,6 +232,7 @@ def _register_fix_services(hass: HomeAssistant) -> None:
         )
 
     async def _fix_dw_disabled_diagnostic_entity(call: Any) -> None:
+        _check_excluded(call.data["entity_id"])
         ent_reg = er.async_get(hass)
         ent_reg.async_update_entity(
             call.data["entity_id"],
@@ -423,6 +483,9 @@ async def async_unload_entry(
     await edw_handler.async_unregister(hass, entry)
     await dw_handler.async_unregister(hass, entry)
     await stsc_handler.async_unregister(hass, entry)
+    for service in _FIX_SERVICES:
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)
     return True
 
 
