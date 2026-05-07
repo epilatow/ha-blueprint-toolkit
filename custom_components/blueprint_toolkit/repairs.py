@@ -116,6 +116,52 @@ class InstallFailureFlow(RepairsFlow):
         )
 
 
+class WatchdogFixFlow(RepairsFlow):
+    """Confirm-and-call flow for watchdog-finding repairs.
+
+    Single-step confirm: shows the issue's translation
+    placeholders + a Submit button. On submit, replays the
+    stashed ``(service_name, service_data)`` against the
+    integration's domain. ``service_data`` is rebuilt from
+    the dispatcher's flattened ``service_data_<key>``
+    encoding so the JSON-only storage round-trip on the
+    issue registry's ``data`` field stays well-formed.
+    """
+
+    def __init__(self, data: dict[str, Any] | None) -> None:
+        self._data = data or {}
+
+    async def async_step_init(
+        self,
+        user_input: dict[str, Any] | None = None,  # noqa: ARG002
+    ) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        if user_input is not None:
+            service_name = self._data.get("service_name", "")
+            if service_name and service_name != "noop_cap_summary":
+                service_data = {
+                    k.removeprefix("service_data_"): v
+                    for k, v in self._data.items()
+                    if k.startswith("service_data_")
+                }
+                await self.hass.services.async_call(
+                    DOMAIN,
+                    service_name,
+                    service_data,
+                    blocking=True,
+                )
+            return self.async_create_entry(data={})
+        return self.async_show_form(
+            step_id="confirm",
+            data_schema=vol.Schema({}),
+        )
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,  # noqa: ARG001
     issue_id: str,
@@ -126,6 +172,8 @@ async def async_create_fix_flow(
         return InstallConflictsFlow(data)
     if issue_id.startswith(ISSUE_INSTALL_FAILURE):
         return InstallFailureFlow(data)
+    if "__repair_" in issue_id or issue_id.endswith("repair_cap_summary"):
+        return WatchdogFixFlow(data)
     msg = f"unknown issue_id: {issue_id!r}"
     raise ValueError(msg)
 
