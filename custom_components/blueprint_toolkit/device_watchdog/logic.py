@@ -161,15 +161,29 @@ RECOMMENDED_DIAGNOSTICS: dict[str, list[str]] = {
 }
 
 
+@dataclass
+class DisabledDiagnostic:
+    """One disabled recommended diagnostic entity.
+
+    Surfaced both for the per-device notification body
+    (renders ``original_name``) and the per-finding repair
+    spec the handler stamps on the dispatch path (calls
+    ``fix_dw_disabled_diagnostic_entity`` with
+    ``entity_id``).
+    """
+
+    original_name: str
+    entity_id: str
+
+
 def check_disabled_diagnostics(
     integration: str,
     entries: list[RegistryEntry],
-) -> list[str]:
+) -> list[DisabledDiagnostic]:
     """Check for disabled recommended diagnostic entities.
 
-    Returns list of original_name values for entities
-    that exist but are disabled. Entities that don't
-    exist at all are silently skipped.
+    Returns one ``DisabledDiagnostic`` per disabled entity;
+    entities that don't exist at all are silently skipped.
     """
     recommended = RECOMMENDED_DIAGNOSTICS.get(
         integration,
@@ -185,12 +199,17 @@ def check_disabled_diagnostics(
         if e.platform == integration and e.entity_category == "diagnostic"
     ]
 
-    disabled: list[str] = []
+    disabled: list[DisabledDiagnostic] = []
     for name in recommended:
         for entry in diag_entries:
             if entry.original_name == name:
                 if entry.disabled:
-                    disabled.append(name)
+                    disabled.append(
+                        DisabledDiagnostic(
+                            original_name=name,
+                            entity_id=entry.entity_id,
+                        ),
+                    )
                 break
     return disabled
 
@@ -198,19 +217,24 @@ def check_disabled_diagnostics(
 def evaluate_diagnostics(
     config: Config,
     devices: list[DeviceInfo],
-) -> list[helpers.PersistentNotification]:
+) -> tuple[
+    list[helpers.PersistentNotification],
+    list[DisabledDiagnostic],
+]:
     """Check all devices for disabled diagnostics.
 
-    Uses device.de.integration_entities and
-    device.registry_entries
-    to find disabled recommended diagnostic entities.
+    Returns the per-device persistent-notification batch
+    plus a flat list of every disabled diagnostic entity
+    encountered. The handler consumes the flat list to
+    build per-entity repair specs (one issue per entity)
+    while the notifications continue to render the
+    per-device summary body the user is used to.
 
     Skips devices with no integrations in
-    RECOMMENDED_DIAGNOSTICS. Returns a
-    helpers.PersistentNotification per device that has at least
-    one relevant integration.
+    RECOMMENDED_DIAGNOSTICS.
     """
     results: list[helpers.PersistentNotification] = []
+    all_disabled: list[DisabledDiagnostic] = []
     for device in devices:
         integrations = sorted(
             device.de.integration_entities.keys(),
@@ -220,16 +244,17 @@ def evaluate_diagnostics(
         ]
         if not has_recommendations:
             continue
-        disabled: list[str] = []
+        disabled: list[DisabledDiagnostic] = []
         for integration in integrations:
             disabled += check_disabled_diagnostics(
                 integration,
                 device.registry_entries,
             )
         notification_id = f"{config.notification_prefix}diag_{device.de.id}"
+        all_disabled.extend(disabled)
         if disabled:
             entity_list = "\n- ".join(
-                helpers.md_escape(eid) for eid in disabled
+                helpers.md_escape(d.original_name) for d in disabled
             )
             header = helpers.device_header_line(
                 device.de.name,
@@ -259,7 +284,7 @@ def evaluate_diagnostics(
                     instance_id=config.instance_id,
                 ),
             )
-    return results
+    return results, all_disabled
 
 
 def _filter_entities(
@@ -559,6 +584,9 @@ class EvaluationResult:
     issues_count: int
     stat_entity_issues: int
     stat_stale: int
+    disabled_diagnostics: list[DisabledDiagnostic] = field(
+        default_factory=list,
+    )
     unmatched_directives: list[helpers.UnmatchedDirective] = field(
         default_factory=list,
     )
@@ -650,8 +678,12 @@ def run_evaluation(
     results = evaluate_devices(config, devices, current_time)
 
     diag_notifications: list[helpers.PersistentNotification] = []
+    disabled_diagnostics: list[DisabledDiagnostic] = []
     if CHECK_DISABLED_DIAGNOSTICS in config.enabled_checks:
-        diag_notifications = evaluate_diagnostics(config, devices)
+        diag_notifications, disabled_diagnostics = evaluate_diagnostics(
+            config,
+            devices,
+        )
 
     notifications = helpers.prepare_notifications(
         results,
@@ -685,5 +717,6 @@ def run_evaluation(
         issues_count=len(issues),
         stat_entity_issues=sum(len(r.unavailable_entities) for r in issues),
         stat_stale=sum(1 for r in issues if r.is_stale),
+        disabled_diagnostics=disabled_diagnostics,
         unmatched_directives=unmatched,
     )

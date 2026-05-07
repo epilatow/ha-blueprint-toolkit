@@ -116,6 +116,8 @@ def _valid_payload(
     dead_device_threshold_minutes: int = 1440,
     enabled_checks: list[str] | None = None,
     max_device_notifications: int = 0,
+    create_repairs: bool = False,
+    max_repairs: int = 5,
     validate_includes_excludes: bool = True,
 ) -> dict[str, Any]:
     """Build a fully-populated DW service-call payload."""
@@ -131,6 +133,8 @@ def _valid_payload(
         "dead_device_threshold_minutes_raw": dead_device_threshold_minutes,
         "enabled_checks_raw": enabled_checks or [],
         "max_device_notifications_raw": max_device_notifications,
+        "create_repairs_raw": create_repairs,
+        "max_repairs_raw": max_repairs,
         "validate_includes_excludes_raw": validate_includes_excludes,
         "debug_logging_raw": False,
     }

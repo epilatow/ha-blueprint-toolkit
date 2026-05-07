@@ -49,9 +49,11 @@ from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
     JoinedRegexLine,
+    PersistentNotification,
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
+    dispatch_findings_with_sweep,
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
@@ -59,7 +61,6 @@ from ..helpers import (
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
     notification_prefix,
-    process_persistent_notifications_with_sweep,
     register_blueprint_handler,
     resolve_target_integrations,
     schedule_periodic_with_jitter,
@@ -123,6 +124,10 @@ _SCHEMA = vol.Schema(
             cv.ensure_list, [vol.Coerce(str)]
         ),
         vol.Required("max_device_notifications_raw"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=1000)
+        ),
+        vol.Required("create_repairs_raw"): cv.boolean,
+        vol.Required("max_repairs_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=1000)
         ),
         vol.Required("validate_includes_excludes_raw"): cv.boolean,
@@ -252,6 +257,8 @@ async def _async_argparse(
         dead_threshold_seconds=dead_threshold_seconds,
         enabled_checks=enabled_checks,
         max_notifications=data["max_device_notifications_raw"],
+        create_repairs=data["create_repairs_raw"],
+        max_repairs=data["max_repairs_raw"],
         validate_includes_excludes=data["validate_includes_excludes_raw"],
         debug_logging=data["debug_logging_raw"],
     )
@@ -280,6 +287,8 @@ async def _async_service_layer(
     dead_threshold_seconds: int,
     enabled_checks: frozenset[str],
     max_notifications: int,
+    create_repairs: bool,
+    max_repairs: int,
     validate_includes_excludes: bool,
     debug_logging: bool,
 ) -> None:
@@ -388,10 +397,13 @@ async def _async_service_layer(
     # runs) get dismissed automatically. The unmatched-
     # directives spec is appended outside the per-device
     # cap so a typo'd exclusion always surfaces.
-    await process_persistent_notifications_with_sweep(
+    repair_specs = _build_repair_specs(ev.disabled_diagnostics, notif_prefix)
+    await dispatch_findings_with_sweep(
         hass,
-        list(ev.notifications) + [unmatched_spec],
+        list(ev.notifications) + repair_specs + [unmatched_spec],
         sweep_prefix=notif_prefix,
+        create_repairs=create_repairs,
+        repair_cap=max_repairs,
     )
 
     # Persist diagnostic state.
@@ -566,6 +578,48 @@ def _build_device_inputs(
             ),
         )
     return devices
+
+
+# --------------------------------------------------------
+# Repair-spec builder
+# --------------------------------------------------------
+
+
+def _build_repair_specs(
+    disabled: list[logic.DisabledDiagnostic],
+    notif_prefix: str,
+) -> list[PersistentNotification]:
+    """Per-entity repair specs for disabled-diagnostic findings.
+
+    One spec per disabled entity rather than one per device
+    -- the surface matches the per-entity granularity of the
+    Repairs UI (each finding has its own Submit button).
+    The handler's existing per-device summary notification
+    keeps its grouped body; the repair-spec list runs
+    alongside.
+    """
+    specs: list[PersistentNotification] = []
+    for d in disabled:
+        specs.append(
+            PersistentNotification(
+                active=True,
+                notification_id=(
+                    f"{notif_prefix}repair_disabled_diagnostic_entity__"
+                    f"{d.entity_id}"
+                ),
+                title="",
+                message="",
+                translation_key="dw_disabled_diagnostic_entity",
+                translation_placeholders={
+                    "entity_id": d.entity_id,
+                },
+                repair_callback=(
+                    "fix_dw_disabled_diagnostic_entity",
+                    {"entity_id": d.entity_id},
+                ),
+            ),
+        )
+    return specs
 
 
 # --------------------------------------------------------

@@ -765,7 +765,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Last seen"]
+        assert [d.original_name for d in result] == ["Last seen"]
 
     def test_enabled_entity_not_flagged(self) -> None:
         entries = [
@@ -846,7 +846,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Last seen", "Node status"]
+        assert [d.original_name for d in result] == ["Last seen", "Node status"]
 
     def test_partial_disabled(self) -> None:
         entries = [
@@ -863,7 +863,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Node status"]
+        assert [d.original_name for d in result] == ["Node status"]
 
     def test_unifiprotect_disabled_flagged(self) -> None:
         entries = [
@@ -882,7 +882,7 @@ class TestCheckDisabledDiagnostics:
             "unifiprotect",
             entries,
         )
-        assert result == ["Wi-Fi signal strength"]
+        assert [d.original_name for d in result] == ["Wi-Fi signal strength"]
 
     def test_zwave_js_signal_strength_flagged(self) -> None:
         entries = [
@@ -896,7 +896,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Signal strength"]
+        assert [d.original_name for d in result] == ["Signal strength"]
 
     def test_zwave_js_signal_strength_clean(self) -> None:
         entries = [
@@ -920,9 +920,10 @@ class TestCheckDisabledDiagnostics:
             platform="bthome",
             disabled=True,
         )
-        assert check_disabled_diagnostics("bthome", [bthome]) == [
-            "Signal strength",
-        ]
+        assert [
+            d.original_name
+            for d in check_disabled_diagnostics("bthome", [bthome])
+        ] == ["Signal strength"]
 
         # shelly: "Signal strength" is NOT in shelly's list
         # ("RSSI" is). Disabled match must NOT flag, even
@@ -969,7 +970,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
         assert "Last seen" in results[0].message
@@ -988,7 +989,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
         assert "Signal strength" in results[0].message
@@ -1007,7 +1008,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         body_lines = results[0].message.split("\n")
         assert body_lines[0] == (
             "Device: [Front Door Lock](/config/devices/device/abc)"
@@ -1025,7 +1026,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         body = results[0].message
         assert "Enable in [Settings > Devices]" not in body
         assert "for better health monitoring" not in body
@@ -1042,7 +1043,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert results[0].title == "Front Door Lock"
 
     def test_device_all_enabled_dismisses(
@@ -1056,7 +1057,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is False
 
@@ -1072,7 +1073,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert results[0].notification_id == (
             "device_watchdog_test__diag_abc123"
         )
@@ -1088,7 +1089,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert isinstance(
             results[0],
             PersistentNotification,
@@ -1100,7 +1101,7 @@ class TestEvaluateDiagnostics:
         device = self._diag_device(
             integrations=["unknown_integration"],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert results == []
 
     def test_mixed_known_and_unknown_integrations(
@@ -1118,7 +1119,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
 
@@ -1176,8 +1177,12 @@ class TestNotificationPrefixIsolation:
             notification_prefix="device_watchdog_automation_b__",
         )
         dev = self._dev("shared_device")
-        ids_a = {n.notification_id for n in evaluate_diagnostics(cfg_a, [dev])}
-        ids_b = {n.notification_id for n in evaluate_diagnostics(cfg_b, [dev])}
+        ids_a = {
+            n.notification_id for n in evaluate_diagnostics(cfg_a, [dev])[0]
+        }
+        ids_b = {
+            n.notification_id for n in evaluate_diagnostics(cfg_b, [dev])[0]
+        }
         assert ids_a.isdisjoint(ids_b)
 
 
