@@ -21,6 +21,7 @@ from __future__ import annotations
 from .helpers_lifecycle import (
     all_integration_ids,
     cv_ha_domain_list,
+    dispatch_findings_with_sweep,
     file_editor_addon_ingress_url,
     integration_entity_ids,
     make_lifecycle_mutators,
@@ -117,6 +118,7 @@ __all__ = [
     "device_link",
     "device_url",
     "deviceless_entity_link",
+    "dispatch_findings_with_sweep",
     "domain_entities_link",
     "domain_entities_url",
     "emit_config_error",

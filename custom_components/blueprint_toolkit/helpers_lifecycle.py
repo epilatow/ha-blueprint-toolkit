@@ -38,6 +38,7 @@ from .helpers_logic import (
     _UNSUBS_KEY,
     BlueprintHandlerSpec,
     LifecycleMutators,
+    PersistentNotification,
     parse_entity_registry_update,
     spec_bucket,
 )
@@ -45,6 +46,7 @@ from .helpers_runtime import (
     dismiss_handler_crash_notification,
     emit_handler_crash_notification,
     kick_via_automation_trigger,
+    process_persistent_notifications_with_sweep,
 )
 
 if TYPE_CHECKING:
@@ -438,6 +440,185 @@ def make_lifecycle_mutators(
     )
 
 
+_REPAIR_CAP_SUMMARY_SUFFIX = "repair_cap_summary"
+_REPAIR_CAP_SUMMARY_TRANSLATION_KEY = "repair_cap_summary"
+
+
+def _flatten_repair_data(
+    finding_kind: str,
+    service_name: str,
+    service_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the ``data`` dict for a Repairs issue.
+
+    HA's issue registry persists ``data`` to ``.storage`` via JSON
+    round-trip; nested dicts and non-primitive values fail silently
+    or corrupt at restore. Each ``service_data`` field is encoded as
+    ``service_data_<key>``; the fix flow's ``async_step_confirm``
+    rebuilds the inverse.
+    """
+    out: dict[str, Any] = {
+        "finding_kind": finding_kind,
+        "service_name": service_name,
+    }
+    for k, v in service_data.items():
+        out[f"service_data_{k}"] = v
+    return out
+
+
+async def dispatch_findings_with_sweep(
+    hass: HomeAssistant,
+    notifications: list[PersistentNotification],
+    *,
+    sweep_prefix: str,
+    create_repairs: bool,
+    repair_cap: int = 0,
+    keep_pattern: str | None = None,
+) -> None:
+    """Dispatch a per-instance batch routing repairs vs notifications.
+
+    Each spec is one of:
+
+    - ``active=True, repair_callback=<tuple>`` -- repair candidate.
+      Routed to the issue registry when ``create_repairs=True``,
+      otherwise to the notification dispatcher (so a user with the
+      toggle off keeps today's behavior).
+    - ``active=True, repair_callback=None`` -- always a
+      notification (cap-summary slots, config-error specs,
+      non-repairable findings).
+    - ``active=False`` -- dismiss spec for either backend.
+
+    Sweep semantics mirror today's
+    ``process_persistent_notifications_with_sweep``: any prior-run
+    artifact (notification or issue) under ``sweep_prefix`` not in
+    the current batch is removed from its respective backend.
+
+    ``repair_cap`` of 0 disables the cap. Above zero, the first N
+    repair specs surface; the rest are coalesced into a single
+    cap-summary repair under the per-instance prefix. The
+    cap-summary slot is always emitted -- active when over cap,
+    inactive otherwise -- so a previously-active summary
+    auto-dismisses when the next run is back under cap.
+    """
+    notif_specs: list[PersistentNotification] = []
+    repair_specs: list[PersistentNotification] = []
+    if create_repairs:
+        for spec in notifications:
+            if spec.repair_callback is not None:
+                repair_specs.append(spec)
+            else:
+                notif_specs.append(spec)
+    else:
+        notif_specs = list(notifications)
+
+    cap_summary_id = f"{sweep_prefix}{_REPAIR_CAP_SUMMARY_SUFFIX}"
+    if create_repairs and repair_cap > 0 and len(repair_specs) > repair_cap:
+        suppressed = repair_specs[repair_cap:]
+        repair_specs = repair_specs[:repair_cap]
+        repair_specs.append(
+            PersistentNotification(
+                active=True,
+                notification_id=cap_summary_id,
+                title="",
+                message="",
+                translation_key=_REPAIR_CAP_SUMMARY_TRANSLATION_KEY,
+                translation_placeholders={
+                    "count": str(len(suppressed)),
+                    "cap": str(repair_cap),
+                },
+                repair_callback=("noop_cap_summary", {}),
+            ),
+        )
+    elif create_repairs:
+        repair_specs.append(
+            PersistentNotification(
+                active=False,
+                notification_id=cap_summary_id,
+                title="",
+                message="",
+                repair_callback=("noop_cap_summary", {}),
+            ),
+        )
+
+    await _dispatch_repairs_with_sweep(
+        hass,
+        repair_specs,
+        sweep_prefix=sweep_prefix,
+    )
+    await process_persistent_notifications_with_sweep(
+        hass,
+        notif_specs,
+        sweep_prefix=sweep_prefix,
+        keep_pattern=keep_pattern,
+    )
+
+
+async def _dispatch_repairs_with_sweep(
+    hass: HomeAssistant,
+    specs: list[PersistentNotification],
+    *,
+    sweep_prefix: str,
+) -> None:
+    """Create / dismiss issues + sweep prefix-matching orphans.
+
+    Per-scan blind re-issuance against the issue registry is
+    intentionally cheap: HA's ``ir.async_create_issue`` calls
+    ``IssueRegistry.async_get_or_create``, which builds the
+    replacement entry and only fires the registry-updated
+    event + schedules a save when ``replacement != issue``
+    (``homeassistant/helpers/issue_registry.py`` -- the
+    ``# Only fire is something changed`` branch). HA's
+    ``async_delete`` similarly returns early when the
+    ``(domain, issue_id)`` isn't present. So repeat calls
+    with byte-identical state are end-to-end no-ops -- no
+    bus event, no UI re-render, no Repairs-panel churn --
+    and this dispatcher doesn't need a content-equality
+    guard of its own. That's the opposite of HA's
+    ``persistent_notification.create``, which re-publishes
+    unconditionally; the notification-side dispatcher in
+    ``process_persistent_notifications`` carries its own
+    skip-when-identical guard for that reason.
+    """
+    from homeassistant.helpers import (  # noqa: PLC0415
+        issue_registry as ir,
+    )
+
+    active_ids: set[str] = set()
+    for spec in specs:
+        if not spec.active:
+            ir.async_delete_issue(hass, DOMAIN, spec.notification_id)
+            continue
+        if spec.repair_callback is None:
+            continue
+        service_name, service_data = spec.repair_callback
+        active_ids.add(spec.notification_id)
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            spec.notification_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=spec.translation_key
+            or _REPAIR_CAP_SUMMARY_TRANSLATION_KEY,
+            translation_placeholders=spec.translation_placeholders or {},
+            data=_flatten_repair_data(
+                spec.translation_key or "",
+                service_name,
+                service_data,
+            ),
+        )
+
+    registry = ir.async_get(hass)
+    for issue in list(registry.issues.values()):
+        if issue.domain != DOMAIN:
+            continue
+        if not issue.issue_id.startswith(sweep_prefix):
+            continue
+        if issue.issue_id in active_ids:
+            continue
+        ir.async_delete_issue(hass, DOMAIN, issue.issue_id)
+
+
 async def register_blueprint_handler(
     hass: HomeAssistant,
     entry: Any,
@@ -734,6 +915,7 @@ async def register_blueprint_handler(
 __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
+    "dispatch_findings_with_sweep",
     "file_editor_addon_ingress_url",
     "integration_entity_ids",
     "make_lifecycle_mutators",
