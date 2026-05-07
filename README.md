@@ -13,12 +13,15 @@ are standalone -- self-contained YAML blueprints with no service handler.
 
 - [Device Watchdog](docs/device_watchdog.md) - Monitors device health across
   integrations. Raises persistent notifications for unavailable or stale
-  devices, clears them automatically on recovery.
+  devices and surfaces disabled diagnostic entities as one-click HA Repairs;
+  notifications + repairs auto-clear when devices recover.
 
 - [Entity Defaults Watchdog](docs/entity_defaults_watchdog.md) - Detects
-  entity IDs and names that have drifted from their defaults. Creates
-  persistent notifications per device with repair instructions, clears them
-  automatically when drift is resolved.
+  entity IDs and names that have drifted from their defaults. Per-device
+  notifications carry repair instructions; entity-ID + entity-name drift
+  findings additionally surface as one-click HA Repairs that rename / reset
+  the entity in place. Notifications + repairs auto-clear when drift is
+  resolved.
 
 - [Trigger Entity Controller](docs/trigger_entity_controller.md) - Controls
   entities (lights, switches, fans, etc.) with optional trigger-based

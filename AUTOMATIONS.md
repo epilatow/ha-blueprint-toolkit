@@ -301,7 +301,13 @@ Notifications:
 
 - `PersistentNotification` (dataclass) -- spec for create/dismiss;
   `instance_id` field drives the `Automation: [name](edit-link)\n` prefix the
-  dispatcher prepends.
+  dispatcher prepends. Optional `repair_callback` / `translation_key` /
+  `translation_placeholders` fields opt the spec into the Repairs surface (see
+  "Repairs" below).
+- `RepairServiceData` (type alias) -- the JSON-primitive-only payload type the
+  issue registry's data round-trip can persist safely. Lists of dicts and
+  other nested objects fail silently or corrupt on restore; the type alias
+  makes the constraint visible at every fix-service signature.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active
@@ -311,6 +317,12 @@ Notifications:
 - `process_persistent_notifications_with_sweep(...)` -- sweep variant;
   dismisses any prior-run notifications matching `sweep_prefix` not in the
   current batch.
+- `dispatch_findings_with_sweep(...)` -- routes a per-instance batch by
+  `repair_callback`. Kwargs: `sweep_prefix`, `create_repairs: bool`,
+  `repair_cap: int = 0`. With `create_repairs=False` repair-marked specs drop
+  entirely so the user's notification stream stays today's; with `True` they
+  route to the issue registry while non-repair specs continue to the
+  notification path. See "Repairs" below.
 - `make_config_error_notification(...)` -- builder; `md_escape`s every error
   bullet; empty errors -> dismiss spec.
 - `emit_config_error(...)` -- builder + dispatcher convenience wrapper; safe
@@ -503,9 +515,10 @@ state write, action dispatch, debug log, response), and the canonical order
 across the integration is:
 
 1. **Sweep PNs.** Dispatch the per-instance persistent-notification set for
-   this run via `process_persistent_notifications_with_sweep`. Clears stale
-   config-error / per-finding entries from prior runs and emits the current
-   findings.
+   this run via `process_persistent_notifications_with_sweep` (or
+   `dispatch_findings_with_sweep` when the handler emits a mix of repair +
+   notification specs -- EDW + DW). Clears stale config-error / per-finding
+   entries from prior runs and emits the current findings.
 2. **Update state.** Write the diagnostic state entity via
    `update_instance_state`. Records what we did this run.
 3. **Action dispatch.** `homeassistant.turn_on` / `turn_off` / etc, for

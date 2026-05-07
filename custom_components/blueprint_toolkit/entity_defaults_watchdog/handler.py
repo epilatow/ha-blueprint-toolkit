@@ -22,11 +22,11 @@ pattern):
   (capped by ``max_device_notifications`` via
   ``helpers.prepare_notifications``), the cap-summary slot
   the helper always emits, and a single deviceless
-  aggregate slot. The complete per-instance notification
-  set is sweep-dispatched via
-  ``process_persistent_notifications_with_sweep`` so
-  prior-run notifications no longer present this run get
-  cleaned up.
+  aggregate slot. The complete per-instance notification +
+  repair-spec set is sweep-dispatched via
+  ``dispatch_findings_with_sweep`` so prior-run findings no
+  longer present this run get cleaned up from both the
+  notification surface and the issue registry.
 """
 
 from __future__ import annotations
