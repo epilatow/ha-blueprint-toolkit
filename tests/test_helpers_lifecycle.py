@@ -133,6 +133,80 @@ _ha_components_hassio.get_addons_info = lambda _hass: None  # type: ignore[attr-
 _ha_helpers_hassio = types.ModuleType("homeassistant.helpers.hassio")
 _ha_helpers_hassio.is_hassio = lambda _hass: False  # type: ignore[attr-defined]
 
+
+# Mock issue_registry so dispatch_findings_with_sweep's
+# late-import succeeds during test runs. Tests use
+# monkeypatch on these stubs to drive routing assertions.
+class _IssueSeverity:  # noqa: D101
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass
+class _StubIssue:
+    domain: str
+    issue_id: str
+
+
+@dataclass
+class _StubIssueRegistry:
+    issues: dict[tuple[str, str], _StubIssue] = field(
+        default_factory=dict,
+    )
+
+
+_ISSUE_REGISTRY = _StubIssueRegistry()
+_CREATE_ISSUE_CALLS: list[dict[str, Any]] = []
+_DELETE_ISSUE_CALLS: list[tuple[str, str]] = []
+
+
+def _ir_async_create_issue(
+    _hass: Any,
+    domain: str,
+    issue_id: str,
+    *,
+    is_fixable: bool = False,
+    severity: str = "",
+    translation_key: str = "",
+    translation_placeholders: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    _CREATE_ISSUE_CALLS.append(
+        {
+            "domain": domain,
+            "issue_id": issue_id,
+            "is_fixable": is_fixable,
+            "severity": severity,
+            "translation_key": translation_key,
+            "translation_placeholders": translation_placeholders or {},
+            "data": data or {},
+        },
+    )
+    _ISSUE_REGISTRY.issues[(domain, issue_id)] = _StubIssue(
+        domain=domain,
+        issue_id=issue_id,
+    )
+
+
+def _ir_async_delete_issue(
+    _hass: Any,
+    domain: str,
+    issue_id: str,
+) -> None:
+    _DELETE_ISSUE_CALLS.append((domain, issue_id))
+    _ISSUE_REGISTRY.issues.pop((domain, issue_id), None)
+
+
+def _ir_async_get(_hass: Any) -> _StubIssueRegistry:
+    return _ISSUE_REGISTRY
+
+
+_ha_helpers_ir = types.ModuleType("homeassistant.helpers.issue_registry")
+_ha_helpers_ir.IssueSeverity = _IssueSeverity  # type: ignore[attr-defined]
+_ha_helpers_ir.async_create_issue = _ir_async_create_issue  # type: ignore[attr-defined]
+_ha_helpers_ir.async_delete_issue = _ir_async_delete_issue  # type: ignore[attr-defined]
+_ha_helpers_ir.async_get = _ir_async_get  # type: ignore[attr-defined]
+
 sys.modules["homeassistant"] = _ha
 sys.modules["homeassistant.components"] = _ha_components
 sys.modules["homeassistant.components.automation"] = _ha_components_automation
@@ -143,6 +217,7 @@ sys.modules["homeassistant.helpers"] = _ha_helpers
 sys.modules["homeassistant.helpers.entity_registry"] = _ha_helpers_er
 sys.modules["homeassistant.helpers.event"] = _ha_helpers_event
 sys.modules["homeassistant.helpers.hassio"] = _ha_helpers_hassio
+sys.modules["homeassistant.helpers.issue_registry"] = _ha_helpers_ir
 
 from custom_components.blueprint_toolkit import (  # noqa: E402
     helpers,
@@ -2252,6 +2327,201 @@ class TestFileEditorAddonIngressUrl:
             helpers.file_editor_addon_ingress_url(self._hass())
             == "/api/hassio_ingress/abc123/"
         )
+
+
+class TestDispatchFindingsWithSweep:
+    """Routing + cap + sweep behaviour for the repairs dispatcher."""
+
+    def setup_method(self) -> None:
+        _ISSUE_REGISTRY.issues.clear()
+        _CREATE_ISSUE_CALLS.clear()
+        _DELETE_ISSUE_CALLS.clear()
+
+    def _hass(self) -> _MockHass:
+        return _MockHass()
+
+    def _repair(
+        self,
+        notification_id: str,
+        translation_key: str = "edw_entity_id_drift",
+        entity_id: str = "switch.foo",
+    ) -> helpers.PersistentNotification:
+        return helpers.PersistentNotification(
+            active=True,
+            notification_id=notification_id,
+            title="",
+            message="",
+            translation_key=translation_key,
+            translation_placeholders={"entity_id": entity_id},
+            repair_callback=(
+                "fix_edw_entity_id_drift",
+                {"entity_id": entity_id, "new_entity_id": "switch.bar"},
+            ),
+        )
+
+    def _notif(
+        self,
+        notification_id: str,
+    ) -> helpers.PersistentNotification:
+        return helpers.PersistentNotification(
+            active=True,
+            notification_id=notification_id,
+            title="Title",
+            message="Body",
+            instance_id="automation.test",
+        )
+
+    @pytest.mark.asyncio
+    async def test_toggle_off_drops_repair_specs(self) -> None:
+        # The plan + user doc both promise toggle-off keeps
+        # today's behavior. Repair specs (with empty
+        # title / message because their visible content lives
+        # in the issue's translation strings) MUST NOT route
+        # to the notification backend or the user sees blank
+        # notifications.
+        hass = self._hass()
+        await helpers.dispatch_findings_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [
+                self._repair("blueprint_toolkit_x__a__repair_e1"),
+                self._notif("blueprint_toolkit_x__a__device_d1"),
+            ],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=False,
+        )
+        assert _CREATE_ISSUE_CALLS == []
+        # Only the per-device notification reached the
+        # persistent_notification surface; the repair spec
+        # was dropped silently.
+        notif_create_data = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        ids = {data["notification_id"] for data in notif_create_data}
+        assert "blueprint_toolkit_x__a__device_d1" in ids
+        assert "blueprint_toolkit_x__a__repair_e1" not in ids
+
+    @pytest.mark.asyncio
+    async def test_toggle_on_routes_repair_specs_to_issues(self) -> None:
+        hass = self._hass()
+        await helpers.dispatch_findings_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [
+                self._repair("blueprint_toolkit_x__a__repair_e1"),
+                self._notif("blueprint_toolkit_x__a__device_d1"),
+            ],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert "blueprint_toolkit_x__a__repair_e1" in repair_ids
+        # Per-device summary still reaches notifications.
+        notif_create_data = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        ids = {data["notification_id"] for data in notif_create_data}
+        assert "blueprint_toolkit_x__a__device_d1" in ids
+
+    @pytest.mark.asyncio
+    async def test_repair_cap_emits_cap_summary(self) -> None:
+        hass = self._hass()
+        specs = [
+            self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
+            for i in range(7)
+        ]
+        await helpers.dispatch_findings_with_sweep(
+            hass,  # type: ignore[arg-type]
+            specs,
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+            repair_cap=3,
+        )
+        # 3 visible findings + 1 cap-summary = 4 active
+        # issues; the rest are suppressed.
+        active_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert len(active_ids) == 4
+        assert "blueprint_toolkit_x__a__repair_cap_summary" in active_ids
+        cap_call = next(
+            c
+            for c in _CREATE_ISSUE_CALLS
+            if c["issue_id"].endswith("repair_cap_summary")
+        )
+        assert cap_call["translation_placeholders"] == {
+            "count": "4",
+            "cap": "3",
+        }
+
+    @pytest.mark.asyncio
+    async def test_repair_cap_zero_unlimited(self) -> None:
+        hass = self._hass()
+        specs = [
+            self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
+            for i in range(20)
+        ]
+        await helpers.dispatch_findings_with_sweep(
+            hass,  # type: ignore[arg-type]
+            specs,
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+            repair_cap=0,
+        )
+        active_repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        # All 20 plus the cap-summary slot (inactive: emitted
+        # as a delete because cap=0 means no cap can ever
+        # apply, but the slot is asserted unconditionally so
+        # the dispatcher's create_repairs=True branch sees
+        # the dismiss).
+        assert (
+            len(
+                [
+                    i
+                    for i in active_repair_ids
+                    if i != "blueprint_toolkit_x__a__repair_cap_summary"
+                ]
+            )
+            == 20
+        )
+
+    @pytest.mark.asyncio
+    async def test_sweep_deletes_stale_issues(self) -> None:
+        # Pre-populate the issue registry with a prior-run
+        # finding under the per-instance prefix; current run
+        # only has spec for ``e1``. ``e_old`` should
+        # async_delete_issue.
+        hass = self._hass()
+        _ISSUE_REGISTRY.issues[
+            (DOMAIN, "blueprint_toolkit_x__a__repair_e_old")
+        ] = _StubIssue(
+            domain=DOMAIN,
+            issue_id="blueprint_toolkit_x__a__repair_e_old",
+        )
+        await helpers.dispatch_findings_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair("blueprint_toolkit_x__a__repair_e1")],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        deleted_ids = {iid for _, iid in _DELETE_ISSUE_CALLS}
+        assert "blueprint_toolkit_x__a__repair_e_old" in deleted_ids
+
+    @pytest.mark.asyncio
+    async def test_issue_data_is_json_primitive_only(self) -> None:
+        hass = self._hass()
+        await helpers.dispatch_findings_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair("blueprint_toolkit_x__a__repair_e1")],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        import json
+
+        for call in _CREATE_ISSUE_CALLS:
+            # JSON round-trip MUST succeed -- HA's issue
+            # registry persists data via .storage JSON.
+            json.dumps(call["data"])
 
 
 class TestStaleInputKeyReferences:
