@@ -1357,7 +1357,7 @@ class TestNotificationBody:
         assert "automation.front_door_auto_lock" in body
         assert "YAML-only" not in body
         # File: line still shows the path for YAML editors.
-        assert "File: `automations.yaml`" in body
+        assert "Source: `automations.yaml`" in body
 
     def test_yaml_only_note_suppressed_when_url_path_set_no_entity(
         self,
@@ -1531,6 +1531,95 @@ class TestNotificationBody:
         body = _build_notification_body(owner, findings)
         assert "Owner: config-block\\[0\\] - plant_01" in body
         assert "](/)" not in body
+
+    def test_file_line_links_when_file_editor_ingress_url(self) -> None:
+        owner = Owner(
+            source_file="utility_meters.yaml",
+            block_path="config-block[0]",
+            friendly_name="daily_power",
+            entity_id="sensor.daily_power",
+            yaml_only=True,
+        )
+        findings = [
+            Finding(
+                ref=Ref(
+                    kind="entity",
+                    value="sensor.dead",
+                    context="source",
+                ),
+            ),
+        ]
+        body = _build_notification_body(
+            owner,
+            findings,
+            file_editor_ingress_url="/api/hassio_ingress/abc123/",
+        )
+        # Source: line renders as a configurator link;
+        # the (YAML-only) tag stays on the Entity: line
+        # without duplicating the path.
+        link = (
+            "[`utility_meters.yaml`]"
+            "(/api/hassio_ingress/abc123/?loadfile=utility_meters.yaml)"
+        )
+        assert f"Source: {link}" in body
+        assert "(YAML-only)" in body
+        # Plain backtick rendering is gone when the link form fires.
+        assert "Source: `utility_meters.yaml`" not in body
+
+    def test_storage_path_stays_plain_when_file_editor_ingress_url(
+        self,
+    ) -> None:
+        # Storage owners (.storage/<x>) carry source_file values
+        # like ".storage/lovelace.dashboard_id" that aren't
+        # user-editable. Linking them to the file-editor add-on
+        # would point users at exactly the surface HA tells them
+        # not to hand-edit, so those paths stay backtick-only.
+        owner = Owner(
+            source_file=".storage/lovelace.foo",
+            block_path="root.views[0].cards[2]",
+            friendly_name="dashboard",
+            entity_id=None,
+            url_path="/lovelace-foo",
+            yaml_only=False,
+        )
+        findings = [
+            Finding(
+                ref=Ref(
+                    kind="entity",
+                    value="sensor.dead",
+                    context="cards.[2].entity",
+                ),
+            ),
+        ]
+        body = _build_notification_body(
+            owner,
+            findings,
+            file_editor_ingress_url="/api/hassio_ingress/abc123/",
+        )
+        assert "Source: `.storage/lovelace.foo`" in body
+        assert "hassio_ingress" not in body
+
+    def test_file_line_plain_when_file_editor_absent(self) -> None:
+        owner = Owner(
+            source_file="utility_meters.yaml",
+            block_path="config-block[0]",
+            friendly_name="daily_power",
+            entity_id="sensor.daily_power",
+            yaml_only=True,
+        )
+        findings = [
+            Finding(
+                ref=Ref(
+                    kind="entity",
+                    value="sensor.dead",
+                    context="source",
+                ),
+            ),
+        ]
+        body = _build_notification_body(owner, findings)
+        assert "Source: `utility_meters.yaml`" in body
+        assert "(YAML-only)" in body
+        assert "hassio_ingress" not in body
 
 
 # -- End-to-end -----------------------------------------
@@ -4206,7 +4295,7 @@ class TestUnusedDevicelessNotificationFormat:
         )
         body = notifs[0].message
         # Bare code span -- no surrounding [`...`](...) link.
-        assert "- `sensor.template_thing` -- source:" in body
+        assert "- `sensor.template_thing` -- Source:" in body
         assert "[`sensor.template_thing`]" not in body
 
     def test_cleared_domain_emits_dismiss_spec(self) -> None:
@@ -4218,6 +4307,92 @@ class TestUnusedDevicelessNotificationFormat:
         )
         assert len(notifs) == 1
         assert notifs[0].active is False
+
+    def test_yaml_source_links_when_file_editor_ingress_url(self) -> None:
+        # ``utility_meter`` is in the YAML auto-detect map
+        # (-> ``utility_meters.yaml``); the rollup body should
+        # render the source path as a configurator link
+        # rather than a bare backtick path.
+        cfg = _config(
+            notification_prefix="rw__inst__",
+            file_editor_ingress_url="/api/hassio_ingress/abc123/",
+        )
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.daily",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert (
+            "Source: [`utility_meters.yaml`]"
+            "(/api/hassio_ingress/abc123/?loadfile=utility_meters.yaml)"
+        ) in body
+        assert "Source: `utility_meters.yaml`" not in body
+
+    def test_config_entry_title_stays_plain_when_file_editor_ingress_url(
+        self,
+    ) -> None:
+        # A config-entry-owned entity surfaces its
+        # config-entry title as the source label, which is a
+        # name and not a file path. Even when the file-editor
+        # add-on is installed, the title must NOT be wrapped
+        # as a configurator link.
+        cfg = _config(
+            notification_prefix="rw__inst__",
+            file_editor_ingress_url="/api/hassio_ingress/abc123/",
+        )
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.kitchen",
+                domain="sensor",
+                platform="template",
+                unique_id="kitchen-uid",
+                config_entry_id="abc123",
+                config_entry_title="My Kitchen Helper",
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "Source: `My Kitchen Helper`" in body
+        assert "hassio_ingress" not in body
+
+    def test_yaml_source_plain_when_file_editor_absent(self) -> None:
+        cfg = _config(notification_prefix="rw__inst__")
+        entities = [
+            UnusedDevicelessEntity(
+                entity_id="sensor.daily",
+                domain="sensor",
+                platform="utility_meter",
+                unique_id=None,
+                config_entry_id=None,
+                config_entry_title=None,
+                disabled=False,
+            ),
+        ]
+        notifs = _build_unused_deviceless_notifications(
+            cfg,
+            entities,
+            platforms_seen_active=frozenset(),
+        )
+        body = notifs[0].message
+        assert "Source: `utility_meters.yaml`" in body
+        assert "hassio_ingress" not in body
 
 
 class TestRunEvaluationEnabledChecks:

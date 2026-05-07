@@ -121,14 +121,28 @@ _ha_helpers_event.async_track_time_interval = (  # type: ignore[attr-defined]
 _ha_helpers_event.async_call_later = (  # type: ignore[attr-defined]
     _async_call_later
 )
+
+# ``file_editor_addon_ingress_url`` late-imports ``is_hassio``
+# from ``homeassistant.helpers.hassio`` and (when hassio is
+# present) ``get_addons_info`` from
+# ``homeassistant.components.hassio``. Stub both modules so
+# the function-body imports succeed; tests monkeypatch the
+# return values per-case.
+_ha_components_hassio = types.ModuleType("homeassistant.components.hassio")
+_ha_components_hassio.get_addons_info = lambda _hass: None  # type: ignore[attr-defined]
+_ha_helpers_hassio = types.ModuleType("homeassistant.helpers.hassio")
+_ha_helpers_hassio.is_hassio = lambda _hass: False  # type: ignore[attr-defined]
+
 sys.modules["homeassistant"] = _ha
 sys.modules["homeassistant.components"] = _ha_components
 sys.modules["homeassistant.components.automation"] = _ha_components_automation
+sys.modules["homeassistant.components.hassio"] = _ha_components_hassio
 sys.modules["homeassistant.const"] = _ha_const
 sys.modules["homeassistant.core"] = _ha_core
 sys.modules["homeassistant.helpers"] = _ha_helpers
 sys.modules["homeassistant.helpers.entity_registry"] = _ha_helpers_er
 sys.modules["homeassistant.helpers.event"] = _ha_helpers_event
+sys.modules["homeassistant.helpers.hassio"] = _ha_helpers_hassio
 
 from custom_components.blueprint_toolkit import helpers  # noqa: E402
 from custom_components.blueprint_toolkit.const import DOMAIN  # noqa: E402
@@ -1958,6 +1972,112 @@ class TestMakeUnmatchedDirectivesNotification:
             ],
         )
         assert "sensor.\\[bad" in spec.message
+
+
+class TestFileEditorAddonIngressUrl:
+    """Direct unit tests for the addon-detection helper.
+
+    The probe shorts out at ``is_hassio`` on Container / Core
+    installs, then late-imports ``get_addons_info`` to look
+    up the ``core_configurator`` slug + its ``ingress_url``
+    field. Tests stub the two callables on the pre-mounted
+    ``homeassistant.helpers.hassio`` +
+    ``homeassistant.components.hassio`` modules.
+    """
+
+    def _hass(self) -> object:
+        # The helper passes hass through to is_hassio /
+        # get_addons_info but never reads its attributes
+        # directly; an opaque sentinel keeps the test
+        # focused on the URL return.
+        return object()
+
+    def test_returns_empty_when_not_hassio(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            _ha_helpers_hassio,
+            "is_hassio",
+            lambda _hass: False,
+        )
+        assert helpers.file_editor_addon_ingress_url(self._hass()) == ""
+
+    def test_returns_empty_when_addons_info_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Supervisor still warming up post-restart -- the
+        # addons-info table hasn't been populated yet.
+        monkeypatch.setattr(
+            _ha_helpers_hassio,
+            "is_hassio",
+            lambda _hass: True,
+        )
+        monkeypatch.setattr(
+            _ha_components_hassio,
+            "get_addons_info",
+            lambda _hass: None,
+        )
+        assert helpers.file_editor_addon_ingress_url(self._hass()) == ""
+
+    def test_returns_empty_when_slug_absent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            _ha_helpers_hassio,
+            "is_hassio",
+            lambda _hass: True,
+        )
+        monkeypatch.setattr(
+            _ha_components_hassio,
+            "get_addons_info",
+            lambda _hass: {"some_other_addon": {}},
+        )
+        assert helpers.file_editor_addon_ingress_url(self._hass()) == ""
+
+    def test_returns_empty_when_ingress_url_is_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Older Supervisor versions or a misconfigured
+        # install can return ``None`` for ``ingress_url``;
+        # treat that the same as "no add-on".
+        monkeypatch.setattr(
+            _ha_helpers_hassio,
+            "is_hassio",
+            lambda _hass: True,
+        )
+        monkeypatch.setattr(
+            _ha_components_hassio,
+            "get_addons_info",
+            lambda _hass: {"core_configurator": {"ingress_url": None}},
+        )
+        assert helpers.file_editor_addon_ingress_url(self._hass()) == ""
+
+    def test_returns_url_when_slug_present(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            _ha_helpers_hassio,
+            "is_hassio",
+            lambda _hass: True,
+        )
+        monkeypatch.setattr(
+            _ha_components_hassio,
+            "get_addons_info",
+            lambda _hass: {
+                "core_configurator": {
+                    "ingress_url": "/api/hassio_ingress/abc123/",
+                },
+            },
+        )
+        assert (
+            helpers.file_editor_addon_ingress_url(self._hass())
+            == "/api/hassio_ingress/abc123/"
+        )
 
 
 class TestStaleInputKeyReferences:

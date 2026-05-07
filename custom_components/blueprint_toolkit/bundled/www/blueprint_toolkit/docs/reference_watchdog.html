@@ -70,9 +70,8 @@ from <code>configuration.yaml</code> through a single generic-YAML catch-all ada
 <li>Per-owner persistent notifications with clickable URLs into the HA config UI
 where possible (automation editor, script editor, helpers page, dashboard
 path)</li>
-<li>YAML-only helpers are flagged in the notification body with a &quot;YAML-only,
-edit <code>&lt;file&gt;</code>&quot; note so users know to open their editor rather than waiting
-for a broken link</li>
+<li>YAML-only helpers are tagged <code>(YAML-only)</code> in the notification body so users
+know to look at the <code>Source:</code> line for the filename to edit</li>
 <li>Three complementary detection mechanisms (structural walk, Jinja AST, string
 sniff) with a service-name negative truth set to eliminate false positives</li>
 <li>Optional detection of references to disabled-but- existing entities
@@ -94,6 +93,13 @@ integrations (also silences unused-devices and unused-deviceless-entities)</li>
 <li>Notification cap to limit the number of per-owner notifications</li>
 <li>Optional debug logging</li>
 </ul>
+<h2>Requirements</h2>
+<p>None.</p>
+<p><strong>Optional</strong>: the <strong>File editor</strong> add-on (<code>core_configurator</code>, HA OS /
+Supervised installs only). When installed, YAML filenames in notification
+bodies render as clickable links that open the file in the editor; without the
+add-on the same bodies show the filename as a plain <code>code-spanned</code> path. See
+<strong>File editor add-on links</strong> below.</p>
 <h2>Usage</h2>
 <ol>
 <li>Install the automation (see main README)</li>
@@ -196,7 +202,7 @@ human name is available</li>
 <li>An <code>Integration:</code> line when the owner belongs to an adapter that knows its
 integration (automation, script, template, customize, lovelace, or a config
 entry domain)</li>
-<li>A <code>File:</code> line with the source path</li>
+<li>A <code>Source:</code> line with the source path</li>
 </ul>
 <p>Block-path format:</p>
 <ul>
@@ -249,13 +255,16 @@ edited via YAML -- typically when they're defined in a YAML block like
 <code>utility_meter: !include utility_meters.yaml</code> rather than through the HA UI's
 config flow. The watchdog detects these by checking the entity registry's
 <code>config_entry_id</code> field: entries with <code>config_entry_id: null</code> are YAML-only.</p>
-<p>When an owner is YAML-only, its notification body includes a note like:</p>
-<pre><code class="language-text">Entity: `sensor.air_filters_energy_monthly`
-  (YAML-only, edit `utility_meters.yaml`)
+<p>When an owner is YAML-only, its notification body tags the <code>Entity:</code> line with
+<code>(YAML-only)</code> so users know to look at the <code>Source:</code> line below for the
+filename:</p>
+<pre><code class="language-text">Entity: `sensor.air_filters_energy_monthly` (YAML-only)
+Source: `utility_meters.yaml`
 </code></pre>
 <p>No clickable URL is generated because HA has no edit page for these helpers.
-Open the YAML file in your editor and fix the reference there, then reload the
-integration or restart HA.</p>
+Open the YAML file in your editor (the <code>Source:</code> link opens it directly when
+the <strong>File editor</strong> add-on is installed; otherwise the path renders as plain
+text), fix the reference, then reload the integration or restart HA.</p>
 <h3>Plants and other legacy YAML integrations</h3>
 <p>Some legacy YAML integrations -- notably older versions of <code>plant</code> -- don't
 register their entities in the entity registry at all, so adding the
@@ -409,7 +418,7 @@ deviceless entity whose registry row carries a <code>config_entry_id</code> (UI 
 <code>utility_meter</code>, <code>template</code> helpers, etc.) links to the entities page filtered
 to that helper's config entry. Pure YAML-only deviceless entities (no
 <code>config_entry_id</code>) stay as bare code-spanned entity_ids -- HA has no
-per-entity URL filter for those, and the <code>source:</code> label already points at the
+per-entity URL filter for those, and the <code>Source:</code> label already points at the
 YAML file.</p>
 <p>Skip-lists baked in regardless of opt-in (these platforms / domains are
 user-interactive surfaces or voice-pipeline plumbing, not consumed by other
@@ -449,6 +458,32 @@ evaluation runs. Each run re-creates active notifications (to update content
 if findings changed), which updates their timestamps. Since all creates happen
 within milliseconds, the panel's display order is effectively random. The same
 owners are shown -- only the panel ordering varies.</p>
+<h3>File editor add-on links</h3>
+<p>Every <code>Source: &lt;path&gt;</code> line in a RW notification body renders the same way:
+plain <code>`&lt;path&gt;`</code> text by default, or a markdown link to the configurator
+when the <strong>File editor</strong> add-on (slug <code>core_configurator</code>) is detected as
+installed. The single render path means broken-references owner bodies, the
+unused-deviceless rollup bullets, and any future RW notification carrying a
+file path all behave identically without per-call-site decisions.</p>
+<p>Two carve-outs always render plain (no link), even when the add-on is present:</p>
+<ul>
+<li><code>.storage/&lt;x&gt;</code> paths in broken-references bodies -- HA-managed JSON files
+that HA's own docs warn against hand-editing.</li>
+<li>Non-file labels in rollups (config-entry titles like <code>My Kitchen Helper</code>,
+the generic <code>(YAML-defined; file not auto-detected)</code> fallback). These aren't
+file paths and have no useful link target.</li>
+</ul>
+<p>Detection is automatic -- there's no blueprint toggle to flip. RW probes the
+supervisor on every run for the add-on's per-installation ingress URL
+(<code>/api/hassio_ingress/&lt;uuid&gt;/</code>); install or uninstall events reflect on the
+next scan without an HA restart. On HA Container / Core (no Supervisor) the
+probe returns the empty string and filenames stay plain.</p>
+<p>The link points at the direct ingress URL rather than the
+<code>/core_configurator/</code> panel URL because HA's panel route consumes query
+strings on its way through the frontend router. The configurator's <code>loadfile</code>
+parameter only fires when the URL reaches the add-on's HTTP server intact.</p>
+<p>The add-on doesn't support line-number deep-linking, so the link opens the
+file at the top; the user still scrolls / searches to the relevant block.</p>
 <h3>Unmatched include / exclude directives</h3>
 <p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
 exclusion entry is checked against the live truth set after the scan

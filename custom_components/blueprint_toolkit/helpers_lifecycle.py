@@ -64,6 +64,60 @@ def all_integration_ids(hass: HomeAssistant) -> list[str]:
     return sorted(integrations)
 
 
+def file_editor_addon_ingress_url(hass: HomeAssistant) -> str:
+    """Return the ingress URL prefix for the ``core_configurator`` add-on.
+
+    The ``core_configurator`` add-on is HA's official "File
+    editor" add-on (wraps ``danielperna84/hass-configurator``).
+    Returns the per-installation ingress URL prefix
+    (``/api/hassio_ingress/<uuid>/``) when the add-on is
+    installed; returns the empty string otherwise.
+
+    The ingress URL -- not the ``/core_configurator/`` panel
+    URL -- is what callers want when emitting clickable
+    notifications. HA's panel route consumes query strings
+    on its way through the frontend router, so a link of
+    the form ``/core_configurator/?loadfile=foo.yaml``
+    routes the user to the panel without the configurator
+    ever seeing ``loadfile``. The direct ingress URL
+    (``/api/hassio_ingress/<uuid>/?loadfile=foo.yaml``)
+    forwards the query string verbatim to the add-on's
+    HTTP server, where the configurator's template
+    substitutes it into ``init_loadfile`` and the JS
+    actually opens the named file.
+
+    The per-installation UUID rules out a hardcoded URL --
+    the helper looks it up from the supervisor's addons-
+    info table on every call. Returns an empty string on:
+
+    - Container / Core HA installs (no Supervisor; the
+      ``hassio`` integration isn't loaded).
+    - Supervisor still warming up post-restart (the addons
+      info table hasn't been populated yet).
+    - The add-on isn't installed.
+    - The add-on's ``ingress_url`` field is ``None``
+      (older Supervisor versions or a misconfigured
+      install).
+
+    The check is cheap (``hass.data`` lookup) so handlers
+    probe per-evaluation -- install / uninstall events
+    propagate on the next scan without a reload.
+    """
+    from homeassistant.helpers.hassio import is_hassio  # noqa: PLC0415
+
+    if not is_hassio(hass):
+        return ""
+    from homeassistant.components.hassio import (  # noqa: PLC0415
+        get_addons_info,
+    )
+
+    addons = get_addons_info(hass)
+    if not addons:
+        return ""
+    info = addons.get("core_configurator") or {}
+    return info.get("ingress_url") or ""
+
+
 def cv_ha_domain_list(value: object) -> list[str]:
     """Validate a list of HA integration / domain slugs.
 
@@ -571,6 +625,7 @@ __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
     "discover_automations_using_blueprint",
+    "file_editor_addon_ingress_url",
     "make_lifecycle_mutators",
     "recover_at_startup",
     "register_blueprint_handler",

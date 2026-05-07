@@ -166,6 +166,18 @@ Cross-handler accessors:
 - `resolve_target_integrations(all, include, exclude)` -- apply include /
   exclude filters; empty `include` means "all" (matches the watchdog
   blueprints' documented behaviour).
+- `file_editor_addon_ingress_url(hass)` -- returns the per-installation
+  ingress URL prefix for the `core_configurator` add-on
+  (`/api/hassio_ingress/<uuid>/`) when installed; empty string otherwise.
+  Handlers thread the URL through `Config` to `file_editor_link`, which uses
+  it to build clickable notification-body links. The ingress URL -- not the
+  `/core_configurator/` panel URL -- is what callers want, because HA's panel
+  route consumes query strings on its way through the frontend router. Returns
+  the empty string on Container / Core installs (no Supervisor), while the
+  Supervisor is still warming up post-restart, when the add-on isn't
+  installed, or when its `ingress_url` field is `None`. The probe is a single
+  `hass.data` lookup, so handlers call it per-evaluation -- install /
+  uninstall events propagate on the next scan with no reload required.
 
 Notification + formatting:
 
@@ -669,7 +681,17 @@ Two flavours of helper, both public:
   `integration_link`, `automation_edit_link`, `script_edit_link`,
   `dashboard_link`, plus `deviceless_entity_link` (a prose link plus
   search-the-list instructions for entities that have no deep-linkable URL
-  form).
+  form). `file_editor_link(path, ingress_url)` is shaped differently from the
+  rest -- callers always invoke it for source-file paths and the helper
+  returns either `` [`<file>`](<ingress_url>?loadfile=<file>) `` (when
+  `ingress_url` is non-empty AND the path is user-editable, i.e. not under
+  `.storage/`) or the bare `` `<file>` `` form. The URL prefix argument is the
+  per-installation `/api/hassio_ingress/<uuid>/` form populated by
+  `file_editor_addon_ingress_url(hass)` -- HA's panel route
+  (`/core_configurator/`) consumes query strings on the way through the
+  frontend router, so the configurator never sees `loadfile`; the direct
+  ingress URL forwards it intact. Centralising the decision keeps call sites
+  agnostic of whether file-editor links are supported.
 - **`*_url(...)` raw URL functions** return just the URL string. Reserved for
   the narrow cases that need a URL separated from its rendering -- e.g.
   storing a URL on a dataclass for later assembly (`Owner.url_path` in RW), or

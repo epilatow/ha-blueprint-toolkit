@@ -53,6 +53,7 @@ from ..helpers import (
     automation_friendly_name,
     cv_ha_domain_list,
     entry_for_domain,
+    file_editor_addon_ingress_url,
     make_emit_config_error,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
@@ -314,6 +315,7 @@ async def _async_service_layer(
         exclude_exposed_entities=exclude_exposed_entities,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
+        file_editor_ingress_url=file_editor_addon_ingress_url(hass),
     )
 
     # Build the truth set on the event loop -- the

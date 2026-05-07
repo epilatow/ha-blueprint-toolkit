@@ -1314,6 +1314,160 @@ class TestUnusedDevicelessCheckEndToEnd:
         )
 
 
+class TestFileEditorLinkEndToEnd:
+    """End-to-end body shape with the file-editor add-on present.
+
+    Patches ``is_hassio`` and ``get_addons_info`` at the
+    import paths the detection helper late-imports from, so
+    ``Config.file_editor_ingress_url`` flips to True under the
+    pytest-HACC harness without needing a real Supervisor.
+    Two scenarios: a broken-references owner notification
+    (yaml owner -> File: line links) and an unused-deviceless
+    rollup (yaml-defined entity -> source: link).
+    """
+
+    async def test_broken_refs_body_links_to_file_editor(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        from unittest.mock import patch
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_link",
+            "on",
+            {"friendly_name": "RW: Link", "id": "5050"},
+        )
+        config_dir = Path(hass.config.config_dir)
+        (config_dir / "configuration.yaml").write_text(
+            "template: !include template.yaml\n",
+        )
+        (config_dir / "template.yaml").write_text(
+            "- sensor:\n"
+            "    - name: BogusRef\n"
+            "      state: \"{{ states('sensor.does_not_exist') }}\"\n",
+        )
+
+        with (
+            patch(
+                "homeassistant.helpers.hassio.is_hassio",
+                return_value=True,
+            ),
+            patch(
+                "homeassistant.components.hassio.get_addons_info",
+                return_value={
+                    "core_configurator": {
+                        "ingress_url": "/api/hassio_ingress/abc123/"
+                    }
+                },
+            ),
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(instance_id="automation.rw_link"),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        owner_notifs = [
+            spec["message"]
+            for nid, spec in notifs.items()
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_link__owner_"
+            )
+        ]
+        assert len(owner_notifs) >= 1, (
+            f"expected owner notification; got {sorted(notifs.keys())}"
+        )
+        body = owner_notifs[0]
+        assert (
+            "Source: [`template.yaml`]"
+            "(/api/hassio_ingress/abc123/?loadfile=template.yaml)"
+        ) in body
+        assert "Source: `template.yaml`" not in body
+
+    async def test_rollup_body_links_to_file_editor(
+        self,
+        hass,  # noqa: ANN001
+    ) -> None:
+        from unittest.mock import patch
+
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_link_dl",
+            "on",
+            {"friendly_name": "RW: LinkDL", "id": "6060"},
+        )
+        # Plant a yaml-defined deviceless entity on a platform
+        # in the auto-detect map (utility_meter ->
+        # utility_meters.yaml).
+        ent_reg = er.async_get(hass)
+        ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="utility_meter",
+            unique_id="yaml_meter",
+            config_entry=None,
+            original_name="yaml_meter",
+        )
+
+        with (
+            patch(
+                "homeassistant.helpers.hassio.is_hassio",
+                return_value=True,
+            ),
+            patch(
+                "homeassistant.components.hassio.get_addons_info",
+                return_value={
+                    "core_configurator": {
+                        "ingress_url": "/api/hassio_ingress/abc123/"
+                    }
+                },
+            ),
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    instance_id="automation.rw_link_dl",
+                    enabled_checks_raw=["unused-deviceless-entities"],
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        rollup = next(
+            (
+                spec["message"]
+                for nid, spec in notifs.items()
+                if nid.endswith("__unused_deviceless_utility_meter")
+            ),
+            None,
+        )
+        assert rollup is not None, (
+            "expected utility_meter rollup notification; "
+            f"got {sorted(notifs.keys())}"
+        )
+        assert (
+            "Source: [`utility_meters.yaml`]"
+            "(/api/hassio_ingress/abc123/?loadfile=utility_meters.yaml)"
+        ) in rollup
+        assert "Source: `utility_meters.yaml`" not in rollup
+
+
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "RW"
     setup_integration = staticmethod(_setup_integration)

@@ -98,9 +98,10 @@ In short, where possible each owner gets:
   ``config_entry_id is None``, meaning the helper is
   viewable in the UI but must be edited in YAML
 
-YAML-defined helpers without an edit URL display a
-"YAML-only, edit <file>" note in their notification
-body so users know where to look.
+YAML-defined helpers without an edit URL render a
+``(YAML-only)`` tag on the ``Entity:`` line so users
+know to look at the ``Source:`` line below for the
+filename.
 
 Known limitations
 -----------------
@@ -148,6 +149,7 @@ from ..helpers import (
     domain_entities_link,
     domain_entities_url,
     entities_dashboard_url,
+    file_editor_link,
     integration_link,
     matches_pattern,
     md_escape,
@@ -418,6 +420,16 @@ class Config:
     # so that pure-Python tests (no live HA registry to
     # resolve a friendly name) don't have to supply it.
     instance_id: str | None = None
+    # The ``core_configurator`` add-on's per-installation
+    # ingress URL prefix (``/api/hassio_ingress/<uuid>/``)
+    # when the add-on is installed; empty string otherwise.
+    # Threaded through to ``file_editor_link``, which
+    # decides whether each ``Source:`` line renders the
+    # filename as a clickable link or a plain backtick
+    # path. The handler probes the live state and passes
+    # it through at config-build time so the logic module
+    # stays pure.
+    file_editor_ingress_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -1714,6 +1726,8 @@ def _collect_findings(
 def _build_notification_body(
     owner: Owner,
     findings: list[Finding],
+    *,
+    file_editor_ingress_url: str = "",
 ) -> str:
     """Build the notification body for an owner with findings.
 
@@ -1721,9 +1735,12 @@ def _build_notification_body(
 
         Owner: <block-path> - <friendly-name>    (or variants;
                                                   see _owner_display_name)
-        Entity: `<eid>` [(YAML-only, edit <file>)]
+        Entity: `<eid>` [(YAML-only)]
         Integration: <integration>               (omitted when None)
-        File: `<path>`
+        Source: `<path>`                         (or markdown link to
+                                                  the file-editor add-on
+                                                  when present and the
+                                                  path is user-editable)
 
         Broken references (N):
         - `<value>` -- <context>
@@ -1739,14 +1756,16 @@ def _build_notification_body(
     filter -- users should never see an integration
     name they can't paste into the blueprint input.
 
-    The ``(YAML-only, edit <file>)`` note is suppressed
-    whenever the owner has a ``url_path`` -- in that case
-    the clickable ``Owner:`` link takes the user to HA's
-    UI editor (for example automations/scripts defined
-    in ``automations.yaml``/``scripts.yaml`` with an
-    ``id``/key), and directing them at the YAML file is
-    actively misleading.
+    The ``(YAML-only)`` tag is suppressed whenever the
+    owner has a ``url_path`` -- in that case the
+    clickable ``Owner:`` link takes the user to HA's UI
+    editor (for example automations / scripts defined
+    in ``automations.yaml`` / ``scripts.yaml`` with an
+    ``id`` / key) and the YAML-edit nag is misleading.
+    The ``Source:`` line still shows the path for users
+    who prefer to edit the YAML directly.
     """
+
     lines: list[str] = []
     header_label = md_escape(_owner_header_label(owner))
     if owner.url_path:
@@ -1761,18 +1780,18 @@ def _build_notification_body(
     # with an ``id``/key -- those get a UI edit URL). When
     # an edit URL is present the Owner: link already
     # takes the user to the UI editor, so suppress the
-    # "edit the YAML file" nag. The File: line below
-    # still shows the path for YAML-first editors.
+    # ``(YAML-only)`` tag that would otherwise nag the user
+    # to open the file by hand. The Source: line below
+    # always shows the path so a YAML-first editor still
+    # has it.
     show_yaml_note = owner.yaml_only and owner.url_path is None
     if owner.entity_id:
         entity_line = f"Entity: `{owner.entity_id}`"
         if show_yaml_note:
-            entity_line += f" (YAML-only, edit `{owner.source_file}`)"
+            entity_line += " (YAML-only)"
         lines.append(entity_line)
     elif show_yaml_note:
-        lines.append(
-            f"(YAML-only, edit `{owner.source_file}`)",
-        )
+        lines.append("(YAML-only)")
 
     if owner.integration:
         # URL target doesn't render markdown, so the
@@ -1783,7 +1802,11 @@ def _build_notification_body(
             + integration_link(owner.integration, owner.integration)
         )
 
-    lines.append(f"File: `{owner.source_file}`")
+    rendered_source = file_editor_link(
+        owner.source_file,
+        file_editor_ingress_url,
+    )
+    lines.append(f"Source: {rendered_source}")
 
     broken = [f for f in findings if not f.disabled]
     disabled = [f for f in findings if f.disabled]
@@ -1859,7 +1882,11 @@ def _build_owner_result(
         # Title carries just the per-owner category; the
         # dispatcher prepends ``<automation_name>: ``.
         title = _owner_display_name(owner)
-        message = _build_notification_body(owner, findings)
+        message = _build_notification_body(
+            owner,
+            findings,
+            file_editor_ingress_url=config.file_editor_ingress_url,
+        )
     return OwnerResult(
         owner=owner,
         has_issue=has_issue,
@@ -3079,6 +3106,28 @@ def _unused_deviceless_notification_id(
     )
 
 
+def _deviceless_source_yaml_file(
+    entity: UnusedDevicelessEntity,
+) -> str | None:
+    """YAML filename for an entity, or ``None`` when not YAML-defined.
+
+    Returns the ``_PLATFORM_TO_YAML_FILE`` lookup result when
+    the entity is YAML-defined (``config_entry_id is None``)
+    and its platform is in the built-in map. Returns ``None``
+    for config-entry-owned entities and YAML-defined entities
+    on platforms outside the map (where the source is not a
+    single auto-detectable file).
+
+    Used to decide whether the rollup ``Source:`` label is a
+    real file path that can be linked into the file-editor
+    add-on, vs a config-entry title or generic fallback that
+    can't.
+    """
+    if entity.config_entry_id is None:
+        return _PLATFORM_TO_YAML_FILE.get(entity.platform)
+    return None
+
+
 def _deviceless_source_label(
     entity: UnusedDevicelessEntity,
 ) -> str:
@@ -3095,11 +3144,31 @@ def _deviceless_source_label(
     """
     if entity.config_entry_title:
         return entity.config_entry_title
-    if entity.config_entry_id is None:
-        yaml_file = _PLATFORM_TO_YAML_FILE.get(entity.platform)
-        if yaml_file:
-            return yaml_file
+    yaml_file = _deviceless_source_yaml_file(entity)
+    if yaml_file:
+        return yaml_file
     return "(YAML-defined; file not auto-detected)"
+
+
+def _render_deviceless_source(
+    entity: UnusedDevicelessEntity,
+    file_editor_ingress_url: str,
+) -> str:
+    """Render the rollup ``Source:`` label.
+
+    YAML-defined entities on a platform in the auto-detect
+    map have a real file path; hand it to ``file_editor_link``
+    and let the helper decide whether to emit a clickable
+    link (add-on present + path is user-editable) or a plain
+    backtick path. Config-entry titles and the generic
+    "(YAML-defined; file not auto-detected)" fallback aren't
+    file paths and stay backtick-only regardless of the
+    add-on.
+    """
+    yaml_file = _deviceless_source_yaml_file(entity)
+    if yaml_file is not None:
+        return file_editor_link(yaml_file, file_editor_ingress_url)
+    return f"`{md_escape(_deviceless_source_label(entity))}`"
 
 
 def _deviceless_entity_label(entity: UnusedDevicelessEntity) -> str:
@@ -3118,7 +3187,7 @@ def _deviceless_entity_label(entity: UnusedDevicelessEntity) -> str:
       filter link narrowed to that helper's config entry.
     - YAML-only deviceless entities (no ``config_entry_id``) -> bare
       ``code-spanned`` entity_id. HA's frontend has no per-entity URL
-      filter, and the rollup's ``source:`` label already names the file
+      filter, and the rollup's ``Source:`` label already names the file
       / definition, so a "search the entities list" prose link would
       add noise without help.
 
@@ -3209,10 +3278,13 @@ def _build_unused_deviceless_notifications(
         lines.append("")
         for e in items_sorted:
             tag = " *(disabled)*" if e.disabled else ""
-            source_label = md_escape(_deviceless_source_label(e))
+            source_render = _render_deviceless_source(
+                e,
+                config.file_editor_ingress_url,
+            )
             head = _deviceless_entity_label(e)
             lines.append(
-                f"- {head}{tag} -- source: `{source_label}`",
+                f"- {head}{tag} -- Source: {source_render}",
             )
         out.append(
             PersistentNotification(

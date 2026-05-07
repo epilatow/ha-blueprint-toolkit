@@ -24,9 +24,8 @@ to each orphan's integration-filtered entities page for deletion.
 - Per-owner persistent notifications with clickable URLs into the HA config UI
   where possible (automation editor, script editor, helpers page, dashboard
   path)
-- YAML-only helpers are flagged in the notification body with a "YAML-only,
-  edit `<file>`" note so users know to open their editor rather than waiting
-  for a broken link
+- YAML-only helpers are tagged `(YAML-only)` in the notification body so users
+  know to look at the `Source:` line for the filename to edit
 - Three complementary detection mechanisms (structural walk, Jinja AST, string
   sniff) with a service-name negative truth set to eliminate false positives
 - Optional detection of references to disabled-but- existing entities
@@ -47,6 +46,16 @@ to each orphan's integration-filtered entities page for deletion.
   integrations (also silences unused-devices and unused-deviceless-entities)
 - Notification cap to limit the number of per-owner notifications
 - Optional debug logging
+
+## Requirements
+
+None.
+
+**Optional**: the **File editor** add-on (`core_configurator`, HA OS /
+Supervised installs only). When installed, YAML filenames in notification
+bodies render as clickable links that open the file in the editor; without the
+add-on the same bodies show the filename as a plain `code-spanned` path. See
+**File editor add-on links** below.
 
 ## Usage
 
@@ -101,7 +110,7 @@ reference. Notifications are one per owner with a header that includes:
 - An `Integration:` line when the owner belongs to an adapter that knows its
   integration (automation, script, template, customize, lovelace, or a config
   entry domain)
-- A `File:` line with the source path
+- A `Source:` line with the source path
 
 Block-path format:
 
@@ -135,16 +144,19 @@ edited via YAML -- typically when they're defined in a YAML block like
 config flow. The watchdog detects these by checking the entity registry's
 `config_entry_id` field: entries with `config_entry_id: null` are YAML-only.
 
-When an owner is YAML-only, its notification body includes a note like:
+When an owner is YAML-only, its notification body tags the `Entity:` line with
+`(YAML-only)` so users know to look at the `Source:` line below for the
+filename:
 
 ```text
-Entity: `sensor.air_filters_energy_monthly`
-  (YAML-only, edit `utility_meters.yaml`)
+Entity: `sensor.air_filters_energy_monthly` (YAML-only)
+Source: `utility_meters.yaml`
 ```
 
 No clickable URL is generated because HA has no edit page for these helpers.
-Open the YAML file in your editor and fix the reference there, then reload the
-integration or restart HA.
+Open the YAML file in your editor (the `Source:` link opens it directly when
+the **File editor** add-on is installed; otherwise the path renders as plain
+text), fix the reference, then reload the integration or restart HA.
 
 ### Plants and other legacy YAML integrations
 
@@ -297,7 +309,7 @@ deviceless entity whose registry row carries a `config_entry_id` (UI helpers,
 `utility_meter`, `template` helpers, etc.) links to the entities page filtered
 to that helper's config entry. Pure YAML-only deviceless entities (no
 `config_entry_id`) stay as bare code-spanned entity_ids -- HA has no
-per-entity URL filter for those, and the `source:` label already points at the
+per-entity URL filter for those, and the `Source:` label already points at the
 YAML file.
 
 Skip-lists baked in regardless of opt-in (these platforms / domains are
@@ -342,6 +354,37 @@ evaluation runs. Each run re-creates active notifications (to update content
 if findings changed), which updates their timestamps. Since all creates happen
 within milliseconds, the panel's display order is effectively random. The same
 owners are shown -- only the panel ordering varies.
+
+### File editor add-on links
+
+Every `Source: <path>` line in a RW notification body renders the same way:
+plain `` `<path>` `` text by default, or a markdown link to the configurator
+when the **File editor** add-on (slug `core_configurator`) is detected as
+installed. The single render path means broken-references owner bodies, the
+unused-deviceless rollup bullets, and any future RW notification carrying a
+file path all behave identically without per-call-site decisions.
+
+Two carve-outs always render plain (no link), even when the add-on is present:
+
+- `.storage/<x>` paths in broken-references bodies -- HA-managed JSON files
+  that HA's own docs warn against hand-editing.
+- Non-file labels in rollups (config-entry titles like `My Kitchen Helper`,
+  the generic `(YAML-defined; file not auto-detected)` fallback). These aren't
+  file paths and have no useful link target.
+
+Detection is automatic -- there's no blueprint toggle to flip. RW probes the
+supervisor on every run for the add-on's per-installation ingress URL
+(`/api/hassio_ingress/<uuid>/`); install or uninstall events reflect on the
+next scan without an HA restart. On HA Container / Core (no Supervisor) the
+probe returns the empty string and filenames stay plain.
+
+The link points at the direct ingress URL rather than the
+`/core_configurator/` panel URL because HA's panel route consumes query
+strings on its way through the frontend router. The configurator's `loadfile`
+parameter only fires when the URL reaches the add-on's HTTP server intact.
+
+The add-on doesn't support line-number deep-linking, so the link opens the
+file at the top; the user still scrolls / searches to the relevant block.
 
 ### Unmatched include / exclude directives
 

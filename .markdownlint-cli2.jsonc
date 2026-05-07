@@ -11,7 +11,9 @@
     "node_modules/",
     ".venv/",
     ".pytest_cache/",
+    ".claude/",
     "tmp/",
+    "**/tmp/",
     "**/.cache/",
     "docs/"
   ]

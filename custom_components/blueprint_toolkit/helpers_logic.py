@@ -30,6 +30,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote as _urlquote
 
 from .const import DOMAIN
 
@@ -232,6 +233,15 @@ def md_escape(s: str) -> str:
 #       automation editor.
 # - ``/config/script/edit/<unique_id>``
 #       script editor.
+# - ``/core_configurator/?loadfile=<path>``
+#       file-editor add-on (HA OS / Supervised), opens the
+#       named file at the top. ``<path>`` is filesystem-
+#       relative to the configurator's BASEPATH (typically
+#       ``/config/``). Line-number deep-linking is not
+#       supported by the add-on. Only useful when the
+#       ``core_configurator`` add-on is installed -- the
+#       handler probes HA's hassio API and only emits this
+#       link form when present.
 #
 # The ``*_url(...)`` functions below return raw URL strings.
 # Most call sites should use the matching public
@@ -401,6 +411,91 @@ def script_dashboard_link(name: str) -> str:
 def dashboard_link(name: str, slug: str) -> str:
     """Markdown link to a Lovelace dashboard view by slug."""
     return f"[{md_escape(name)}]({dashboard_url(slug)})"
+
+
+def _path_supports_file_editor_link(source_file: str) -> bool:
+    """True when ``source_file`` is the kind of path that gets a link.
+
+    HA-managed JSON state under ``.storage/`` is documented as
+    not-for-hand-editing; pointing the configurator at one of
+    those paths puts the user on exactly the surface HA tells
+    them to avoid. Every other relative path under
+    ``/config/`` (the typical RW source-file shapes:
+    ``automations.yaml``, ``packages/foo.yaml``, etc.) is
+    user-editable.
+    """
+    return not source_file.startswith(".storage/")
+
+
+def file_editor_link(
+    source_file: str,
+    file_editor_ingress_url: str,
+) -> str:
+    """Render ``source_file`` for inclusion in a notification body.
+
+    The single rendering helper for source-file paths in
+    notifications: callers always invoke it and the helper
+    decides whether to emit a clickable link to the file-
+    editor add-on or a plain backtick-wrapped path.
+
+    Returns the markdown link form
+    ``[`<file>`]({ingress_url}?loadfile=<file>)`` when ALL
+    of:
+
+    - ``file_editor_ingress_url`` is non-empty (the handler
+      detected the ``core_configurator`` add-on and read
+      its per-installation ingress URL, e.g.
+      ``/api/hassio_ingress/9V5z.../``). HA's panel route
+      (``/core_configurator/``) consumes query strings on
+      the way through the frontend router, so the link
+      MUST point at the direct ingress URL.
+    - ``source_file`` looks user-editable -- specifically
+      not under ``.storage/`` (HA-managed JSON, not for
+      hand-edits).
+
+    Otherwise returns the bare ``\\`<file>\\``` form so a
+    user without the add-on still sees the path in a code
+    span. Centralising the decision here keeps call sites
+    agnostic of whether links are supported in the current
+    environment.
+
+    The path is URL-quoted (``urllib.parse.quote`` with
+    ``safe="/"``) so ``&``, ``#``, ``?``, spaces, and other
+    query-string metacharacters survive the trip into the
+    add-on. Path separators stay un-quoted so the
+    configurator can resolve nested paths
+    (``packages/foo.yaml``). Line-number deep-linking is
+    not supported by the add-on (its HTML init code never
+    calls Ace's ``editor.gotoLine``); the link opens the
+    file at the top.
+
+    Both branches wrap the path in backticks (a markdown
+    code span). Code spans suppress markdown processing
+    for the common metacharacters (``[``, ``]``, ``\\``,
+    ``*``, ``_``), so neither branch needs ``md_escape``
+    -- HA's ``<ha-markdown>`` renderer (markdown-it)
+    treats the visible text as opaque code-span content.
+    The ``[`` outside the link label in the link branch
+    is structural markdown, not user input, and isn't a
+    candidate for escaping. The only failure mode in
+    either branch is a path that contains a literal
+    backtick: that closes the code span early. RW's
+    owner ``source_file`` values (filesystem paths under
+    ``/config/`` from HA's parsed YAML / JSON) don't
+    carry backticks in practice.
+
+    The string argument keeps this helper pure (no HA
+    runtime dependency); the handler probes
+    ``file_editor_addon_ingress_url(hass)`` once per
+    evaluation and threads the result through.
+    """
+    if file_editor_ingress_url and _path_supports_file_editor_link(source_file):
+        url = (
+            f"{file_editor_ingress_url}"
+            f"?loadfile={_urlquote(source_file, safe='/')}"
+        )
+        return f"[`{source_file}`]({url})"
+    return f"`{source_file}`"
 
 
 def deviceless_entity_link(name: str, entity_id: str) -> str:
@@ -1202,6 +1297,7 @@ __all__ = [
     "domain_entities_link",
     "domain_entities_url",
     "entities_dashboard_url",
+    "file_editor_link",
     "format_notification",
     "format_timestamp",
     "instance_id_for_config_error",
