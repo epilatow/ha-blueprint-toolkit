@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "packaging",
 # ]
 # ///
@@ -40,7 +38,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import CodeQualityBase
 from packaging.version import Version
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -143,21 +140,6 @@ class TestManifestFormatting:
             f"\nFirst 200 chars of file:\n{raw[:200]!r}"
             f"\nFirst 200 chars expected:\n{canonical[:200]!r}"
         )
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_manifest.py",
-        "scripts/bump-manifest-version.py",
-        "scripts/release.py",
-    ]
-    # mypy follows the conftest import and trips on
-    # pre-existing type-ignore residue in tests/conftest.py
-    # under this script's particular dependency set; that's
-    # an existing-codebase concern outside the manifest
-    # tests' scope. Ruff covers the bulk of code-quality
-    # enforcement for these two files.
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

@@ -4,8 +4,6 @@
 # dependencies = [
 #   "pytest",
 #   "pytest-cov",
-#   "ruff",
-#   "mypy",
 #   "PyYAML>=6",
 #   "Jinja2>=3",
 #     "pytest-homeassistant-custom-component==0.13.324",
@@ -25,7 +23,6 @@ REPO_ROOT = Path(__file__).parent.parent
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # noqa: E402, E501
     _UNUSED_DEVICE_SKIP_INTEGRATIONS,
@@ -4685,19 +4682,6 @@ class TestRunEvaluationExtendedRefs:
         )
         ev = run_evaluation(str(tmp_path), cfg, ts, 0)
         assert ev.unused_deviceless_count == 0
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/reference_watchdog/__init__.py",
-        "custom_components/blueprint_toolkit/reference_watchdog/handler.py",
-        "custom_components/blueprint_toolkit/reference_watchdog/logic.py",
-        "tests/test_reference_watchdog_logic.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/reference_watchdog/logic.py",
-        "custom_components/blueprint_toolkit/reference_watchdog/handler.py",
-    ]
 
 
 if __name__ == "__main__":

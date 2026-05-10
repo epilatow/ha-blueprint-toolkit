@@ -814,13 +814,21 @@ minimum:
 
 ### Code quality
 
-- Every handler / logic / new module is covered by a
-  `TestCodeQuality(CodeQualityBase)` class somewhere (typically the
-  per-handler logic test) -- `ruff_targets` for lint + format, `mypy_targets`
-  for strict.
-- Both `logic.py` and `handler.py` go in `tests/test_<service>_logic.py`'s
-  `TestCodeQuality.mypy_targets` so CI enforces mypy on every change. Manual
-  one-off mypy runs go stale.
+- Every `.py` file under the repo is automatically picked up by the
+  parametrized `_repo_shared/tests/test_code_quality.py` sweep -- new files
+  need no pyproject edit to be lint + format + `mypy --strict` checked.
+- HA-coupled module files (`__init__.py`, `config_flow.py`, `repairs.py`,
+  `helpers_lifecycle.py`, `helpers_runtime.py`) carry a PEP 723 `# /// script`
+  block declaring
+  `dependencies = ["pytest-homeassistant-custom-component==..."]` plus
+  `requires-python = ">=3.14"`. `resolve_files` reads these blocks and the
+  per-file mypy run spawns
+  `uvx --python 3.14 --with <hacc-pin> mypy --strict <file>` so
+  `homeassistant.*` resolves against real HA types. When adding a new
+  HA-coupled module file, add the same PEP 723 block.
+- Files without an HA dependency need no PEP 723 block; they type-check under
+  plain `mypy --strict` in the project venv, with `[[tool.mypy.overrides]]`
+  rules in `pyproject.toml` covering voluptuous / jinja2 / socketio / yaml.
 - No `# mypy: ignore-errors` in handler.py before considering complete.
 
 ## Naming conventions

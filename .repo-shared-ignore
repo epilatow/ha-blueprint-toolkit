@@ -1,0 +1,8 @@
+# Customized HA-specific docs that diverge from the shared placeholder
+# masters under shared/files/. DEVELOPMENT.md / DEVELOPMENT_AGENT.md
+# carry hundreds of lines of HA-specific conventions; CLAUDE.md adds
+# the HA-specific @AUTOMATIONS.md include on top of the shared
+# template.
+CLAUDE.md
+DEVELOPMENT.md
+DEVELOPMENT_AGENT.md

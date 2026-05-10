@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -28,7 +26,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.reconciler import (  # noqa: E402
     BUNDLED_MARKER,
@@ -493,19 +490,6 @@ class TestDataclassShapes:
         c = Conflict(destination=Path("/x"), kind="regular_file", details="")
         with pytest.raises((AttributeError, Exception)):
             c.kind = "unknown_symlink"  # type: ignore[misc]
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/reconciler.py",
-        "custom_components/blueprint_toolkit/installer.py",
-        "custom_components/blueprint_toolkit/__init__.py",
-        "tests/test_reconciler.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/reconciler.py",
-        "custom_components/blueprint_toolkit/installer.py",
-    ]
 
 
 if __name__ == "__main__":

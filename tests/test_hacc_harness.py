@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -45,7 +43,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 import yaml
-from conftest import CodeQualityBase
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -140,17 +137,6 @@ class TestBlueprintParse:
                 ha_yaml.load_yaml(str(path))
             except Exception as e:  # noqa: BLE001
                 pytest.fail(f"{path.name} failed HA yaml load: {e}")
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_hacc_harness.py",
-    ]
-    # Mypy strict on a pytest-HACC test would require type
-    # stubs for the homeassistant package, which ships
-    # none. Skip mypy on this file -- the imports are
-    # exercised at runtime by the tests themselves.
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -24,7 +22,6 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.sensor_threshold_switch_controller.logic import (  # noqa: E402, E501
     Action,
@@ -1424,18 +1421,6 @@ class TestHandleServiceCall:
             ),
         )
         assert result.state_dict["auto_off_started_at"] is not None
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/sensor_threshold_switch_controller/__init__.py",
-        "custom_components/blueprint_toolkit/sensor_threshold_switch_controller/logic.py",
-        "tests/test_sensor_threshold_switch_controller_logic.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/sensor_threshold_switch_controller/logic.py",
-        "custom_components/blueprint_toolkit/sensor_threshold_switch_controller/handler.py",
-    ]
 
 
 if __name__ == "__main__":

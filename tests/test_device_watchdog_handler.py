@@ -5,8 +5,6 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "voluptuous",
 #     "PyYAML",
 #     "pytest-homeassistant-custom-component==0.13.324",
@@ -51,7 +49,6 @@ from _handler_test_base import (  # noqa: E402
 from conftest import (  # noqa: E402
     BlueprintDefaultsRoundTripBase,
     BlueprintSchemaDriftBase,
-    CodeQualityBase,
     HandlerArgparseGuardsBase,
 )
 
@@ -655,14 +652,6 @@ class TestArgparseGuards(HandlerArgparseGuardsBase):
 
     handler = handler
     valid_payload = _valid_argparse_payload()
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/device_watchdog/handler.py",
-        "tests/test_device_watchdog_handler.py",
-    ]
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

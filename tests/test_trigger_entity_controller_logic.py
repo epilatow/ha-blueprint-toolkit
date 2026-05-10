@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -22,7 +20,6 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.trigger_entity_controller.logic import (  # noqa: E402, E501
     ActionType,
@@ -1304,21 +1301,6 @@ class TestEndToEndScenarios:
         )
         assert r2.action == ActionType.NONE
         assert r2.auto_off_at is not None
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_trigger_entity_controller_logic.py",
-        "custom_components/blueprint_toolkit/trigger_entity_controller/logic.py",
-        "custom_components/blueprint_toolkit/trigger_entity_controller/__init__.py",
-        "custom_components/blueprint_toolkit/trigger_entity_controller/handler.py",
-        "custom_components/blueprint_toolkit/helpers.py",
-    ]
-    mypy_targets: list[str] = [
-        "custom_components/blueprint_toolkit/trigger_entity_controller/logic.py",
-        "custom_components/blueprint_toolkit/trigger_entity_controller/handler.py",
-        "custom_components/blueprint_toolkit/helpers.py",
-    ]
 
 
 if __name__ == "__main__":

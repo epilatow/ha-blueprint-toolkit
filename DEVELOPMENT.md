@@ -68,8 +68,17 @@ only reads brand assets from the brands CDN.
   `conftest.run_tests()`.
 - Use pytest.
 - Use `autospec=True` for all mocks.
-- Include a `TestCodeQuality(CodeQualityBase)` class that specifies
-  `ruff_targets` and `mypy_targets` for the module under test.
+- Code-quality coverage (ruff + mypy --strict) is parametrized per discovered
+  `.py` file. The delivered `_repo_shared/tests/test_code_quality.py` walks
+  the repo via `discover_python_files` and resolves each file's mypy deps from
+  its PEP 723 `# /// script` block. `repo-shared init` injects a `testpaths`
+  entry into `pyproject.toml` pointing at `_repo_shared/tests`, so a bare
+  `uv run pytest` picks the shared tests up alongside this repo's own. New
+  files are picked up automatically -- if they need a non-default mypy env
+  (e.g. HA-coupled module files that need
+  `pytest-homeassistant-custom-component` resolvable for real
+  `homeassistant.*` types), add a `# /// script` block under the file's
+  docstring declaring those deps + `requires-python`.
 
 ### Comments
 
@@ -193,11 +202,13 @@ under `bundled/docs/` directly during dev work.
 
 ## Markdown style
 
-Two complementary tools enforce markdown style:
+Two complementary tools enforce markdown style; both are wired up via the
+shared test bases under `_repo_shared/tests/`:
 
-- **`mdformat`** is the canonical formatter. Pinned via PEP 723 deps in
-  `tests/test_markdown_format.py`; runs `mdformat --wrap=78 --number --check`
-  with the `mdformat-gfm` and `mdformat-tables` plugins. Owns every mechanical
+- **`mdformat`** is the canonical formatter. The shared `MdformatCheckBase`
+  runs `mdformat --wrap=78 --number --check` with the `mdformat-gfm` and
+  `mdformat-tables` plugins, gated by
+  `_repo_shared/tests/test_markdown_format.py`. Owns every mechanical
   formatting decision: line wrap at 78 chars, ordered-list numbering,
   bullet/emphasis/strong markers, blank-line spacing, table alignment. To
   re-canonicalise a doc after editing:
@@ -210,8 +221,10 @@ Two complementary tools enforce markdown style:
 - **`markdownlint-cli2`** covers content rules `mdformat` can't see: required
   fence languages (MD040), broken anchor links (MD051), reference-link
   consistency (MD052/MD053), missing alt text (MD045), duplicate headings
-  (MD024), and similar. Config lives in `.markdownlint.json`; enforced by
-  `tests/test_markdownlint.py`.
+  (MD024), and similar. Config lives in `.markdownlint.json` (a symlink into
+  `_repo_shared/dotfiles/` -- the shared markdown infra is adopted as-is);
+  enforced by the shared `MarkdownlintCheckBase` at
+  `_repo_shared/tests/test_markdownlint.py`.
 
 The two tools agree on every formatting rule by design -- `mdformat`'s
 defaults match the formatting rules in `.markdownlint.json` (dash bullets,
@@ -355,12 +368,24 @@ the script exits cleanly without creating a duplicate release.
 
 ### Code quality
 
-Lint, format, and type checks are included in each test file's
-`TestCodeQuality` class and run automatically as part of the test suite:
+Lint, format, and type checks run as the parametrized
+`_repo_shared/tests/test_code_quality.py` suite -- one parametrize case per
+discovered `.py` file. `discover_python_files` walks the repo (skipping
+`_repo_shared/`, `.venv/`, `__pycache__/`, etc.) and `resolve_files` resolves
+each file's mypy `extra_deps` + `python_version` from its PEP 723
+`# /// script` block when present. For files that need real `homeassistant.*`
+types (the HA-coupled module files plus the HACC test files), the block
+declares `dependencies = ["pytest-homeassistant-custom-component==..."]` plus
+`requires-python = ">=3.14"`, and the test runner spawns a fresh
+`uvx --python 3.14 --with <hacc-pin>` mypy invocation against that file.
+Pure-logic targets without a block fall through to plain `mypy --strict` in
+the project venv -- `pyproject.toml`'s `[[tool.mypy.overrides]]`
+ignore-missing-imports rules handle the rest (voluptuous, jinja2, socketio,
+etc.).
 
-- `test_ruff_lint` -- ruff linting
-- `test_ruff_format` -- ruff formatting
-- `test_mypy_strict` -- mypy strict type checking
+`repo-shared init` injected `testpaths = ["tests", "_repo_shared/tests"]` into
+`[tool.pytest.ini_options]`, so a bare `uv run pytest` runs both this repo's
+own tests and the shared suite in one invocation.
 
 ### Standalone checks
 
@@ -369,10 +394,11 @@ uvx ruff check .
 uvx ruff format .
 ```
 
-mypy is run via each test file's `TestCodeQuality(CodeQualityBase)` class,
-which installs Home Assistant + voluptuous via PEP 723 inline deps. Bare
-`uvx mypy` from a checkout without those deps cannot resolve
-`homeassistant.*`; run `./tests/run_all.py` instead.
+Bare `uvx mypy` from a checkout cannot resolve `homeassistant.*` without HA
+installed; run `uv run pytest _repo_shared/tests` instead, or invoke a single
+file via `pytest _repo_shared/tests/test_code_quality.py -k <path/to/file>`.
+`./tests/run_all.py` exercises the same shared phase at the end of its
+per-handler test sweep.
 
 ## HA deployment testing
 

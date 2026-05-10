@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pyyaml",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
@@ -22,7 +20,6 @@ REPO_ROOT = Path(__file__).parent.parent
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.zwave_route_manager.bridge import (  # noqa: E402, E501
     NodeInfo,
@@ -1894,21 +1891,6 @@ class TestCircuitBreakerNext:
         )
         assert new_state == prior
         assert transition is None
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/zwave_route_manager/__init__.py",
-        "custom_components/blueprint_toolkit/zwave_route_manager/bridge.py",
-        "custom_components/blueprint_toolkit/zwave_route_manager/handler.py",
-        "custom_components/blueprint_toolkit/zwave_route_manager/logic.py",
-        "tests/test_zwave_route_manager_logic.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/zwave_route_manager/bridge.py",
-        "custom_components/blueprint_toolkit/zwave_route_manager/handler.py",
-        "custom_components/blueprint_toolkit/zwave_route_manager/logic.py",
-    ]
 
 
 if __name__ == "__main__":

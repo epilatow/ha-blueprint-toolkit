@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -46,7 +44,6 @@ from typing import TYPE_CHECKING, Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -820,14 +817,6 @@ class TestReloadListener:
 # --------------------------------------------------------
 # CodeQuality
 # --------------------------------------------------------
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_trigger_entity_controller_integration.py",
-    ]
-    mypy_targets: list[str] = []
-
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))

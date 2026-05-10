@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "python-socketio",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
@@ -38,7 +36,6 @@ def _run(coro: Coroutine[Any, Any, T]) -> T:
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.zwave_route_manager.bridge import (  # noqa: E402, E501
     API_ASSIGN_PRIORITY_SUC_RETURN_ROUTE,
@@ -881,16 +878,6 @@ class TestDataclassRoundtrip:
             priority_suc_return_route=None,
         )
         assert ni.node_id == 1
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/zwave_route_manager/bridge.py",
-        "tests/test_zwave_route_manager_bridge.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/zwave_route_manager/bridge.py",
-    ]
 
 
 if __name__ == "__main__":

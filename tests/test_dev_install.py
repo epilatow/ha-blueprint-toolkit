@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "types-PyYAML",
 # ]
 # ///
@@ -29,7 +27,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import CodeQualityBase
 
 REPO_ROOT = Path(__file__).parent.parent
 INTEGRATION_SRC = REPO_ROOT / "custom_components" / "blueprint_toolkit"
@@ -331,16 +328,6 @@ class TestArgErrors:
         )
         assert r.returncode == 2
         assert "--ha-config not a directory" in r.stderr
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/scripts/dev-install.py",
-        "tests/test_dev_install.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/scripts/dev-install.py",
-    ]
 
 
 if __name__ == "__main__":

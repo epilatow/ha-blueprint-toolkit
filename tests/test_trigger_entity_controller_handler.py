@@ -5,8 +5,6 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "voluptuous",
 #     "PyYAML",
 #     "pytest-homeassistant-custom-component==0.13.324",
@@ -52,7 +50,6 @@ from _handler_test_base import (  # noqa: E402
 from conftest import (  # noqa: E402
     BlueprintDefaultsRoundTripBase,
     BlueprintSchemaDriftBase,
-    CodeQualityBase,
     HandlerArgparseGuardsBase,
 )
 
@@ -491,14 +488,6 @@ class TestArgparseGuards(HandlerArgparseGuardsBase):
 # --------------------------------------------------------
 # CodeQuality
 # --------------------------------------------------------
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_trigger_entity_controller_handler.py",
-    ]
-    mypy_targets: list[str] = []
-
 
 if __name__ == "__main__":
     # ``-p no:homeassistant`` disables pytest-HACC's plugin,

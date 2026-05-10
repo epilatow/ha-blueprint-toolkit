@@ -5,8 +5,6 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -52,7 +50,6 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -2710,22 +2707,6 @@ class TestHelpersLogicImportsInIsolation:
                 sys.modules[
                     "custom_components.blueprint_toolkit.helpers_logic"
                 ] = helpers_logic_mod
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_helpers_lifecycle.py",
-        "custom_components/blueprint_toolkit/helpers.py",
-        "custom_components/blueprint_toolkit/helpers_logic.py",
-        "custom_components/blueprint_toolkit/helpers_runtime.py",
-        "custom_components/blueprint_toolkit/helpers_lifecycle.py",
-    ]
-    mypy_targets: list[str] = [
-        "custom_components/blueprint_toolkit/helpers.py",
-        "custom_components/blueprint_toolkit/helpers_logic.py",
-        "custom_components/blueprint_toolkit/helpers_runtime.py",
-        "custom_components/blueprint_toolkit/helpers_lifecycle.py",
-    ]
 
 
 if __name__ == "__main__":

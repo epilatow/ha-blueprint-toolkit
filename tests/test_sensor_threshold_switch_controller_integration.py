@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -33,7 +31,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest  # noqa: E402
 from conftest import (  # noqa: E402
-    CodeQualityBase,
     RecoveryEventsIntegrationBase,
 )
 
@@ -820,13 +817,6 @@ class TestLoadStateBlobMalformed:
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "STSC"
     setup_integration = staticmethod(_setup_integration)
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_sensor_threshold_switch_controller_integration.py",
-    ]
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

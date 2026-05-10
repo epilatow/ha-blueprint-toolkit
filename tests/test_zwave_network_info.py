@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -42,7 +40,6 @@ _SCRIPT_PATH = (
 sys.path.insert(0, str(_SCRIPT_PATH.parent))
 
 import zwave_network_info as zni  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 # --- _parse_numeric ---------------------------------------------
 
@@ -1189,17 +1186,6 @@ class TestRenderTable:
 
 
 # --- Code quality ----------------------------------------------
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/bundled/cli/zwave_network_info.py",
-        "tests/test_zwave_network_info.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/bundled/cli/zwave_network_info.py",
-    ]
-
 
 if __name__ == "__main__":
     from conftest import run_tests

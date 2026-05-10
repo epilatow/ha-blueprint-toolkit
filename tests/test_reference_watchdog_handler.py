@@ -5,8 +5,6 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "voluptuous",
 #     "PyYAML",
 #     "Jinja2>=3",
@@ -48,7 +46,6 @@ from _handler_test_base import (  # noqa: E402
 from conftest import (  # noqa: E402
     BlueprintDefaultsRoundTripBase,
     BlueprintSchemaDriftBase,
-    CodeQualityBase,
     HandlerArgparseGuardsBase,
 )
 
@@ -676,13 +673,6 @@ class TestArgparseGuards(HandlerArgparseGuardsBase):
 
     handler = handler
     valid_payload = _valid_argparse_payload()
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_reference_watchdog_handler.py",
-    ]
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

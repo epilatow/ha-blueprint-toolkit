@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "markdown-it-py==3.0.0",
 #     "types-PyYAML",
 # ]
@@ -39,8 +37,6 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-
-from conftest import CodeQualityBase
 
 REPO_ROOT = Path(__file__).parent.parent
 RENDER_SCRIPT = REPO_ROOT / "scripts" / "render_docs.py"
@@ -200,16 +196,6 @@ class TestCheckDriftDetects:
         render_docs.render_all(src, dst, md)
         diags = render_docs.check_drift(src, dst, md)
         assert diags == []
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "scripts/render_docs.py",
-        "tests/test_docs_rendered.py",
-    ]
-    mypy_targets = [
-        "scripts/render_docs.py",
-    ]
 
 
 if __name__ == "__main__":

@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -25,7 +23,6 @@ _SCRIPT_PATH = (
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     PersistentNotification,
@@ -494,16 +491,6 @@ class TestPrepareNotifications:
             cap_item_label="items",
         )
         assert [r.notification_id for r in results] == original_order
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/helpers.py",
-        "tests/test_helpers.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/helpers.py",
-    ]
 
 
 if __name__ == "__main__":

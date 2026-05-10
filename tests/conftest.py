@@ -4,7 +4,6 @@
 import atexit
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -128,86 +127,6 @@ def run_tests(
         pytest_args.append("-v")
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     raise SystemExit(pytest.main(pytest_args))
-
-
-class CodeQualityBase:
-    """Base for per-file code quality checks.
-
-    Subclass as ``TestCodeQuality`` in each test file
-    and set ``ruff_targets`` and ``mypy_targets`` to
-    the files that test file covers.
-    """
-
-    ruff_targets: list[str] = []
-    mypy_targets: list[str] = []
-
-    def test_ruff_lint(self) -> None:
-        """Ruff linter passes on all target files."""
-        for target in self.ruff_targets:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "check",
-                    target,
-                ],
-                cwd=_REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, (
-                f"ruff lint failed on {target}."
-                ' Run "uvx ruff check --fix ."'
-                " to auto-fix.\n\n"
-                f"{result.stdout}{result.stderr}"
-            )
-
-    def test_ruff_format(self) -> None:
-        """Ruff formatting passes on all target files."""
-        for target in self.ruff_targets:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "ruff",
-                    "format",
-                    "--check",
-                    target,
-                ],
-                cwd=_REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, (
-                f"ruff format failed on {target}."
-                ' Run "uvx ruff format ."'
-                " to auto-fix.\n\n"
-                f"{result.stdout}{result.stderr}"
-            )
-
-    def test_mypy_strict(self) -> None:
-        """Mypy strict passes on all target files."""
-        import pytest  # type: ignore[import-not-found]
-
-        if not self.mypy_targets:
-            pytest.skip("no mypy targets")
-        for target in self.mypy_targets:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "mypy",
-                    target,
-                    "--strict",
-                ],
-                cwd=_REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, (
-                f"mypy failed on {target}.\n\n{result.stdout}{result.stderr}"
-            )
 
 
 # --------------------------------------------------------
@@ -364,9 +283,7 @@ class BlueprintDefaultsRoundTripBase(BlueprintSchemaDriftBase):
         bp = self._load_blueprint()
         action = self._first_action(bp)
         data: dict[str, Any] = dict(action.get("data") or {})
-        inputs: dict[str, Any] = (
-            (bp.get("blueprint") or {}).get("input") or {}
-        )
+        inputs: dict[str, Any] = (bp.get("blueprint") or {}).get("input") or {}
         schema_keys = self._required_keys(self.handler._SCHEMA)
 
         payload: dict[str, Any] = {}
@@ -451,8 +368,7 @@ class RecoveryEventsIntegrationBase:
 
         tag = f"[{self.service_tag}]"
         assert any(
-            tag in r.getMessage()
-            and "discovered at startup" in r.getMessage()
+            tag in r.getMessage() and "discovered at startup" in r.getMessage()
             for r in caplog.records
         ), (
             f"expected {tag} startup-recovery log line; "
@@ -660,7 +576,8 @@ class HandlerArgparseGuardsBase:
         early-returns; the layer must not be reached.
         """
         invalid = (
-            {} if self.schema_invalid_payload is None
+            {}
+            if self.schema_invalid_payload is None
             else self.schema_invalid_payload
         )
         captured = self._run_argparse_with_capture(invalid)

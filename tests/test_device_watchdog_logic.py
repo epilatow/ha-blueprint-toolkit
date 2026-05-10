@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -22,7 +20,6 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa: E402, E501
     CHECK_ALL,
@@ -1292,18 +1289,6 @@ class TestValidateDwDirectives:
         assert not [u for u in out if u.field == "exclude_device_name_regex"], (
             out
         )
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/device_watchdog/__init__.py",
-        "custom_components/blueprint_toolkit/device_watchdog/logic.py",
-        "tests/test_device_watchdog_logic.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/device_watchdog/logic.py",
-        "custom_components/blueprint_toolkit/device_watchdog/handler.py",
-    ]
 
 
 if __name__ == "__main__":

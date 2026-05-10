@@ -3,9 +3,48 @@ name = "ha-blueprint-toolkit"
 version = "1.0.0"
 description = "Home Assistant blueprints backed by a testable HA integration"
 requires-python = ">=3.11"
+dependencies = [
+    "epilatow-repo-shared",
+    "pytest",
+]
+
+[tool.uv.sources]
+epilatow-repo-shared = { git = "https://github.com/epilatow/repo-shared", rev = "6a008dc01c79947f820fd25bc9e9cce7e0a0f9e0" }
+
+[tool.repo-shared.markdown]
+# Repo's pre-existing markdown was wrapped at 78 (markdownlint.json
+# pre-onboarding had ``line_length: 78``). Pinned here so the
+# shared default 79 doesn't reflow every paragraph in every doc on
+# the next repo-shared bump.
+wrap = 78
+
+[tool.repo-shared.code-quality]
+# Project-wide fallback for files WITHOUT their own PEP 723
+# ``# /// script`` block (the integration package modules and
+# ``conftest.py``). The delivered ``test_code_quality.py`` runs
+# ``mypy --strict`` per file; without this, ``homeassistant.*``,
+# ``voluptuous``, ``yaml``, etc. resolve to ``Any`` and ``--strict``
+# then errors on every ``Any`` subclass / untyped decorator.
+# ``pytest-homeassistant-custom-component`` (HACC) ships HA core as
+# a transitive dependency, so its pin picks which HA API surface
+# mypy validates against. ``==0.13.324`` matches HA 2026.4.x which
+# is what the user's HAOS runs; an unpinned (latest) HACC pulls a
+# newer HA whose API surface no longer matches HAOS's runtime
+# (e.g. ``entity_registry.integration_entities`` got removed
+# between 2026.4 and 2026.5). Bump this pin in lockstep with HAOS.
+# ``types-PyYAML`` adds the stubs PyYAML itself doesn't ship.
+mypy-extra-deps = [
+    "pytest-homeassistant-custom-component==0.13.324",
+    "types-PyYAML",
+]
+# HACC 0.13.324 only installs on Python 3.14; the integration's own
+# code targets 3.11, but analyzing 3.11 code under a 3.14 mypy is
+# a superset and safe. The HACC-coupled test files already pin
+# ``requires-python = ">=3.14"`` in their PEP 723 blocks.
+mypy-python-version = "3.14"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "_repo_shared/tests"]
 markers = [
     "docker: full-stack docker integration tests (slow, opt-in; run with 'pytest -m docker')",
 ]
@@ -36,13 +75,17 @@ select = ["E", "F", "W", "I", "B", "UP"]
 # strict superset (no false negatives).
 python_version = "3.14"
 strict = true
-# No ``files = [...]`` set: the canonical type check runs
-# via each test file's ``TestCodeQuality(CodeQualityBase)``
-# class, which installs HA + voluptuous etc. via PEP 723
-# inline deps and feeds explicit ``mypy_targets`` to mypy.
-# Bare ``uvx mypy`` from a checkout without HA installed
-# will not have the type stubs needed to check the
-# integration; run ``./tests/run_all.py`` instead.
+# No ``files = [...]`` set: the canonical type check is the
+# delivered ``_repo_shared/tests/test_code_quality.py``,
+# which runs ``mypy --strict`` once per discovered file.
+# HA-coupled files install
+# ``pytest-homeassistant-custom-component`` via their PEP 723
+# blocks (project-wide fallback in
+# ``[tool.repo-shared.code-quality] mypy-extra-deps``) so
+# ``homeassistant.*`` resolves against real types. A bare
+# ``uvx mypy`` from a checkout without those deps will not
+# resolve those imports; run ``uv run pytest _repo_shared/tests``
+# instead.
 cache_dir = "/tmp/mypy_cache"
 
 [[tool.mypy.overrides]]
@@ -80,7 +123,6 @@ ignore_missing_imports = true
 # blueprint_toolkit package on its default sys.path.
 module = ["blueprint_toolkit", "blueprint_toolkit.*"]
 ignore_missing_imports = true
-
 
 [[tool.mypy.overrides]]
 # pytest-homeassistant-custom-component ships no ``py.typed``

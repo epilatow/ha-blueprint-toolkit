@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "PyYAML",
 #     "types-PyYAML",
 # ]
@@ -58,7 +56,6 @@ RENDERED_DOCS_DIR = (
 LINK_URL_PREFIX = "/local/blueprint_toolkit/docs/"
 
 sys.path.insert(0, str(REPO_ROOT / "tests"))
-from conftest import CodeQualityBase  # noqa: E402
 
 
 def _expected_link(stem: str) -> str:
@@ -138,13 +135,6 @@ class TestBlueprintsExist:
             "the parametrize fixture would silently produce zero "
             "tests without this guard."
         )
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_blueprint_docs.py",
-    ]
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

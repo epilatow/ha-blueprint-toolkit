@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -43,7 +41,6 @@ from typing import TYPE_CHECKING, Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest  # noqa: E402
-from conftest import CodeQualityBase  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -344,19 +341,6 @@ class TestRemoveEntry:
         # All symlinks we installed should be gone.
         for dest in _expected_destinations(config_dir):
             assert not dest.is_symlink(), f"symlink survived removal: {dest}"
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "tests/test_integration.py",
-        "custom_components/blueprint_toolkit/__init__.py",
-        "custom_components/blueprint_toolkit/config_flow.py",
-        "custom_components/blueprint_toolkit/const.py",
-    ]
-    # mypy strict on HA-importing modules requires HA type
-    # stubs which the package does not ship; we rely on
-    # the runtime tests for confidence.
-    mypy_targets: list[str] = []
 
 
 if __name__ == "__main__":

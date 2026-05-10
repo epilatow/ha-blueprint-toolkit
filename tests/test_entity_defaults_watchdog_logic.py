@@ -4,8 +4,6 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "ruff",
-#     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
 #     "types-PyYAML",
 # ]
@@ -22,7 +20,6 @@ REPO_ROOT = Path(__file__).parent.parent
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from conftest import CodeQualityBase  # noqa: E402
 
 from custom_components.blueprint_toolkit import helpers  # noqa: E402
 from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (  # noqa: E402, E501
@@ -1692,18 +1689,6 @@ class TestCheckAllExposesVisibleAliased:
 
     def test_constant_in_check_all(self) -> None:
         assert DRIFT_CHECK_VISIBLE_ALIASED_ENTITY in CHECK_ALL
-
-
-class TestCodeQuality(CodeQualityBase):
-    ruff_targets = [
-        "custom_components/blueprint_toolkit/entity_defaults_watchdog/__init__.py",
-        "custom_components/blueprint_toolkit/entity_defaults_watchdog/logic.py",
-        "tests/test_entity_defaults_watchdog_logic.py",
-    ]
-    mypy_targets = [
-        "custom_components/blueprint_toolkit/entity_defaults_watchdog/logic.py",
-        "custom_components/blueprint_toolkit/entity_defaults_watchdog/handler.py",
-    ]
 
 
 if __name__ == "__main__":

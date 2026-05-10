@@ -89,9 +89,7 @@ class MockHass:
     """Bare-minimum HA stand-in with services + config_entries."""
 
     services: MockServices = field(default_factory=MockServices)
-    config_entries: MockConfigEntries = field(
-        default_factory=MockConfigEntries
-    )
+    config_entries: MockConfigEntries = field(default_factory=MockConfigEntries)
 
 
 class FakeServiceCall:
