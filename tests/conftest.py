@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 # Repository root
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -48,8 +50,8 @@ atexit.register(_cleanup_all_caches)
 
 
 def pytest_sessionfinish(
-    session,  # type: ignore[no-untyped-def]
-    exitstatus,  # type: ignore[no-untyped-def]
+    session: pytest.Session,
+    exitstatus: int,
 ) -> None:
     """Clean up pycache directories after test session."""
     _cleanup_all_caches()
@@ -73,8 +75,6 @@ def run_tests(
         repo_root: Repository root directory.
     """
     import argparse
-
-    import pytest  # type: ignore[import-not-found]
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -270,7 +270,8 @@ class BlueprintSchemaDriftBase:
                 return node.value
             return None
 
-        _PermissiveLoader.add_multi_constructor("!", _passthrough)
+        # types-PyYAML ships no annotations for add_multi_constructor.
+        _PermissiveLoader.add_multi_constructor("!", _passthrough)  # type: ignore[no-untyped-call]
 
         path = _BUNDLED_BLUEPRINTS_DIR / self.blueprint_filename
         loaded: dict[str, Any] = yaml.load(  # noqa: S506

@@ -2032,7 +2032,7 @@ def _build_rw_yaml_loader() -> type:
     """
     import yaml
 
-    class _RwYamlLoader(yaml.SafeLoader):  # type: ignore[misc]
+    class _RwYamlLoader(yaml.SafeLoader):
         pass
 
     for tag in _HA_YAML_TAGS:

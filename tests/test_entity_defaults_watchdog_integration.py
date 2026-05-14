@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -30,7 +31,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Make custom_components/ importable as a top-level package;
 # the uv-script env doesn't add the repo root to sys.path
@@ -43,6 +44,15 @@ from conftest import (  # noqa: E402
     RecoveryEventsIntegrationBase,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+    )
+
 # pytest-HACC's plugins refuse to load if any
 # homeassistant.components.* module is already in
 # sys.modules. Defer imports until inside the tests.
@@ -51,7 +61,9 @@ SERVICE = "entity_defaults_watchdog"
 
 
 @pytest.fixture(autouse=True)
-def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
+def install_our_integration(
+    hass: HomeAssistant, enable_custom_integrations: None
+) -> Generator[None]:
     """Symlink our integration into pytest-HACC's config_dir."""
     import shutil
 
@@ -75,7 +87,7 @@ def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
         dst.unlink()
 
 
-def _mock_config_entry(**kwargs):  # noqa: ANN001, ANN201
+def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
     from pytest_homeassistant_custom_component.common import (
         MockConfigEntry,
@@ -141,7 +153,7 @@ def _valid_payload(
 class TestArgparseEmitsConfigErrorNotification:
     async def test_missing_required_keys_create_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad call must show up as a persistent notification."""
         await _setup_integration(hass)
@@ -167,7 +179,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_unknown_drift_check_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """Cross-validation rejects values not in CHECK_ALL."""
         await _setup_integration(hass)
@@ -194,7 +206,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_invalid_regex_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad regex line in any of the three regex fields
         surfaces as a per-line config error.
@@ -223,7 +235,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_match_all_regex_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``.*`` matches every entity; the helper rejects
         it with a ``"matches empty string"`` error.
@@ -250,7 +262,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_notification_includes_automation_link_when_known(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """When the automation entity is registered, the
         config-error body starts with the
@@ -286,7 +298,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_successful_call_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         # Bad call first.
@@ -319,7 +331,7 @@ class TestArgparseEmitsConfigErrorNotification:
 class TestServiceLayerScan:
     async def test_successful_scan_creates_diagnostic_state(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A successful scan populates the diagnostic state
         entity at
@@ -370,7 +382,7 @@ class TestServiceLayerScan:
 
     async def test_deviceless_notification_carries_automation_link(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """EDW's deviceless aggregate notification must carry
         the ``Automation: [name](link)`` prefix. Regression
@@ -440,7 +452,7 @@ class TestServiceLayerScan:
 class TestDeviceAttachedDisabledEntityFilter:
     async def test_disabled_entity_excluded_from_device_scan(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """Disabled entities on the device-attached scan
         path must not contribute to drift findings. Parity
@@ -525,7 +537,7 @@ class TestUnmatchedDirectives:
 
     async def test_typoed_integration_fires_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         await hass.services.async_call(
@@ -556,7 +568,7 @@ class TestUnmatchedDirectives:
 
     async def test_toggle_off_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         await hass.services.async_call(
@@ -596,7 +608,7 @@ class TestUnmatchedDirectives:
 
     async def test_each_directive_category_surfaces_end_to_end(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """One representative bullet per directive category
         in a single notification body so a refactor that
@@ -646,7 +658,7 @@ class TestUnmatchedDirectives:
 
     async def test_cap_bypass_unmatched_directives_always_surfaces(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """The unmatched-directives notification rides outside the
         per-device cap.
@@ -750,7 +762,7 @@ class TestUnmatchedDirectives:
 
     async def test_out_of_target_integration_exclude_does_not_false_flag(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """An ``exclude_entities`` entry pointing at a registered
         entity outside ``include_integrations`` is redundant but
@@ -822,17 +834,17 @@ class TestVisibleAliasedScan:
 
     async def _plant_pair(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
         *,
         source_entity_id: str,
         wrapper_entity_id: str,
         wrapper_target_domain: str,
         source_friendly_name: str,
-        source_hidden_by=None,  # noqa: ANN001
-        source_disabled_by=None,  # noqa: ANN001
+        source_hidden_by: er.RegistryEntryHider | None = None,
+        source_disabled_by: er.RegistryEntryDisabler | None = None,
         source_device_id: str | None = None,
-        bad_options=False,
-    ) -> Any:
+        bad_options: bool = False,
+    ) -> MockConfigEntry:
         """Plant a switch_as_x entry + wrapper + source.
 
         Returns the planted ``MockConfigEntry``.
@@ -904,7 +916,7 @@ class TestVisibleAliasedScan:
 
     async def test_visible_source_emits_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A switch_as_x entry whose source has
         ``hidden_by=None`` triggers the aggregate
@@ -972,7 +984,7 @@ class TestVisibleAliasedScan:
 
     async def test_hidden_source_no_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A healthy switch_as_x setup
         (``hidden_by="integration"`` on source) yields no
@@ -1016,7 +1028,7 @@ class TestVisibleAliasedScan:
 
     async def test_diagnostic_state_carries_counters(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """The state entity gets the three new attrs
         whether or not the check is enabled.
@@ -1072,7 +1084,7 @@ class TestVisibleAliasedScan:
 
     async def test_disabled_entry_skipped(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A disabled switch_as_x entry never reaches the
         logic layer and counts as defensive-skipped.
@@ -1124,7 +1136,7 @@ class TestVisibleAliasedScan:
 
     async def test_check_disabled_no_findings(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """When ``visible-aliased-entity`` is not in
         ``drift_checks``, the logic short-circuits and no
@@ -1164,7 +1176,7 @@ class TestVisibleAliasedScan:
 
     async def test_flagged_run_leaves_hidden_by_unchanged(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """The check is detection-only: flagging a source
         must not mutate ``hidden_by`` on its registry entry.

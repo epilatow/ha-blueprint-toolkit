@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "markdown-it-py==3.0.0",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code

@@ -32,9 +32,10 @@ pattern):
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -352,10 +353,10 @@ async def _async_service_layer(
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
     all_registered_entity_ids = frozenset(ent_reg.entities)
-    device_name_candidates = frozenset(
-        d.name_by_user or d.name
+    device_name_candidates: frozenset[str] = frozenset(
+        name
         for d in dev_reg.devices.values()
-        if d.name_by_user or d.name
+        if (name := d.name_by_user or d.name)
     )
     entity_id_candidates = all_registered_entity_ids
     entity_name_candidates: frozenset[str] = frozenset(
@@ -743,7 +744,7 @@ def _build_visible_aliased_inputs(
             defensive_skipped += 1
             continue
 
-        options = entry.options or {}
+        options: Mapping[str, Any] = entry.options or {}
         source_eid_raw = options.get("entity_id")
         target_domain_raw = options.get("target_domain")
         if not isinstance(source_eid_raw, str) or not source_eid_raw:

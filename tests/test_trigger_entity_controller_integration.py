@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -37,7 +38,7 @@ from __future__ import annotations
 import sys
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Make custom_components/ importable as a top-level
 # package; the uv-script env doesn't add the repo root to
@@ -46,6 +47,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest  # noqa: E402
 from conftest import CodeQualityBase  # noqa: E402
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+    )
 
 # pytest-HACC's plugins refuse to load if any
 # homeassistant.components.* module is already in
@@ -58,7 +67,9 @@ MOTION = "binary_sensor.motion"
 
 
 @pytest.fixture(autouse=True)
-def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
+def install_our_integration(
+    hass: HomeAssistant, enable_custom_integrations: None
+) -> Generator[None]:
     """Symlink our integration into pytest-HACC's config_dir."""
     import shutil
 
@@ -82,7 +93,7 @@ def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
         dst.unlink()
 
 
-def _mock_config_entry(**kwargs):  # noqa: ANN001, ANN201
+def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
     from pytest_homeassistant_custom_component.common import (
         MockConfigEntry,
@@ -143,7 +154,7 @@ def _valid_payload(
 class TestArgparseEmitsConfigErrorNotification:
     async def test_missing_required_keys_create_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad call must show up as a persistent notification."""
         await _setup_integration(hass)
@@ -171,7 +182,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_overlapping_entity_sets_create_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """Cross-field overlap (controlled and trigger) must error."""
         await _setup_integration(hass)
@@ -202,7 +213,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_missing_entity_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         # Don't set any states; the entities don't exist.
@@ -227,7 +238,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_uncontrollable_controlled_entity_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A controlled entity in a non-on/off domain (e.g.
         ``sensor``) trips the shared
@@ -264,7 +275,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_uncontrollable_trigger_entity_does_not_flag(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``binary_sensor.motion`` is a perfectly valid trigger
         source even though ``binary_sensor`` isn't in the
@@ -307,7 +318,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_notification_includes_automation_link_when_known(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """When the automation entity is registered, the body
         starts with the ``Automation: [name](link)`` header
@@ -346,7 +357,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_notification_md_escapes_friendly_name(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A ``[`` / ``]`` in the friendly name would otherwise
         pair with the ``](`` of the link and corrupt the
@@ -379,7 +390,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_successful_call_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from pytest_homeassistant_custom_component.common import (
             async_mock_service,
@@ -426,7 +437,7 @@ class TestArgparseEmitsConfigErrorNotification:
 class TestServiceLayerAppliesActions:
     async def test_trigger_on_calls_homeassistant_turn_on(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from pytest_homeassistant_custom_component.common import (
             async_mock_service,
@@ -454,7 +465,7 @@ class TestServiceLayerAppliesActions:
 
     async def test_writes_diagnostic_state_entity(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from pytest_homeassistant_custom_component.common import (
             async_mock_service,
@@ -499,7 +510,7 @@ class TestServiceLayerAppliesActions:
 class TestAutoOffSchedulesAndFires:
     async def test_trigger_off_arms_wakeup_then_fires_turn_off(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from homeassistant.util import dt as dt_util
         from pytest_homeassistant_custom_component.common import (
@@ -581,7 +592,7 @@ class TestAutoOffSchedulesAndFires:
 class TestServiceResponseShape:
     async def test_trigger_on_returns_notification_message_when_enabled(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A trigger-on event with the
         ``triggered-on`` notification event configured
@@ -623,7 +634,7 @@ class TestServiceResponseShape:
 
     async def test_event_filtered_out_returns_empty_message(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """When ``notification_events`` excludes the
         decision's event type, the handler returns an
@@ -662,7 +673,7 @@ class TestServiceResponseShape:
 class TestServiceRegistersWithSupportsResponse:
     async def test_registered_service_supports_response_optional(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """The service registers with
         ``SupportsResponse.OPTIONAL`` so the blueprint can
@@ -683,7 +694,7 @@ class TestServiceRegistersWithSupportsResponse:
 class TestStateSavedBeforeResponseReturned:
     async def test_state_persists_before_handler_response(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
         monkeypatch: Any,
     ) -> None:
         """Code-ordering invariant: the diagnostic state
@@ -746,8 +757,8 @@ class TestStateSavedBeforeResponseReturned:
 class TestRecoveryKickAtStartup:
     async def test_recovery_logs_on_setup(
         self,
-        hass,  # noqa: ANN001
-        caplog,  # noqa: ANN001
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         # ``recover_at_startup`` always runs (the kick is
         # set in TEC's spec). With no automations using the
@@ -772,8 +783,8 @@ class TestRecoveryKickAtStartup:
 class TestReloadListener:
     async def test_automation_reload_event_triggers_rediscovery(
         self,
-        hass,  # noqa: ANN001
-        caplog,  # noqa: ANN001
+        hass: HomeAssistant,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         import logging
 

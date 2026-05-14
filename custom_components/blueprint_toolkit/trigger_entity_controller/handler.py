@@ -51,9 +51,10 @@ rename signal).
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -572,7 +573,7 @@ def _apply_auto_off_at(
 def _make_wakeup(
     hass: HomeAssistant,
     instance_id: str,
-) -> Callable[[datetime], Awaitable[None]]:
+) -> Callable[[datetime], Coroutine[Any, Any, None]]:
     """Build the closure async_call_later will fire at the auto-off time."""
 
     async def _on_wakeup(_now: datetime) -> None:

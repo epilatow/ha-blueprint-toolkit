@@ -14,6 +14,13 @@ The user-facing flow is intentionally minimal:
   its original path inside the integration.
 """
 
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest-homeassistant-custom-component==0.13.324",
+# ]
+# ///
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -25,7 +32,7 @@ from homeassistant.core import callback
 from .const import DOMAIN, OPTION_CLI_SYMLINK_DIR
 
 if TYPE_CHECKING:
-    from homeassistant.data_entry_flow import FlowResult
+    from homeassistant.config_entries import ConfigFlowResult
 
 
 class BlueprintToolkitConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -35,7 +42,7 @@ class BlueprintToolkitConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         # The integration is single-instance: a second
         # entry would re-reconcile the same destinations
         # and confuse manifest tracking.
@@ -70,7 +77,7 @@ class BlueprintToolkitOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 

@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -40,20 +41,26 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import yaml
 from conftest import CodeQualityBase
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
 
 # HA blueprint YAMLs reference inputs via the custom !input
 # tag. PyYAML's safe loader rejects unknown tags by default;
 # register a no-op constructor that returns the input name
 # as a string so we can yaml.safe_load() blueprints in the
 # sync tests that don't want to spin up HA.
-yaml.SafeLoader.add_constructor(
-    "!input",
-    lambda loader, node: loader.construct_scalar(node),
-)
+def _input_constructor(loader: yaml.SafeLoader, node: yaml.Node) -> str:
+    return loader.construct_scalar(cast("yaml.ScalarNode", node))
+
+
+yaml.SafeLoader.add_constructor("!input", _input_constructor)
 
 REPO_ROOT = Path(__file__).parent.parent
 BUNDLED_ROOT = REPO_ROOT / "custom_components" / "blueprint_toolkit" / "bundled"
@@ -68,7 +75,9 @@ class TestHassFixtureSmoke:
     pyproject-config drift early.
     """
 
-    async def test_hass_starts_and_has_config_dir(self, hass) -> None:  # noqa: ANN001
+    async def test_hass_starts_and_has_config_dir(
+        self, hass: HomeAssistant
+    ) -> None:
         assert hass is not None
         assert Path(hass.config.config_dir).is_dir()
 
@@ -114,7 +123,7 @@ class TestBlueprintParse:
 
     async def test_each_parses_via_ha_yaml_loader(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
         all_blueprints: list[Path],
     ) -> None:
         # HA ships its own YAML loader that knows about the

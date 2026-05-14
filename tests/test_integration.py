@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 # Make custom_components/ importable as a top-level
 # package; the uv-script env doesn't add the repo root to
@@ -42,6 +44,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest  # noqa: E402
 from conftest import CodeQualityBase  # noqa: E402
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+    )
+    from pytest_homeassistant_custom_component.typing import (
+        ClientSessionGenerator,
+    )
 
 # pytest-HACC's plugins (in particular patch_recorder)
 # refuse to load if any homeassistant.components.* module
@@ -56,7 +69,9 @@ STORAGE_KEY = f"{DOMAIN}.installed"
 
 
 @pytest.fixture(autouse=True)
-def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
+def install_our_integration(
+    hass: HomeAssistant, enable_custom_integrations: None
+) -> Generator[None]:
     """Make our integration discoverable to HA in every test.
 
     pytest-HACC's hass.config.config_dir is its own
@@ -93,7 +108,7 @@ def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
         dst.unlink()
 
 
-def _mock_config_entry(**kwargs):  # noqa: ANN001, ANN201
+def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry.
 
     See the module docstring on import deferral.
@@ -130,7 +145,7 @@ def _expected_destinations(config_dir: Path) -> set[Path]:
 
 
 class TestConfigFlow:
-    async def test_user_step_creates_entry(self, hass) -> None:  # noqa: ANN001
+    async def test_user_step_creates_entry(self, hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": "user"},
@@ -145,7 +160,7 @@ class TestConfigFlow:
         assert result["type"] == "create_entry"
         assert result["title"] == "Blueprint Toolkit"
 
-    async def test_second_entry_aborts(self, hass) -> None:  # noqa: ANN001
+    async def test_second_entry_aborts(self, hass: HomeAssistant) -> None:
         existing = _mock_config_entry(domain=DOMAIN, data={})
         existing.add_to_hass(hass)
         result = await hass.config_entries.flow.async_init(
@@ -157,7 +172,7 @@ class TestConfigFlow:
 
 
 class TestOptionsFlow:
-    async def test_persists_cli_symlink_dir(self, hass) -> None:  # noqa: ANN001
+    async def test_persists_cli_symlink_dir(self, hass: HomeAssistant) -> None:
         entry = _mock_config_entry(domain=DOMAIN, data={}, options={})
         entry.add_to_hass(hass)
 
@@ -174,8 +189,8 @@ class TestOptionsFlow:
 
     async def test_changing_options_triggers_reconcile(
         self,
-        hass,  # noqa: ANN001
-        tmp_path,  # noqa: ANN001
+        hass: HomeAssistant,
+        tmp_path: Path,
     ) -> None:
         # Without an update listener, options changes are
         # silently saved and the reconciler doesn't re-run
@@ -208,7 +223,7 @@ class TestOptionsFlow:
 
 
 class TestSetupEntry:
-    async def test_setup_installs_symlinks(self, hass) -> None:  # noqa: ANN001
+    async def test_setup_installs_symlinks(self, hass: HomeAssistant) -> None:
         entry = _mock_config_entry(domain=DOMAIN, data={})
         entry.add_to_hass(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -218,7 +233,9 @@ class TestSetupEntry:
         for dest in _expected_destinations(config_dir):
             assert dest.is_symlink(), f"missing expected symlink: {dest}"
 
-    async def test_setup_writes_manifest_store(self, hass) -> None:  # noqa: ANN001
+    async def test_setup_writes_manifest_store(
+        self, hass: HomeAssistant
+    ) -> None:
         entry = _mock_config_entry(domain=DOMAIN, data={})
         entry.add_to_hass(hass)
         await hass.config_entries.async_setup(entry.entry_id)
@@ -230,7 +247,7 @@ class TestSetupEntry:
         # mock and returns the data the integration saved.
         from homeassistant.helpers.storage import Store
 
-        store = Store(hass, 1, STORAGE_KEY)
+        store: Store[dict[str, Any]] = Store(hass, 1, STORAGE_KEY)
         body = await store.async_load()
         assert body is not None, "manifest store not written"
         destinations = set(body["destinations"])
@@ -242,7 +259,7 @@ class TestSetupEntry:
         }
         assert destinations == expected
 
-    async def test_setup_registers_services(self, hass) -> None:  # noqa: ANN001
+    async def test_setup_registers_services(self, hass: HomeAssistant) -> None:
         # Asserts every handler registers its service on
         # ``async_setup_entry``. Catches a service that's
         # silently dropped from ``__init__.py``'s setup hook
@@ -272,8 +289,8 @@ class TestSetupEntry:
 class TestDocsStaticRoute:
     async def test_setup_serves_rendered_docs_at_local_url(
         self,
-        hass,  # noqa: ANN001
-        hass_client,  # noqa: ANN001
+        hass: HomeAssistant,
+        hass_client: ClientSessionGenerator,
     ) -> None:
         # async_setup_entry registers an aiohttp static
         # route at /local/blueprint_toolkit/docs/
@@ -305,7 +322,7 @@ class TestDocsStaticRoute:
 
 
 class TestRemoveEntry:
-    async def test_remove_clears_everything(self, hass) -> None:  # noqa: ANN001
+    async def test_remove_clears_everything(self, hass: HomeAssistant) -> None:
         entry = _mock_config_entry(domain=DOMAIN, data={})
         entry.add_to_hass(hass)
         await hass.config_entries.async_setup(entry.entry_id)

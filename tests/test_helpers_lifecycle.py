@@ -1,12 +1,14 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = [
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
 #     "ruff",
 #     "mypy",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -44,13 +46,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 from conftest import CodeQualityBase  # noqa: E402
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 # Stub the ``homeassistant`` modules the lifecycle
 # helpers late-import. Only constants + a noop
@@ -1029,7 +1034,7 @@ class TestRegisterBlueprintHandler:
         spec = _make_spec()  # all hooks default to None
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert (DOMAIN, spec.service) in hass.services.registered
@@ -1050,7 +1055,7 @@ class TestRegisterBlueprintHandler:
         spec = _make_spec(kick_variables={"trigger_id": "test"})
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         # Reload listener wired (kick is enough)
@@ -1075,7 +1080,7 @@ class TestRegisterBlueprintHandler:
         spec = _make_spec(kick_variables={"trigger_id": "test"})
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         # Recovery is deferred -- no task created right
@@ -1100,7 +1105,7 @@ class TestRegisterBlueprintHandler:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert len(hass.bus.listeners.get("entity_registry_updated", [])) == 1
@@ -1131,7 +1136,7 @@ class TestRegisterBlueprintHandler:
 
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
 
@@ -1152,7 +1157,7 @@ class TestRegisterBlueprintHandler:
 
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
 
@@ -1177,7 +1182,7 @@ class TestRegisterBlueprintHandler:
         spec = _make_spec(service_handler=_handler_returning_dict)
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         wrapper = hass.services.registered[(DOMAIN, spec.service)]
@@ -1195,12 +1200,12 @@ class TestRegisterBlueprintHandler:
         spec = _make_spec(kick_variables={"trigger_id": "test"})
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         # Service still registered once (re-register
@@ -1225,13 +1230,13 @@ class TestUnregisterBlueprintHandler:
         spec = _make_spec()
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert (DOMAIN, spec.service) in hass.services.registered
         await helpers.unregister_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert (DOMAIN, spec.service) not in hass.services.registered
@@ -1247,14 +1252,14 @@ class TestUnregisterBlueprintHandler:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert len(hass.bus.listeners["automation_reloaded"]) == 1
         assert len(hass.bus.listeners["entity_registry_updated"]) == 1
         await helpers.unregister_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert hass.bus.listeners["automation_reloaded"] == []
@@ -1271,12 +1276,12 @@ class TestUnregisterBlueprintHandler:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         await helpers.unregister_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         assert called == [True]
@@ -1289,13 +1294,13 @@ class TestUnregisterBlueprintHandler:
         spec = _make_spec()  # no on_teardown
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         # Should not raise.
         await helpers.unregister_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
 
@@ -1317,7 +1322,7 @@ class TestUnregisterBlueprintHandler:
         spec = _make_spec(kick_variables={"trigger_id": "test"})
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         # The once-listener is registered.
@@ -1359,7 +1364,7 @@ class TestUnregisterBlueprintHandler:
         # make sure unregister itself doesn't raise.
         await helpers.unregister_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
 
@@ -1394,7 +1399,7 @@ class TestListenerDispatch:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         listener = hass.bus.listeners["entity_registry_updated"][0]
@@ -1422,7 +1427,7 @@ class TestListenerDispatch:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         listener = hass.bus.listeners["entity_registry_updated"][0]
@@ -1448,7 +1453,7 @@ class TestListenerDispatch:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         listener = hass.bus.listeners["entity_registry_updated"][0]
@@ -1482,7 +1487,7 @@ class TestListenerDispatch:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         listener = hass.bus.listeners["entity_registry_updated"][0]
@@ -1511,7 +1516,7 @@ class TestListenerDispatch:
         )
         await helpers.register_blueprint_handler(
             hass,  # type: ignore[arg-type]
-            entry,  # type: ignore[arg-type]
+            entry,
             spec,
         )
         # The is_running=True branch already scheduled an
@@ -1985,12 +1990,12 @@ class TestFileEditorAddonIngressUrl:
     ``homeassistant.components.hassio`` modules.
     """
 
-    def _hass(self) -> object:
+    def _hass(self) -> HomeAssistant:
         # The helper passes hass through to is_hassio /
         # get_addons_info but never reads its attributes
         # directly; an opaque sentinel keeps the test
         # focused on the URL return.
-        return object()
+        return cast("HomeAssistant", object())
 
     def test_returns_empty_when_not_hassio(
         self,
@@ -2338,7 +2343,9 @@ _HELPERS_SHIM_PATH = (
 )
 
 
-def _is_ha_import(node: ast.AST) -> bool:
+def _is_ha_import(
+    node: ast.AST,
+) -> TypeGuard[ast.Import | ast.ImportFrom]:
     """True if node imports from a ``homeassistant.*`` module."""
     if isinstance(node, ast.Import):
         return any(
@@ -2722,4 +2729,9 @@ class TestCodeQuality(CodeQualityBase):
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    # ``-p no:homeassistant`` disables pytest-HACC's plugin,
+    # which fails to import against this file's stubbed
+    # ``homeassistant`` modules; HACC is a mypy-only dep here.
+    sys.exit(
+        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    )

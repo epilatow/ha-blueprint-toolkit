@@ -16,6 +16,13 @@ Cross-flavour rule: this file imports from
 ``helpers_logic`` only.
 """
 
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest-homeassistant-custom-component==0.13.324",
+# ]
+# ///
+
 from __future__ import annotations
 
 import logging

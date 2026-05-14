@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = [
 #     "pytest",
 #     "pytest-asyncio",
@@ -9,6 +9,8 @@
 #     "mypy",
 #     "voluptuous",
 #     "PyYAML",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -96,7 +98,7 @@ from custom_components.blueprint_toolkit.trigger_entity_controller import (  # n
 # ``_ACL_CALLS`` capture list, which is a different
 # list. Re-bind on the handler module now so both sides
 # observe the same capture state.
-handler.async_call_later = _async_call_later  # type: ignore[attr-defined]
+handler.async_call_later = _async_call_later  # type: ignore[assignment]
 
 
 # --------------------------------------------------------
@@ -168,7 +170,7 @@ class TestOnReload:
             cancel_wakeup=_make_canceller("c"),
         )
 
-        handler._on_reload(hass)  # type: ignore[arg-type]
+        handler._on_reload(hass)
 
         assert sorted(cancelled) == ["a", "c"]
         # Instances themselves stay tracked -- only the
@@ -194,7 +196,7 @@ class TestOnEntityRemove:
             "automation.kept",
         )
 
-        handler._on_entity_remove(hass, "automation.gone")  # type: ignore[arg-type]
+        handler._on_entity_remove(hass, "automation.gone")
 
         assert "automation.gone" not in instances
         assert "automation.kept" in instances
@@ -203,7 +205,7 @@ class TestOnEntityRemove:
     def test_no_crash_when_instance_unknown(self) -> None:
         hass = _make_hass()
         # Fresh hass.data; calling on an unknown id should not raise.
-        handler._on_entity_remove(  # type: ignore[arg-type]
+        handler._on_entity_remove(
             hass,
             "automation.never_seen",
         )
@@ -215,7 +217,7 @@ class TestOnEntityRemove:
             "automation.foo",
             cancel_wakeup=None,
         )
-        handler._on_entity_remove(hass, "automation.foo")  # type: ignore[arg-type]
+        handler._on_entity_remove(hass, "automation.foo")
         assert "automation.foo" not in instances
 
 
@@ -226,7 +228,7 @@ class TestOnEntityRename:
         old_state = _make_state("automation.old")
         instances["automation.old"] = old_state
 
-        handler._on_entity_rename(  # type: ignore[arg-type]
+        handler._on_entity_rename(
             hass,
             "automation.old",
             "automation.new",
@@ -238,7 +240,7 @@ class TestOnEntityRename:
 
     def test_no_crash_when_unknown_old_id(self) -> None:
         hass = _make_hass()
-        handler._on_entity_rename(  # type: ignore[arg-type]
+        handler._on_entity_rename(
             hass,
             "automation.unknown",
             "automation.new",
@@ -259,7 +261,7 @@ class TestOnTeardown:
             cancel_wakeup=lambda: cancelled.append("b"),
         )
 
-        handler._on_teardown(hass)  # type: ignore[arg-type]
+        handler._on_teardown(hass)
 
         assert sorted(cancelled) == ["a", "b"]
         assert instances == {}
@@ -411,8 +413,8 @@ class TestMakeWakeup:
     @pytest.mark.asyncio
     async def test_no_op_when_instance_state_gone(self) -> None:
         hass = _make_hass()
-        wakeup = handler._make_wakeup(  # type: ignore[arg-type]
-            hass,
+        wakeup = handler._make_wakeup(
+            hass,  # type: ignore[arg-type]
             "automation.never_seen",
         )
         # Should be a clean no-op: no service call.
@@ -499,4 +501,9 @@ class TestCodeQuality(CodeQualityBase):
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    # ``-p no:homeassistant`` disables pytest-HACC's plugin,
+    # which fails to import against this file's stubbed
+    # ``homeassistant`` modules; HACC is a mypy-only dep here.
+    sys.exit(
+        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    )

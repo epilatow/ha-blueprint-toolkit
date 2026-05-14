@@ -1,7 +1,14 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
-# dependencies = ["pytest", "pytest-cov", "ruff", "mypy"]
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest",
+#     "pytest-cov",
+#     "ruff",
+#     "mypy",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
+# ]
 # ///
 # This is AI generated code
 """Tests for sensor_threshold_switch_controller module."""
@@ -10,6 +17,7 @@ import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, TypedDict, Unpack
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -904,15 +912,51 @@ class TestDetermineEventType:
         assert determine_event_type("none", "switch.fan") == EventType.TIMER
 
 
+class _EvalKwargs(TypedDict):
+    """The non-``state`` keyword arguments of ``evaluate()``."""
+
+    current_time: datetime
+    switch_name: str
+    target_switch_entity: str
+    sensor_value: str
+    switch_state: str
+    trigger_entity: str
+    trigger_threshold: float
+    release_threshold: float
+    sampling_window_seconds: int
+    disable_window_seconds: int
+    auto_off_minutes: int
+    notification_prefix: str
+    notification_suffix: str
+
+
+class _EvalKwargsOverrides(TypedDict, total=False):
+    """Subset of ``_EvalKwargs`` a test may override."""
+
+    current_time: datetime
+    switch_name: str
+    target_switch_entity: str
+    sensor_value: str
+    switch_state: str
+    trigger_entity: str
+    trigger_threshold: float
+    release_threshold: float
+    sampling_window_seconds: int
+    disable_window_seconds: int
+    auto_off_minutes: int
+    notification_prefix: str
+    notification_suffix: str
+
+
 class TestEvaluate:
     """Tests for the top-level evaluate() entrypoint."""
 
     @staticmethod
     def _eval_kwargs(
-        **overrides: object,
-    ) -> dict[str, object]:
-        """Default kwargs for evaluate()."""
-        defaults: dict[str, object] = {
+        **overrides: Unpack[_EvalKwargsOverrides],
+    ) -> _EvalKwargs:
+        """Default kwargs for evaluate(), with optional per-test overrides."""
+        defaults: _EvalKwargs = {
             "current_time": T0,
             "switch_name": "Test Fan",
             "target_switch_entity": "switch.fan",
@@ -1006,16 +1050,54 @@ class TestEvaluate:
         assert result.action == Action.NONE
 
 
+class _CallKwargs(TypedDict):
+    """The keyword arguments of ``handle_service_call()``."""
+
+    state_data: dict[str, Any] | None
+    switch_name: str
+    current_time: datetime
+    target_switch_entity: str
+    sensor_value: str
+    switch_state: str
+    trigger_entity: str
+    trigger_threshold: float
+    release_threshold: float
+    sampling_window_seconds: int
+    disable_window_seconds: int
+    auto_off_minutes: int
+    notification_prefix: str
+    notification_suffix: str
+
+
+class _CallKwargsOverrides(TypedDict, total=False):
+    """Subset of ``_CallKwargs`` a test may override."""
+
+    state_data: dict[str, Any] | None
+    switch_name: str
+    current_time: datetime
+    target_switch_entity: str
+    sensor_value: str
+    switch_state: str
+    trigger_entity: str
+    trigger_threshold: float
+    release_threshold: float
+    sampling_window_seconds: int
+    disable_window_seconds: int
+    auto_off_minutes: int
+    notification_prefix: str
+    notification_suffix: str
+
+
 class TestHandleServiceCall:
     """Tests for the handle_service_call bridge entry
     point."""
 
     @staticmethod
     def _call_kwargs(
-        **overrides: object,
-    ) -> dict[str, object]:
-        """Default kwargs for handle_service_call."""
-        defaults: dict[str, object] = {
+        **overrides: Unpack[_CallKwargsOverrides],
+    ) -> _CallKwargs:
+        """Default kwargs for handle_service_call, with overrides."""
+        defaults: _CallKwargs = {
             "state_data": None,
             "switch_name": "Test Fan",
             "current_time": T0,
@@ -1303,7 +1385,7 @@ class TestHandleServiceCall:
         from the bootstrap-arm's "service-call entry time"
         moment.
         """
-        seed_state = {
+        seed_state: dict[str, Any] = {
             "samples": [],
             "baseline": None,
             "overrides": [],

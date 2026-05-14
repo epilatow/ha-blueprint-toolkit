@@ -31,7 +31,7 @@ async def _run(token: str, command: dict[str, object]) -> dict[str, object]:
     async with (
         aiohttp.ClientSession() as session,
         session.ws_connect(
-            WS_URL, timeout=aiohttp.ClientTimeout(total=30)
+            WS_URL, timeout=aiohttp.ClientWSTimeout(ws_receive=30.0)
         ) as ws,
     ):
         # HA's auth dance: server says auth_required,

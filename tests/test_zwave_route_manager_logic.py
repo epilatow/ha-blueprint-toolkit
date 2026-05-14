@@ -1,7 +1,15 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
-# dependencies = ["pytest", "pytest-cov", "ruff", "mypy", "pyyaml"]
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest",
+#     "pytest-cov",
+#     "ruff",
+#     "mypy",
+#     "pyyaml",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
+# ]
 # ///
 # This is AI generated code
 """Tests for the zwave_route_manager logic module."""

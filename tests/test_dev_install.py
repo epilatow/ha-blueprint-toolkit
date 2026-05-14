@@ -1,7 +1,13 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pytest", "pytest-cov", "ruff", "mypy"]
+# dependencies = [
+#     "pytest",
+#     "pytest-cov",
+#     "ruff",
+#     "mypy",
+#     "types-PyYAML",
+# ]
 # ///
 # This is AI generated code
 """Tests for scripts/dev-install.py.

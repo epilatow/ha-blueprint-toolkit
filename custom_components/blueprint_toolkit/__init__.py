@@ -16,6 +16,13 @@ point functions, and type annotations live behind
 ``from __future__ import annotations``.
 """
 
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest-homeassistant-custom-component==0.13.324",
+# ]
+# ///
+
 from __future__ import annotations
 
 import functools
@@ -96,8 +103,10 @@ async def _load_prior_manifest(hass: HomeAssistant) -> frozenset[Path]:
         STORAGE_KEY,
     )
     raw = await store.async_load() or {}
-    paths = raw.get("destinations", []) or []
-    return frozenset(Path(p) for p in paths if isinstance(p, str))
+    maybe_paths = raw.get("destinations")
+    if not isinstance(maybe_paths, list):
+        return frozenset()
+    return frozenset(Path(p) for p in maybe_paths if isinstance(p, str))
 
 
 async def _save_manifest(
@@ -191,6 +200,15 @@ def _surface_conflicts(
         }
         for c in conflicts
     ]
+    # HA's IssueData TypedDict (from homeassistant.helpers.issue_registry)
+    # constrains values to JSON-primitive (str / int / float / None). The
+    # repairs flow (repairs.py + test_repairs.py) reads the nested lists
+    # back via ``data["conflicts"]`` / ``data["conflict_destinations"]``;
+    # HA's frontend round-trips JSON correctly for the nested shapes in
+    # practice (the registry stores `data` as JSON), so the narrower
+    # IssueData typing is conservative for our use. The ignore is paired
+    # with ``unused-ignore`` so a stricter HA stub release that widens
+    # IssueData doesn't break the build.
     ir.async_create_issue(
         hass,
         DOMAIN,
@@ -200,8 +218,10 @@ def _surface_conflicts(
         translation_key=_ISSUE_INSTALL_CONFLICTS,
         data={
             "entry_id": entry.entry_id,
-            "conflicts": serialised,
-            "conflict_destinations": [str(c.destination) for c in conflicts],
+            "conflicts": serialised,  # type: ignore[dict-item,unused-ignore]
+            "conflict_destinations": [  # type: ignore[dict-item,unused-ignore]
+                str(c.destination) for c in conflicts
+            ],
         },
     )
 
@@ -225,7 +245,7 @@ def _surface_failure(
         translation_key=_ISSUE_INSTALL_FAILURE,
         data={
             "entry_id": entry.entry_id,
-            "errors": list(errors),
+            "errors": list(errors),  # type: ignore[dict-item,unused-ignore]
         },
     )
 

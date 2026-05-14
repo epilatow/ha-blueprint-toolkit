@@ -18,6 +18,13 @@ Cross-flavour rule: this file may import from
 ``helpers_logic`` and ``helpers_runtime``.
 """
 
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest-homeassistant-custom-component==0.13.324",
+# ]
+# ///
+
 from __future__ import annotations
 
 import hashlib
@@ -277,7 +284,7 @@ def schedule_periodic_with_jitter(
 
     task_name = f"{DOMAIN}_periodic_tick_{instance_id}"
 
-    @callback  # type: ignore[untyped-decorator]
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _fire_action(now: datetime) -> None:
         # Wrap so every tick (jittered first fire AND each
         # steady-state tick) goes through
@@ -288,7 +295,7 @@ def schedule_periodic_with_jitter(
         # from entry unload.
         entry.async_create_background_task(hass, action(now), task_name)
 
-    @callback  # type: ignore[untyped-decorator]
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_first_fire(now: datetime) -> None:
         # The one-shot fired and HA already removed it.
         # Arm the steady-state tracker before kicking off
@@ -351,7 +358,7 @@ def make_lifecycle_mutators(
     """
     from homeassistant.core import callback  # noqa: PLC0415
 
-    @callback  # type: ignore[untyped-decorator]
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_reload(hass: HomeAssistant) -> None:
         for s in list(instances_getter(hass).values()):
             cancel = getattr(s, cancel_field, None)
@@ -361,7 +368,7 @@ def make_lifecycle_mutators(
                 if reset_armed_interval_on_reload:
                     s.armed_interval_minutes = 0
 
-    @callback  # type: ignore[untyped-decorator]
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_entity_remove(hass: HomeAssistant, entity_id: str) -> None:
         s = instances_getter(hass).pop(entity_id, None)
         if s is None:
@@ -375,7 +382,7 @@ def make_lifecycle_mutators(
                 entity_id,
             )
 
-    @callback  # type: ignore[untyped-decorator]
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_entity_rename(
         hass: HomeAssistant,
         old_id: str,
@@ -386,7 +393,7 @@ def make_lifecycle_mutators(
             s.instance_id = new_id
             instances_getter(hass)[new_id] = s
 
-    @callback  # type: ignore[untyped-decorator]
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_teardown(hass: HomeAssistant) -> None:
         for s in list(instances_getter(hass).values()):
             cancel = getattr(s, cancel_field, None)
@@ -485,7 +492,7 @@ async def register_blueprint_handler(
     if on_reload is not None or kick is not None:
         reload_recover_task_name = f"{DOMAIN}_{spec.service}_reload_recover"
 
-        @callback  # type: ignore[untyped-decorator]
+        @callback  # type: ignore[untyped-decorator,unused-ignore]
         def _reload_listener(_event: Event) -> None:
             if on_reload is not None:
                 on_reload(hass)
@@ -517,7 +524,7 @@ async def register_blueprint_handler(
     # rename hook is set) ---
     if on_entity_remove is not None or on_entity_rename is not None:
 
-        @callback  # type: ignore[untyped-decorator]
+        @callback  # type: ignore[untyped-decorator,unused-ignore]
         def _er_listener(event: Event) -> None:
             parsed = parse_entity_registry_update(event.data)
             if parsed is None:
@@ -532,10 +539,17 @@ async def register_blueprint_handler(
             ):
                 on_entity_rename(hass, old_id, new_id)
 
+        # HA types ``async_listen`` for ``EVENT_ENTITY_REGISTRY_UPDATED``
+        # against a specific TypedDict union (Create / Remove / Update
+        # variants); this listener accepts the generic ``Event`` and
+        # narrows via ``parse_entity_registry_update``. The runtime
+        # contract -- ``event.data`` carries the registry-update keys
+        # -- holds; the type-narrowness is the only thing mypy
+        # --strict has to flag.
         unsubs.append(
             hass.bus.async_listen(
                 er.EVENT_ENTITY_REGISTRY_UPDATED,
-                _er_listener,
+                _er_listener,  # type: ignore[arg-type,unused-ignore]
             ),
         )
 
@@ -586,7 +600,7 @@ async def register_blueprint_handler(
             # removed it.
             once_unsub: Callable[[], None] | None = None
 
-            @callback  # type: ignore[untyped-decorator]
+            @callback  # type: ignore[untyped-decorator,unused-ignore]
             def _on_started_sync(_event: Event) -> None:
                 if once_unsub is not None and once_unsub in unsubs:
                     unsubs.remove(once_unsub)

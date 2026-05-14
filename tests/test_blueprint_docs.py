@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "PyYAML",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -80,7 +81,8 @@ def _ignore_unknown_tag(
     return None
 
 
-_BlueprintLoader.add_multi_constructor("!", _ignore_unknown_tag)
+# types-PyYAML ships no annotations for add_multi_constructor.
+_BlueprintLoader.add_multi_constructor("!", _ignore_unknown_tag)  # type: ignore[no-untyped-call]
 
 
 def _load_blueprint(path: Path) -> dict[str, Any]:

@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -33,6 +34,7 @@ from __future__ import annotations
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 # Make custom_components/ importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -40,13 +42,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest  # noqa: E402
 from conftest import CodeQualityBase  # noqa: E402
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import issue_registry as ir
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+    )
+
 DOMAIN = "blueprint_toolkit"
 ISSUE_INSTALL_CONFLICTS = "install_conflicts"
 ISSUE_INSTALL_FAILURE = "install_failure"
 
 
 @pytest.fixture(autouse=True)
-def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
+def install_our_integration(
+    hass: HomeAssistant, enable_custom_integrations: None
+) -> Generator[None]:
     """Symlink the integration into pytest-HACC's testing_config.
 
     Mirrors the same fixture in ``tests/test_integration.py``.
@@ -94,7 +107,7 @@ def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
             shutil.rmtree(target)
 
 
-def _mock_config_entry(**kwargs):  # noqa: ANN001, ANN201
+def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     from pytest_homeassistant_custom_component.common import (
         MockConfigEntry,
     )
@@ -117,7 +130,9 @@ def _conflict_destination(config_dir: Path) -> Path:
     )
 
 
-async def _get_issue(hass, issue_id: str):  # noqa: ANN001, ANN202
+async def _get_issue(
+    hass: HomeAssistant, issue_id: str
+) -> ir.IssueEntry | None:
     """Look up our issue in HA's issue registry, or None."""
     from homeassistant.helpers import issue_registry as ir
 
@@ -128,7 +143,7 @@ async def _get_issue(hass, issue_id: str):  # noqa: ANN001, ANN202
 class TestInstallConflictsFlow:
     async def test_unknown_symlink_creates_issue_and_overwrite_clears_it(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
         tmp_path: Path,
     ) -> None:
         # Pre-seed a stray symlink at a destination the
@@ -154,7 +169,7 @@ class TestInstallConflictsFlow:
         # The issue's data carries the conflict list and
         # the entry id so the fix flow can re-plan with
         # force on those destinations.
-        data = issue.data or {}
+        data: dict[str, Any] = issue.data or {}
         assert data.get("entry_id") == entry.entry_id
         dest_strs = data.get("conflict_destinations") or []
         assert str(dest) in dest_strs
@@ -201,7 +216,7 @@ class TestInstallConflictsFlow:
 class TestInstallFailureFlow:
     async def test_directory_at_destination_creates_failure_issue(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         # Pre-seed a directory at one of our destinations.
         # The reconciler classifies regular_dir as a
@@ -226,7 +241,7 @@ class TestInstallFailureFlow:
         # because force wasn't requested).
         conflicts = await _get_issue(hass, ISSUE_INSTALL_CONFLICTS)
         assert conflicts is not None
-        data = conflicts.data or {}
+        data: dict[str, Any] = conflicts.data or {}
         kinds = {c["kind"] for c in (data.get("conflicts") or [])}
         assert "regular_dir" in kinds
 
@@ -238,7 +253,7 @@ class TestInstallFailureFlow:
 
 
 class TestIssueClearedOnCleanReconcile:
-    async def test_no_conflicts_no_issue(self, hass) -> None:  # noqa: ANN001
+    async def test_no_conflicts_no_issue(self, hass: HomeAssistant) -> None:
         # Clean state -- no pre-seeded conflicts. Setup
         # runs, no issue should be created.
         entry = _mock_config_entry(domain=DOMAIN, data={})

@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -29,7 +30,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Make custom_components/ importable as a top-level package;
 # the uv-script env doesn't add the repo root to sys.path
@@ -42,12 +43,22 @@ from conftest import (  # noqa: E402
     RecoveryEventsIntegrationBase,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+    )
+
 DOMAIN = "blueprint_toolkit"
 SERVICE = "device_watchdog"
 
 
 @pytest.fixture(autouse=True)
-def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
+def install_our_integration(
+    hass: HomeAssistant, enable_custom_integrations: None
+) -> Generator[None]:
     """Symlink our integration into pytest-HACC's config_dir."""
     import shutil
 
@@ -71,7 +82,7 @@ def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
         dst.unlink()
 
 
-def _mock_config_entry(**kwargs):  # noqa: ANN001, ANN201
+def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
     from pytest_homeassistant_custom_component.common import (
         MockConfigEntry,
@@ -136,7 +147,7 @@ def _valid_payload(
 class TestArgparseEmitsConfigErrorNotification:
     async def test_missing_required_keys_create_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad call must show up as a persistent notification."""
         await _setup_integration(hass)
@@ -162,7 +173,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_unknown_check_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """Cross-validation rejects values not in CHECK_ALL."""
         await _setup_integration(hass)
@@ -189,7 +200,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_invalid_regex_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad regex line in either regex field surfaces as
         a per-line config error.
@@ -218,7 +229,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_match_all_regex_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``.*`` matches every entity; the helper rejects
         it with a ``"matches empty string"`` error.
@@ -245,7 +256,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_notification_includes_automation_link_when_known(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """When the automation entity is registered, the
         config-error body starts with the
@@ -281,7 +292,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_successful_call_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         # Bad call first.
@@ -314,7 +325,7 @@ class TestArgparseEmitsConfigErrorNotification:
 class TestServiceLayerScan:
     async def test_successful_scan_creates_diagnostic_state(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A successful scan populates the diagnostic state
         entity at
@@ -362,7 +373,7 @@ class TestServiceLayerScan:
 class TestPerDeviceLinkPrefix:
     async def test_per_device_notification_carries_automation_link(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """DW's per-device notification must carry the
         ``Automation: [name](link)`` prefix the dispatcher
@@ -472,7 +483,7 @@ class TestUnmatchedDirectives:
 
     async def test_typoed_integration_fires_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         await hass.services.async_call(
@@ -503,7 +514,7 @@ class TestUnmatchedDirectives:
 
     async def test_toggle_off_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         # Toggle on + typo'd value -> notification fires.
@@ -545,7 +556,7 @@ class TestUnmatchedDirectives:
 
     async def test_cap_bypass_unmatched_directives_always_surfaces(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """The unmatched-directives notification rides outside the
         per-device cap.
@@ -642,7 +653,7 @@ class TestUnmatchedDirectives:
 
     async def test_regex_categories_surface_end_to_end(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """One representative bullet per regex directive
         category in a single notification body so a refactor

@@ -1,7 +1,15 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
-# dependencies = ["pytest", "pytest-cov", "ruff", "mypy", "python-socketio"]
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest",
+#     "pytest-cov",
+#     "ruff",
+#     "mypy",
+#     "python-socketio",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
+# ]
 # ///
 # This is AI generated code
 """Tests for the zwave-js-ui bridge module.
@@ -137,8 +145,8 @@ class TestParseNodeRoute:
 
 
 class TestParseNodeInfo:
-    def _min_raw(self, **overrides: object) -> dict:
-        base = {
+    def _min_raw(self, **overrides: object) -> dict[str, object]:
+        base: dict[str, object] = {
             "id": 18,
             "maxDataRate": 100000,
             "isRouting": True,
@@ -475,7 +483,9 @@ class TestZwaveJsUiClientTypedApis:
         async def _do() -> None:
             client, mock_sio = _make_client_with_mock_sio()
 
-            def _respond(_event: str, body: dict, timeout: float) -> dict:
+            def _respond(
+                _event: str, body: dict[str, object], timeout: float
+            ) -> dict[str, object]:
                 _ = timeout
                 api = body["api"]
                 args = body["args"]
@@ -886,4 +896,9 @@ class TestCodeQuality(CodeQualityBase):
 if __name__ == "__main__":
     import pytest
 
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    # ``-p no:homeassistant`` disables pytest-HACC's plugin,
+    # which fails to import against this file's stubbed
+    # ``homeassistant`` modules; HACC is a mypy-only dep here.
+    sys.exit(
+        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    )

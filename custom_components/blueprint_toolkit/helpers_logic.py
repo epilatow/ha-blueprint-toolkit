@@ -25,7 +25,7 @@ explicitly.
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
@@ -1109,7 +1109,7 @@ class LifecycleMutators:
 
 
 def parse_entity_registry_update(
-    event_data: dict[str, Any],
+    event_data: Mapping[str, Any],
 ) -> tuple[str, str, str] | None:
     """Extract ``(action, old_id, new_id)`` for an automation entity event.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = [
 #   "pytest",
 #   "pytest-cov",
@@ -8,6 +8,8 @@
 #   "mypy",
 #   "PyYAML>=6",
 #   "Jinja2>=3",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -15,6 +17,7 @@
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -565,7 +568,7 @@ class TestScanScripts:
         assert owner.yaml_only is True
 
     def test_missing_alias_uses_key(self) -> None:
-        parsed = {"bar": {"sequence": []}}
+        parsed: dict[str, Any] = {"bar": {"sequence": []}}
         source = _source("scripts", "scripts.yaml", parsed)
         owners = _scan_scripts(source, _ts())
         assert owners[0][0].friendly_name == "bar"
@@ -733,6 +736,7 @@ class TestScanCustomize:
         by_friendly = {o.friendly_name: (o, t) for o, t in owners}
         assert set(by_friendly) == {"sensor.valid", "sensor.dead"}
         for eid, (owner, tree) in by_friendly.items():
+            assert eid is not None
             assert owner.integration == "customize"
             assert owner.source_file == "customize.yaml"
             assert owner.block_path is not None

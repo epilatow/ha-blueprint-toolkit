@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = [
 #     "pytest",
 #     "pytest-asyncio",
@@ -9,6 +9,8 @@
 #     "mypy",
 #     "voluptuous",
 #     "PyYAML",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -103,7 +105,7 @@ class TestOnReload:
         s2 = _make_state("automation.b", armed_interval_minutes=10)
         h = _hass_with_instances({"automation.a": s1, "automation.b": s2})
 
-        handler._on_reload(h)  # type: ignore[arg-type]
+        handler._on_reload(h)
 
         assert canceled == [1]
         assert s1.cancel_timer is None
@@ -127,7 +129,7 @@ class TestOnEntityRemove:
             {"automation.a": s, "automation.b": _make_state("automation.b")}
         )
 
-        handler._on_entity_remove(h, "automation.a")  # type: ignore[arg-type]
+        handler._on_entity_remove(h, "automation.a")
 
         assert canceled == [1]
         bucket = h.config_entries.entries[0].runtime_data.handlers[
@@ -138,7 +140,7 @@ class TestOnEntityRemove:
     def test_unknown_id_is_noop(self) -> None:
         h = _hass_with_instances({"automation.a": _make_state("automation.a")})
         # Should not raise.
-        handler._on_entity_remove(h, "automation.unknown")  # type: ignore[arg-type]
+        handler._on_entity_remove(h, "automation.unknown")
 
 
 class TestOnEntityRename:
@@ -146,7 +148,7 @@ class TestOnEntityRename:
         s = _make_state("automation.old")
         h = _hass_with_instances({"automation.old": s})
 
-        handler._on_entity_rename(h, "automation.old", "automation.new")  # type: ignore[arg-type]
+        handler._on_entity_rename(h, "automation.old", "automation.new")
 
         bucket = h.config_entries.entries[0].runtime_data.handlers[
             "entity_defaults_watchdog"
@@ -158,7 +160,7 @@ class TestOnEntityRename:
     def test_unknown_old_id_is_noop(self) -> None:
         h = _hass_with_instances({})
         # Should not raise.
-        handler._on_entity_rename(h, "automation.x", "automation.y")  # type: ignore[arg-type]
+        handler._on_entity_rename(h, "automation.x", "automation.y")
 
 
 class TestOnTeardown:
@@ -172,7 +174,7 @@ class TestOnTeardown:
         )
         h = _hass_with_instances({"automation.a": s1, "automation.b": s2})
 
-        handler._on_teardown(h)  # type: ignore[arg-type]
+        handler._on_teardown(h)
 
         assert sorted(canceled) == [1, 2]
         bucket = h.config_entries.entries[0].runtime_data.handlers[
@@ -218,7 +220,7 @@ class TestEnsureTimer:
         handler.schedule_periodic_with_jitter = _fake_schedule  # type: ignore[assignment]
 
     def teardown_method(self) -> None:
-        handler.schedule_periodic_with_jitter = self._real_schedule  # type: ignore[assignment]
+        handler.schedule_periodic_with_jitter = self._real_schedule
 
     def test_first_call_arms(self) -> None:
         h = _hass_with_instances({})
@@ -308,11 +310,11 @@ class _ArgparseHarness:
             self.config_errors.append(errors)
 
         self._real_emit = handler._emit_config_error
-        handler._emit_config_error = _capture_errors  # type: ignore[assignment]
+        handler._emit_config_error = _capture_errors
 
     def teardown_method(self) -> None:
-        handler._async_service_layer = self._real_service_layer  # type: ignore[assignment]
-        handler._emit_config_error = self._real_emit  # type: ignore[assignment]
+        handler._async_service_layer = self._real_service_layer
+        handler._emit_config_error = self._real_emit
 
 
 # --------------------------------------------------------
@@ -483,7 +485,7 @@ class TestArgparseMultilineRegex(_ArgparseHarness):
             spy_calls.append(args)
             return real(*args, **kwargs)
 
-        handler.validate_and_join_regex_patterns = _spy  # type: ignore[assignment]
+        handler.validate_and_join_regex_patterns = _spy
         try:
             h = MockHass()
             call = FakeServiceCall(
@@ -495,7 +497,7 @@ class TestArgparseMultilineRegex(_ArgparseHarness):
             )
             asyncio.run(handler._async_argparse(h, call, now=FrozenNow.value))  # type: ignore[arg-type]
         finally:
-            handler.validate_and_join_regex_patterns = real  # type: ignore[assignment]
+            handler.validate_and_join_regex_patterns = real
 
         assert spy_calls, (
             "argparse must call helpers.validate_and_join_regex_patterns "
@@ -676,7 +678,7 @@ class TestBuildVisibleAliasedInputs:
         handler.er.async_get = _fake_async_get  # type: ignore[assignment]
 
     def teardown_method(self) -> None:
-        handler.er.async_get = self._real_async_get  # type: ignore[assignment]
+        handler.er.async_get = self._real_async_get
 
     def test_wrapper_missing_in_registry_skipped(self) -> None:
         # Source registered + visible, switch_as_x entry has
@@ -894,7 +896,8 @@ class TestBlueprintDriftChecksOptionsMatchCheckAll:
                 return value
             return None
 
-        _Loader.add_multi_constructor("!", _passthrough)
+        # types-PyYAML ships no annotations for add_multi_constructor.
+        _Loader.add_multi_constructor("!", _passthrough)  # type: ignore[no-untyped-call]
         loaded: dict[str, object] = yaml.load(  # noqa: S506
             bp_path.read_text(),
             Loader=_Loader,
@@ -911,7 +914,9 @@ class TestBlueprintDriftChecksOptionsMatchCheckAll:
         assert isinstance(select, dict)
         options = select.get("options")
         assert isinstance(options, list)
-        offered = {o.get("value") for o in options if isinstance(o, dict)}
+        offered: set[Any] = {
+            o.get("value") for o in options if isinstance(o, dict)
+        }
         assert offered == set(logic.CHECK_ALL), (
             "blueprint drift_checks options do not match CHECK_ALL.\n"
             f"  only in blueprint: "
@@ -937,4 +942,9 @@ class TestCodeQuality(CodeQualityBase):
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    # ``-p no:homeassistant`` disables pytest-HACC's plugin,
+    # which fails to import against this file's stubbed
+    # ``homeassistant`` modules; HACC is a mypy-only dep here.
+    sys.exit(
+        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    )

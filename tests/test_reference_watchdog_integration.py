@@ -7,6 +7,7 @@
 #     "ruff",
 #     "mypy",
 #     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -29,7 +30,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Make custom_components/ importable as a top-level
 # package; the uv-script env doesn't add the repo root to
@@ -42,6 +43,14 @@ from conftest import (  # noqa: E402
     RecoveryEventsIntegrationBase,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+    )
+
 # pytest-HACC's plugins refuse to load if any
 # homeassistant.components.* module is already in
 # sys.modules. Defer imports until inside the tests.
@@ -50,7 +59,9 @@ SERVICE = "reference_watchdog"
 
 
 @pytest.fixture(autouse=True)
-def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
+def install_our_integration(
+    hass: HomeAssistant, enable_custom_integrations: None
+) -> Generator[None]:
     """Symlink our integration into pytest-HACC's config_dir."""
     import shutil
 
@@ -74,7 +85,7 @@ def install_our_integration(hass, enable_custom_integrations):  # noqa: ANN001
         dst.unlink()
 
 
-def _mock_config_entry(**kwargs):  # noqa: ANN001, ANN201
+def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
     from pytest_homeassistant_custom_component.common import (
         MockConfigEntry,
@@ -139,7 +150,7 @@ def _valid_payload(
 class TestArgparseEmitsConfigErrorNotification:
     async def test_missing_required_keys_create_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad call must show up as a persistent notification."""
         await _setup_integration(hass)
@@ -165,7 +176,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_invalid_regex_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A bad ``exclude_entity_id_regex`` line surfaces as a
         per-line config error -- this is the live-host
@@ -200,7 +211,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_match_all_regex_creates_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``.*`` matches every entity; the helper rejects
         it with a ``"matches empty string"`` error.
@@ -232,7 +243,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_notification_includes_automation_link_when_known(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """When the automation entity is registered, the
         config-error body starts with the
@@ -268,7 +279,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_notification_md_escapes_friendly_name(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``[`` / ``]`` in the friendly name would otherwise
         pair with the ``](`` of the link and corrupt the
@@ -301,7 +312,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
     async def test_successful_call_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         # Bad call first.
@@ -334,7 +345,7 @@ class TestArgparseEmitsConfigErrorNotification:
 class TestServiceLayerScan:
     async def test_successful_scan_creates_diagnostic_state(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A successful scan populates the diagnostic state
         entity at
@@ -379,7 +390,7 @@ class TestServiceLayerScan:
 
     async def test_owner_finding_notification_carries_automation_link(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """RW per-owner notifications must carry the
         ``Automation: [name](link)`` prefix. Regression
@@ -455,7 +466,7 @@ class TestServiceLayerScan:
 
     async def test_broken_service_call_surfaces_in_owner_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """A broken ``service: script.<name>`` in
         ``automations.yaml`` reaches the sniff path,
@@ -539,7 +550,7 @@ class TestUnmatchedDirectives:
 
     async def test_typoed_integration_fires_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         await hass.services.async_call(
@@ -573,7 +584,7 @@ class TestUnmatchedDirectives:
 
     async def test_unmatched_device_name_regex_fires_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         # A regex line in ``exclude_device_name_regex`` that
         # matches no device name should surface as an
@@ -611,7 +622,7 @@ class TestUnmatchedDirectives:
 
     async def test_toggle_off_dismisses_prior_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
         # First run: typo'd integration with toggle on ->
@@ -660,7 +671,7 @@ class TestUnmatchedDirectives:
 
     async def test_each_directive_category_surfaces_end_to_end(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """One representative bullet per directive category in a single
         notification body: integration / entity / regex.
@@ -702,7 +713,7 @@ class TestUnmatchedDirectives:
 
     async def test_cap_bypass_unmatched_directives_always_surfaces(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """The unmatched-directives notification rides outside the
         per-owner cap.
@@ -785,7 +796,7 @@ class TestUnmatchedDirectives:
 
     async def test_customize_exclude_does_not_false_flag(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``exclude_entities`` is also documented as silencing
         customize.yaml entries (the YAML key IS the entity_id).
@@ -836,7 +847,7 @@ class TestUnmatchedDirectives:
 
     async def test_broken_ref_suppression_does_not_false_flag(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         """``exclude_entities`` is documented as silencing broken
         reference findings (target side). The value used to silence
@@ -912,7 +923,7 @@ class TestUnusedDeviceCheckEndToEnd:
 
     async def test_unused_device_emits_per_device_notification(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
@@ -983,7 +994,7 @@ class TestUnusedDeviceCheckEndToEnd:
 
     async def test_cascade_up_rescue_parent_not_flagged(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         # Parent device has its own entities but no direct
         # config reference; one of its child devices has an
@@ -1084,7 +1095,7 @@ class TestUnusedDeviceCheckEndToEnd:
 
     async def test_exclude_exposed_entities_toggle_flips_rescue(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         # A device whose only "use" is via the unified
         # voice-exposure store. With ``exclude_exposed_entities``
@@ -1214,7 +1225,7 @@ class TestUnusedDeviceCheckEndToEnd:
 class TestUnusedDevicelessCheckEndToEnd:
     async def test_per_platform_rollup_groups_by_integration(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         # Plant unused deviceless entities across two
         # integrations; the check must emit one rollup per
@@ -1328,7 +1339,7 @@ class TestFileEditorLinkEndToEnd:
 
     async def test_broken_refs_body_links_to_file_editor(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from unittest.mock import patch
 
@@ -1395,7 +1406,7 @@ class TestFileEditorLinkEndToEnd:
 
     async def test_rollup_body_links_to_file_editor(
         self,
-        hass,  # noqa: ANN001
+        hass: HomeAssistant,
     ) -> None:
         from unittest.mock import patch
 

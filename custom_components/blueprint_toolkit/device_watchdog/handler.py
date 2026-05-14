@@ -335,10 +335,10 @@ async def _async_service_layer(
     # already pruned the entities the regex would have
     # caught -- a confusing leak of internal ordering.
     dev_reg = dr.async_get(hass)
-    device_name_candidates = frozenset(
-        d.name_by_user or d.name
+    device_name_candidates: frozenset[str] = frozenset(
+        name
         for d in dev_reg.devices.values()
-        if d.name_by_user or d.name
+        if (name := d.name_by_user or d.name)
     )
     monitored_lower = {d.lower() for d in monitored_entity_domains}
     ent_reg = er.async_get(hass)

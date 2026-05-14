@@ -30,7 +30,11 @@ cache-dir = "/tmp/ruff_cache"
 select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+# HACC 0.13.324's HA stubs use Python 3.12+ syntax (``type X[T] = ...``).
+# Bumping the analyzer to 3.14 lets it parse the stubs; the integration's
+# own code targets 3.11, and 3.11 code analyzed under a 3.14 mypy is a
+# strict superset (no false negatives).
+python_version = "3.14"
 strict = true
 # No ``files = [...]`` set: the canonical type check runs
 # via each test file's ``TestCodeQuality(CodeQualityBase)``
@@ -77,3 +81,28 @@ ignore_missing_imports = true
 module = ["blueprint_toolkit", "blueprint_toolkit.*"]
 ignore_missing_imports = true
 
+
+[[tool.mypy.overrides]]
+# pytest-homeassistant-custom-component ships no ``py.typed``
+# marker, so ``mypy --strict`` flags every import from it as
+# ``[import-untyped]``. The HA-coupled test files import
+# ``MockConfigEntry`` / ``ClientSessionGenerator`` from it.
+module = ["pytest_homeassistant_custom_component.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# scripts/render_docs.py and the bundled zwave_network_info
+# CLI are bare scripts the test files import off a runtime
+# sys.path entry; mypy's import resolver can't see them.
+module = ["render_docs", "zwave_network_info"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The handler test suites monkeypatch helper functions
+# (schedule_periodic_with_jitter, validate_and_join_regex_patterns,
+# entity_registry, ...) on the handler module -- the standard
+# patch-where-used pattern. Without this, ``mypy --strict``'s
+# no_implicit_reexport rejects ``handler.<name>`` access from
+# the tests.
+module = ["custom_components.blueprint_toolkit.*.handler"]
+implicit_reexport = true

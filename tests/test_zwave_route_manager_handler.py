@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = [
 #     "pytest",
 #     "pytest-asyncio",
@@ -9,6 +9,8 @@
 #     "mypy",
 #     "voluptuous",
 #     "PyYAML",
+#     "pytest-homeassistant-custom-component==0.13.324",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -114,7 +116,7 @@ class TestOnReload:
         # No timer on s2; should not raise.
         h = _hass_with_instances({"automation.a": s1, "automation.b": s2})
 
-        handler._on_reload(h)  # type: ignore[arg-type]
+        handler._on_reload(h)
 
         assert canceled == [1]
         assert s1.cancel_timer is None
@@ -140,7 +142,7 @@ class TestOnEntityRemove:
             {"automation.a": s, "automation.b": _make_state("automation.b")}
         )
 
-        handler._on_entity_remove(h, "automation.a")  # type: ignore[arg-type]
+        handler._on_entity_remove(h, "automation.a")
 
         assert canceled == [1]
         bucket = h.config_entries.entries[0].runtime_data.handlers[
@@ -151,7 +153,7 @@ class TestOnEntityRemove:
     def test_unknown_id_is_noop(self) -> None:
         h = _hass_with_instances({"automation.a": _make_state("automation.a")})
         # Should not raise.
-        handler._on_entity_remove(h, "automation.unknown")  # type: ignore[arg-type]
+        handler._on_entity_remove(h, "automation.unknown")
 
 
 class TestOnEntityRename:
@@ -159,7 +161,7 @@ class TestOnEntityRename:
         s = _make_state("automation.old")
         h = _hass_with_instances({"automation.old": s})
 
-        handler._on_entity_rename(h, "automation.old", "automation.new")  # type: ignore[arg-type]
+        handler._on_entity_rename(h, "automation.old", "automation.new")
 
         bucket = h.config_entries.entries[0].runtime_data.handlers[
             "zwave_route_manager"
@@ -170,7 +172,7 @@ class TestOnEntityRename:
 
     def test_unknown_old_id_is_noop(self) -> None:
         h = _hass_with_instances({"automation.a": _make_state("automation.a")})
-        handler._on_entity_rename(h, "automation.unknown", "automation.x")  # type: ignore[arg-type]
+        handler._on_entity_rename(h, "automation.unknown", "automation.x")
 
 
 class TestOnTeardown:
@@ -182,7 +184,7 @@ class TestOnTeardown:
         s2.cancel_timer = lambda: canceled.append(2)
         h = _hass_with_instances({"automation.a": s1, "automation.b": s2})
 
-        handler._on_teardown(h)  # type: ignore[arg-type]
+        handler._on_teardown(h)
 
         assert sorted(canceled) == [1, 2]
         bucket = h.config_entries.entries[0].runtime_data.handlers[
@@ -228,7 +230,7 @@ class TestEnsureTimer:
         handler.schedule_periodic_with_jitter = _fake_schedule  # type: ignore[assignment]
 
     def teardown_method(self) -> None:
-        handler.schedule_periodic_with_jitter = self._real_schedule  # type: ignore[assignment]
+        handler.schedule_periodic_with_jitter = self._real_schedule
 
     def test_first_call_arms(self) -> None:
         h = _hass_with_instances({})
@@ -538,4 +540,9 @@ class TestCodeQuality(CodeQualityBase):
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    # ``-p no:homeassistant`` disables pytest-HACC's plugin,
+    # which fails to import against this file's stubbed
+    # ``homeassistant`` modules; HACC is a mypy-only dep here.
+    sys.exit(
+        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    )
