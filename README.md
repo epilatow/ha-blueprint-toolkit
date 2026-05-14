@@ -1,9 +1,9 @@
 # Blueprint Toolkit
 
-Home Assistant automations built as HA blueprints that dispatch to a custom
-integration's service handlers. Business logic lives in Python modules with no
-Home Assistant dependencies in the logic layer, making it fully testable with
-pytest.
+Home Assistant automations built as HA blueprints. Most dispatch to a custom
+integration's service handlers, with business logic in Python modules that
+carry no Home Assistant dependencies and are fully testable with pytest. A few
+are standalone -- self-contained YAML blueprints with no service handler.
 
 ## Automations
 
@@ -41,6 +41,12 @@ pytest.
   Auto-resolves route speed to the slowest hop's `maxDataRate`. Optional
   clear-unmanaged mode makes the config file the single source of truth.
   Requires the `core_zwave_js` addon.
+
+- [Water Leak Alert](docs/water_leak_alert.md) - Responds when any of a set of
+  water leak sensors detects water: a one-time initial notification, then a
+  siren and/or repeated notifications on an interval until every sensor is
+  dry. Optional presence gating keeps an empty house quiet. A standalone
+  YAML-only blueprint with no service handler.
 
 ## Scripts
 

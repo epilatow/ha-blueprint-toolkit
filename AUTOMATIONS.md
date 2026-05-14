@@ -10,9 +10,18 @@ specific to the automations themselves.
 
 ## Architecture
 
-Each automation is a three-layer split: a Home Assistant blueprint that
-dispatches to the integration's service handler, the handler that wires HA
-into business logic, and the logic module that has no HA dependencies.
+Automations come in two shapes:
+
+- **Handler-backed** (the majority) -- a three-layer split: a Home Assistant
+  blueprint that dispatches to the integration's service handler, the handler
+  that wires HA into business logic, and the logic module that has no HA
+  dependencies. The rest of this guide -- schema, argparse, service layer,
+  spec/lifecycle, handler tests -- describes this shape.
+- **Standalone** -- a self-contained blueprint whose `actions:` chain is plain
+  Home Assistant YAML, with no `blueprint_toolkit.<service>` dispatch, no
+  handler or logic subpackage, and no schema-drift test. It ships through the
+  same bundled blueprints directory and is installed by the reconciler
+  identically. See "Standalone blueprints" below for the category contract.
 
 ### Module layout
 
@@ -116,6 +125,46 @@ bucket stores:
 
 Cross-reload state (Repairs flow handoff for force-confirmed destinations)
 lives separately at `hass.data[DOMAIN]` because it must survive entry unload.
+
+## Standalone blueprints
+
+Some automations are simple enough that the three-layer split buys nothing --
+the whole behavior fits in blueprint YAML (triggers, conditions, a `repeat`
+loop, service calls). These ship as **standalone blueprints**: a single
+`.yaml` file under `bundled/blueprints/automation/blueprint_toolkit/` with no
+handler, no logic module, and no per-handler test files.
+
+The category contract:
+
+- **Marker.** The file's first line is the exact comment
+  `# blueprint-kind: standalone`. This is the machine-readable tag that marks
+  the file as handler-less; a future "every blueprint must..." test branches
+  on it. Handler-backed blueprints carry no marker -- absence is the default.
+- **No service dispatch.** The `actions:` chain is plain HA YAML. It never
+  calls `blueprint_toolkit.<service>` -- there is no service to call.
+- **Still fully documented.** A standalone blueprint carries the same
+  user-facing doc obligations as any other: a `bundled/docs/<stem>.md` source,
+  the rendered HTML, the `[Full documentation]` link in its `description`, and
+  a README entry. `tests/test_blueprint_docs.py` and
+  `tests/test_docs_rendered.py` enforce these for every blueprint regardless
+  of shape.
+- **Tested by a structure test, not a schema-drift test.** Instead of
+  subclassing `BlueprintSchemaDriftBase` (which presumes a handler `_SCHEMA`),
+  a standalone blueprint gets a `tests/test_<stem>.py` that loads the YAML and
+  pins the marker, the input surface, the `mode`, and the absence of any
+  `blueprint_toolkit.<service>` dispatch.
+- **Restart resilience is the blueprint's responsibility.** Handler-backed
+  automations get the integration's `recover_at_startup` for free; standalone
+  blueprints do not. When a standalone blueprint has state that should survive
+  an HA restart (an in-flight `repeat` loop, an active timer, etc.), add a
+  `homeassistant: start` trigger and gate the actions so the recovery path
+  only runs when appropriate. `water_leak_alert` uses this pattern to re-enter
+  its repeat loop after a restart if a leak is still active.
+
+`water_leak_alert` is the reference example. Reach for a standalone blueprint
+only when there is genuinely no business logic worth unit-testing in isolation
+-- anything with a non-trivial decision tree, cross-field validation, or state
+that must survive a restart belongs in the handler-backed shape.
 
 ## Shared helpers (`helpers.py`)
 
@@ -586,11 +635,16 @@ against that field).
   triggers), still emit an empty `triggers: []` block: a blueprint with no
   `triggers:` key at all parses but HA renders the resulting automations as
   `unavailable`, the recovery kick never fires, and no scan runs after deploy.
-- **No `homeassistant: start` / `homeassistant: shutdown` triggers.** The
-  integration's `recover_at_startup` already kicks every discovered automation
-  when HA fires `EVENT_HOMEASSISTANT_STARTED`, and the reload listener handles
-  `EVENT_AUTOMATION_RELOADED`.
-- **`action:` calls `blueprint_toolkit.<service>`.**
+- **No `homeassistant: start` / `homeassistant: shutdown` triggers** in
+  handler-backed blueprints. The integration's `recover_at_startup` already
+  kicks every discovered automation when HA fires
+  `EVENT_HOMEASSISTANT_STARTED`, and the reload listener handles
+  `EVENT_AUTOMATION_RELOADED`. Standalone blueprints don't get the
+  integration's recovery, so `homeassistant: start` is a valid re-entry hook
+  there -- see "Standalone blueprints".
+- **Handler-backed blueprints: `action:` calls
+  `blueprint_toolkit.<service>`.** Standalone blueprints have no service call
+  -- see "Standalone blueprints".
 - **Synthetic-trigger overrides are flat top-level variables.** HA's
   `automation.trigger` service unconditionally overwrites the `trigger` key in
   caller-supplied `variables` with `{"platform": None}` (see

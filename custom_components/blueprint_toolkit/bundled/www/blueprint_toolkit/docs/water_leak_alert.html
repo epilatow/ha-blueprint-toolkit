@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Leak Alert</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  max-width: 760px;
+  margin: 2em auto;
+  padding: 0 1em;
+  line-height: 1.55;
+  color: #222;
+}
+h1, h2, h3, h4 { line-height: 1.25; }
+h1 { border-bottom: 1px solid #ddd; padding-bottom: .2em; }
+h2 { border-bottom: 1px solid #eee; padding-bottom: .15em; }
+code {
+  background: #f2f2f2;
+  padding: .1em .3em;
+  border-radius: 3px;
+  font-size: .92em;
+}
+pre {
+  background: #f6f6f6;
+  padding: .8em 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: .9em; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td {
+  border: 1px solid #ccc;
+  padding: .4em .7em;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #f2f2f2; }
+blockquote {
+  border-left: 3px solid #ccc;
+  margin: 1em 0;
+  padding: .2em 1em;
+  color: #555;
+}
+a { color: #0366d6; }
+</style>
+</head>
+<body>
+<h1>Water Leak Alert</h1>
+<h2>Summary</h2>
+<p>Watches a set of water leak sensors and responds when any of them detects
+water. It fires a one-time initial notification, then repeats a configurable
+response -- a siren and/or repeated notification actions -- on an interval for
+as long as the leak persists. The repeated response can be gated on presence
+so an empty house stays quiet.</p>
+<p>This is a standalone blueprint: the whole automation lives in the blueprint
+YAML, with no <code>blueprint_toolkit</code> service handler behind it.</p>
+<h2>Features</h2>
+<ul>
+<li><strong>Multiple leak sensors</strong>: takes any number of <code>moisture</code> binary sensors. A
+leak on any one of them starts the response; it continues until all of them
+are dry.</li>
+<li><strong>Detection delay</strong>: a configurable hold time filters out momentary sensor
+blips before the automation fires.</li>
+<li><strong>One-time initial notification</strong>: runs a user-supplied action chain once,
+the moment a leak is detected -- ungated, so you hear about a leak even when
+nobody is home.</li>
+<li><strong>Repeated response</strong>: sounds a siren and/or runs a second action chain on a
+configurable interval for as long as the leak persists.</li>
+<li><strong>Presence gate</strong>: the repeated response only runs while a presence entity
+is <code>on</code>, so a siren never sounds in an empty house. Presence coming and
+going is handled while the leak is still active.</li>
+<li><strong>Siren at full volume</strong>: when a siren is configured it plays the chosen
+tone at maximum volume on every repeat.</li>
+</ul>
+<h2>Requirements</h2>
+<ul>
+<li>One or more <code>binary_sensor</code> entities with <code>device_class: moisture</code> (water
+leak sensors).</li>
+<li>Optionally, a <code>siren</code> entity that supports tones (e.g. a Zooz ZSE50).</li>
+<li>Optionally, a presence/occupancy <code>binary_sensor</code> or <code>input_boolean</code>.</li>
+<li>Optionally, one or more notification services, scripts, or other actions to
+run for the initial and/or repeated notifications.</li>
+</ul>
+<h2>Usage</h2>
+<ol>
+<li>Go to <strong>Settings &gt; Automations &amp; Scenes &gt; Blueprints</strong>.</li>
+<li>Find <strong>Water Leak Alert</strong> and click <strong>Create Automation</strong>.</li>
+<li>Pick your leak sensors, set the detection delay and repeat interval,
+configure the initial and repeated notification actions, and pick a siren
+and/or presence entities as needed.</li>
+<li>Save.</li>
+</ol>
+<h2>Configuration</h2>
+<h3>Leak detection</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Leak sensors</strong></td>
+<td><em>(required)</em></td>
+<td>One or more <code>moisture</code> binary sensors. Any one going to <code>on</code> triggers the automation; the response runs until all dry.</td>
+</tr>
+<tr>
+<td><strong>Detection delay</strong></td>
+<td>30s</td>
+<td>How long a sensor must continuously report water before the automation fires. Set to zero to react immediately.</td>
+</tr>
+</tbody>
+</table>
+<h3>Initial notification</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Initial notification action</strong></td>
+<td><em>(empty)</em></td>
+<td>Action(s) to run once when a leak is first detected. Receives the message body via <code>{{ message }}</code>. Always runs, regardless of the presence gate.</td>
+</tr>
+</tbody>
+</table>
+<h3>Repeated response</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Repeat interval</strong></td>
+<td>30s</td>
+<td>Wait time between each repeated response while the leak persists.</td>
+</tr>
+<tr>
+<td><strong>Siren</strong></td>
+<td><em>(empty)</em></td>
+<td>Optional siren to sound on every repeat. Plays at full volume. Leave empty for no siren.</td>
+</tr>
+<tr>
+<td><strong>Siren tone</strong></td>
+<td><code>7</code></td>
+<td>Tone to play -- numeric ID or full name from the siren's <code>available_tones</code> attribute. On a Zooz ZSE50, ID <code>7</code> is &quot;Leak detected&quot;.</td>
+</tr>
+<tr>
+<td><strong>Presence entities</strong></td>
+<td><em>(empty)</em></td>
+<td>Optional gate: the siren and repeated action only run while at least one of these is <code>on</code>. Leave empty to always run the repeated response.</td>
+</tr>
+<tr>
+<td><strong>Repeated notification action</strong></td>
+<td><em>(empty)</em></td>
+<td>Action(s) to run on every repeat, alongside the siren. Subject to the presence gate. Receives the message body via <code>{{ message }}</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2>Usage notes</h2>
+<h3>The <code>{{ message }}</code> variable</h3>
+<p>Both action inputs run with a <code>message</code> variable in scope, so each step can
+reference <code>{{ message }}</code> in its <code>data:</code> block:</p>
+<ul>
+<li>Initial notification: <code>Water leak detected by &lt;sensor name&gt;.</code></li>
+<li>Repeated notification: <code>Water leak still detected (&lt;wet sensor names&gt;).</code></li>
+</ul>
+<p>A typical initial notification action is a single <strong>Call service</strong> step on
+<code>notify.mobile_app_&lt;your phone&gt;</code> with <code>message: &quot;{{ message }}&quot;</code>.</p>
+<h3>Presence gating</h3>
+<p>The presence gate is a <em>permission</em> check, not a suppression list: the
+repeated response runs only while at least one presence entity is <code>on</code>. Point
+it at a whole-home occupancy sensor so the siren never sounds in an empty
+house. The gate is re-checked on every repeat, so if everyone leaves mid-leak
+the siren goes quiet within one interval, and if they return while the leak is
+still active it resumes. The initial notification is never gated -- a leak
+while you are away is exactly when you want the push.</p>
+<h3>Finding the siren tone</h3>
+<p>In <strong>Developer Tools &gt; States</strong>, open your siren entity and read the
+<code>available_tones</code> attribute. It maps each tone ID to a name. Put either the ID
+or the exact name into the <strong>Siren tone</strong> field. The Zooz ZSE50's default
+sound library puts &quot;Leak detected&quot; at ID <code>7</code>.</p>
+<h3>Example: main bathroom</h3>
+<pre><code class="language-text">Leak sensors:     binary_sensor.main_bath_leak_sensor_1_water_leak_detected
+                  binary_sensor.main_bath_leak_sensor_2_water_leak_detected
+                  binary_sensor.main_bath_leak_sensor_3_water_leak_detected
+                  binary_sensor.main_bath_leak_sensor_4_water_leak_detected
+Detection delay:  30 seconds
+Initial action:   notify.mobile_app_phone  (message: &quot;{{ message }}&quot;)
+Repeat interval:  30 seconds
+Siren:            siren.main_bath_alarm_play_tone
+Siren tone:       7
+Presence:         binary_sensor.polaris_occupied
+</code></pre>
+<p>When any sensor is wet for 30 seconds, you get a phone notification
+immediately. Then, while anyone is home, the siren plays the &quot;Leak detected&quot;
+tone every 30 seconds until every sensor is dry.</p>
+<h2>Developer notes</h2>
+<h3>Standalone blueprint</h3>
+<p>This blueprint is <strong>standalone</strong> -- the marker comment
+<code># blueprint-kind: standalone</code> on the first line records that. Its <code>actions:</code>
+block is plain Home Assistant YAML and does not dispatch to a
+<code>blueprint_toolkit.&lt;service&gt;</code> handler, so there is no handler/logic
+subpackage, no <code>_SCHEMA</code>, and no schema-drift test. It still ships through the
+same bundled blueprints directory and is installed by the reconciler exactly
+like the handler-backed blueprints. See <code>AUTOMATIONS.md</code> for the
+standalone-blueprint category contract.</p>
+<h3>Behavior details</h3>
+<ul>
+<li><strong>Mode <code>single</code>.</strong> A second sensor tripping while the repeat loop is running
+does not start a second loop -- the running loop's <code>while</code> check already
+covers every sensor.</li>
+<li><strong>Loop structure.</strong> The <code>repeat.while</code> condition is &quot;any sensor still wet&quot;.
+The presence gate is checked <em>inside</em> the loop body, not in the <code>while</code>, so
+presence transitions are handled without the loop exiting early.</li>
+<li><strong>Siren cleanup.</strong> When the loop exits (all sensors dry), the automation
+calls <code>siren.turn_off</code> in case a tone is still playing.</li>
+<li><strong>Empty action inputs.</strong> Both notification action inputs default to an empty
+list; an empty list runs as a no-op, so leaving either unset is safe.</li>
+<li><strong>Restart recovery.</strong> Because this is a standalone blueprint (no integration
+handler), an HA restart mid-leak would otherwise leave the repeat loop
+stopped and any sounding tone stuck on -- a sustained leak never re-fires a
+<code>state</code> trigger across a restart. A second trigger (<code>homeassistant: start</code>)
+gated on a top-level &quot;any sensor currently wet&quot; condition re-enters the loop
+after a restart only when a leak is still active. On that path the actions
+first wait the configured <strong>Detection delay</strong> and re-check the sensors,
+mirroring the <code>for:</code> debounce on the regular state trigger so a transient
+wet reading right as HA comes up cannot fire a false alarm; if every sensor
+is dry by then the automation exits. The initial-notification step is
+suppressed on the restart path (matched via <code>trigger.id</code>) so you don't get a
+duplicate first-detection push.</li>
+</ul>
+</body>
+</html>
