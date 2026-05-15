@@ -340,11 +340,11 @@ not that it's exactly +1.
 
 HACS surfaces installable versions from GitHub Releases. Once at least one
 Release exists in the repo, HACS shows only Releases as version candidates --
-commits pushed to master between Releases are invisible to users until the
-next Release is published. (Pre-first-Release, HACS falls back to tracking the
+commits pushed to main between Releases are invisible to users until the next
+Release is published. (Pre-first-Release, HACS falls back to tracking the
 latest commit SHA, but that state ends as soon as the first Release lands and
 never returns.) Tagging and releasing are kept separate from `git push` so a
-manifest bump can sit on master without auto-publishing -- run
+manifest bump can sit on main without auto-publishing -- run
 `scripts/release.py` only when you want HACS users to see the new version:
 
 ```bash
@@ -359,7 +359,7 @@ release via `gh` (release notes default to HEAD's commit body). Each step is
 idempotent, so re-running after a partial failure picks up where the previous
 run stopped.
 
-Refuses if HEAD isn't reachable from `origin/master` -- push commits before
+Refuses if HEAD isn't reachable from `origin/main` -- push commits before
 publishing the release.
 
 Non-bumping commits at HEAD (docs-only follow-ups, comment fixes, etc.) are

@@ -501,7 +501,7 @@ decide.
 ## Push and review hygiene
 
 - Never push without explicit per-action approval. Local commits + ff-merge to
-  local master are fine; `git push` is not. The user reviews each commit and
+  local main are fine; `git push` is not. The user reviews each commit and
   authorizes the push. This applies to every commit, including amended ones
   from code-review feedback.
 - Stay in scope. Each commit edits only what its own description calls for.

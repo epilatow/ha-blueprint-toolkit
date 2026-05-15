@@ -17,7 +17,7 @@ artefacts converge on HEAD:
 This script does NOT push commits -- run ``git push``
 first. The split keeps "code is on origin" and "this
 commit is a release" independent decisions: a manifest
-bump can sit on master for a while before we publish it,
+bump can sit on main for a while before we publish it,
 or never get published at all.
 
 Each step is a no-op when its side effect is already in
@@ -26,7 +26,7 @@ where the previous run stopped.
 
 Refuses when:
     - working tree is dirty (commit or stash first)
-    - HEAD is not reachable from ``origin/master``
+    - HEAD is not reachable from ``origin/main``
       (run ``git push`` first so the release tag will
       point to a commit that exists on origin)
     - local tag ``vX.Y.Z`` exists at a commit that is
@@ -178,24 +178,21 @@ def _ensure_local_tag(tag: str, head: str, *, dry_run: bool) -> bool:
 
 
 def _check_head_on_origin() -> None:
-    """Refuse if HEAD isn't reachable from origin/master.
+    """Refuse if HEAD isn't reachable from origin/main.
 
     The release tag will point to HEAD, so HEAD must
     already be on the remote -- otherwise the tag (once
     pushed) would reference a commit that doesn't exist
-    on origin until someone pushes master.
+    on origin until someone pushes main.
     """
-    # Fetch origin/master without merging so the local
-    # ref is fresh. Quiet mode -- we just want the side
-    # effect of an updated remote-tracking ref.
-    _git("fetch", "--quiet", "origin", "master", capture=False)
+    _git("fetch", "--quiet", "origin", "main", capture=False)
     r = _run(
-        ["git", "merge-base", "--is-ancestor", "HEAD", "origin/master"],
+        ["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
         check=False,
     )
     if r.returncode != 0:
         sys.stderr.write(
-            "error: HEAD is not reachable from origin/master. "
+            "error: HEAD is not reachable from origin/main. "
             "Run 'git push' first so the release tag points to "
             "a commit that exists on origin.\n",
         )
