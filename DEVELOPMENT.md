@@ -317,6 +317,16 @@ Runs in the default suite via `tests/run_all.py`.
 the integration's async lifecycle and each handler's full call path (config
 flow, service registration, argparse error paths, state-entity attributes).
 
+The HACC pin is duplicated across every PEP 723 inline-deps block (one per
+HA-coupled module or test file), plus `pyproject.toml`'s dev-deps. The exact
+pin gives reproducible test runs, but it also means the suite won't notice if
+a future HA release breaks an interface we depend on until someone manually
+bumps the pin. `.github/workflows/hacc-drift.yml` plugs that gap: it runs
+weekly (and on demand via `workflow_dispatch`), rewrites every pin site to the
+latest released HACC version, runs `tests/run_all.py`, and opens (or updates)
+a PR on the `hacc-drift` branch carrying the result. CI failures on that PR
+are the early-warning signal; clean runs are one-click merges.
+
 ### Manifest version bump rule
 
 The integration version in `custom_components/blueprint_toolkit/manifest.json`

@@ -1,0 +1,103 @@
+name: HACC drift check
+
+# Weekly check whether pytest-homeassistant-custom-component has a newer
+# release than the repo's pinned version. On drift, the job bumps every
+# PEP 723 pin site (plus pyproject.toml) to the latest, runs the full
+# test suite, and opens / updates a PR on the `hacc-drift` branch with
+# the outcome. CI failures on that PR are the early-warning signal that
+# a new HA release breaks an interface we depend on; clean runs are
+# one-click merges.
+#
+# Triggers off schedule + workflow_dispatch only. The bot push from the
+# default GITHUB_TOKEN does NOT cascade to the on:push tests workflow,
+# so this job runs the suite itself rather than relying on test.yml
+# firing on the auto-branch.
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'  # Monday 12:00 UTC.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Resolve current + latest HACC versions
+        id: versions
+        run: |
+          set -euo pipefail
+          LATEST=$(curl -fsS https://pypi.org/pypi/pytest-homeassistant-custom-component/json \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['info']['version'])")
+          CURRENT=$(grep -h 'pytest-homeassistant-custom-component==' pyproject.toml \
+            | head -1 | sed -E 's/.*==([0-9.]+).*/\1/')
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST" = "$CURRENT" ]; then
+            echo "Already on latest $LATEST. No drift."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Drift: $CURRENT -> $LATEST."
+          fi
+
+      - name: Bump pin sites and manifest
+        if: steps.versions.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          CURRENT='${{ steps.versions.outputs.current }}'
+          LATEST='${{ steps.versions.outputs.latest }}'
+          grep -rl "pytest-homeassistant-custom-component==${CURRENT}" \
+            --include='*.py' --include='*.toml' --include='*.md' \
+            | xargs sed -i "s/pytest-homeassistant-custom-component==${CURRENT}/pytest-homeassistant-custom-component==${LATEST}/g"
+          scripts/bump-manifest-version.py
+
+      - name: Run tests
+        id: tests
+        if: steps.versions.outputs.skip != 'true'
+        continue-on-error: true
+        run: tests/run_all.py
+
+      - name: Push branch and open / update PR
+        if: steps.versions.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          BRANCH=hacc-drift
+          CURRENT='${{ steps.versions.outputs.current }}'
+          LATEST='${{ steps.versions.outputs.latest }}'
+          STATUS='${{ steps.tests.outcome }}'
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          MSG=$(printf '%s\n\n%s\n%s\n' \
+            "- deps: Bump pytest-homeassistant-custom-component to ${LATEST}." \
+            "Automated drift-check bump from ${CURRENT}. Local tests/run_all.py" \
+            "outcome in the drift job: ${STATUS}. See the workflow run for details.")
+
+          git checkout -B "$BRANCH"
+          git add -A
+          git commit -m "$MSG"
+          git push -f origin "$BRANCH"
+
+          TITLE="deps: Bump HACC to ${LATEST} (${STATUS})"
+          BODY=$(printf '%s\n\n%s\n\n%s\n' \
+            "Automated bump from \`${CURRENT}\` to \`${LATEST}\`." \
+            "\`tests/run_all.py\` outcome in the drift job: **${STATUS}**." \
+            "Workflow run: ${RUN_URL}")
+
+          OPEN_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // ""')
+          if [ -n "$OPEN_PR" ]; then
+            gh pr edit "$OPEN_PR" --title "$TITLE" --body "$BODY"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
+          fi
