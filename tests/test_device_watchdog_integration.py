@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.324",
+#     "pytest-homeassistant-custom-component==0.13.331",
 #     "types-PyYAML",
 # ]
 # ///
@@ -377,11 +377,11 @@ class TestPerDeviceLinkPrefix:
         prepends. Same regression guard EDW + RW have for
         their finding notifications.
 
-        Pattern: ``template.integration_entities()`` looks
-        up entries by config-entry title, so a mock
-        ``MockConfigEntry(title="fake_integration")`` plus
-        a registry entry tied to it is enough to drive a
-        full scan through the per-device builder.
+        Pattern: a registry entry whose ``platform`` matches
+        the include filter is enough to drive a full scan
+        through the per-device builder. The ``MockConfigEntry``
+        + ``async_get_or_create(platform=...)`` pair plants
+        such an entry.
         """
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er

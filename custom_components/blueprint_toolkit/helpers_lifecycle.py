@@ -21,7 +21,7 @@ Cross-flavour rule: this file may import from
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
-#     "pytest-homeassistant-custom-component==0.13.324",
+#     "pytest-homeassistant-custom-component==0.13.331",
 # ]
 # ///
 
@@ -69,6 +69,33 @@ def all_integration_ids(hass: HomeAssistant) -> list[str]:
         if entry.platform:
             integrations.add(entry.platform)
     return sorted(integrations)
+
+
+def integration_entity_ids(
+    hass: HomeAssistant, integration_id: str
+) -> list[str]:
+    """Entity IDs registered by integration ``integration_id``.
+
+    Walks the entity registry and returns every entry whose
+    ``platform`` matches. ``platform`` is the integration /
+    domain name HA writes onto each entry at registration,
+    so grouping by it reliably partitions the registry by
+    producing integration regardless of config-entry titles
+    (which users can rename, and which differ between
+    instances of multi-instance integrations).
+
+    Lives alongside ``all_integration_ids`` because both
+    pivot on the same registry walk and share the function-
+    body HA import.
+    """
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    ent_reg = er.async_get(hass)
+    return [
+        entry.entity_id
+        for entry in ent_reg.entities.values()
+        if entry.platform == integration_id
+    ]
 
 
 def file_editor_addon_ingress_url(hass: HomeAssistant) -> str:
@@ -640,6 +667,7 @@ __all__ = [
     "cv_ha_domain_list",
     "discover_automations_using_blueprint",
     "file_editor_addon_ingress_url",
+    "integration_entity_ids",
     "make_lifecycle_mutators",
     "recover_at_startup",
     "register_blueprint_handler",

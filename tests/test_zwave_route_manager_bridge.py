@@ -5,7 +5,7 @@
 #     "pytest",
 #     "pytest-cov",
 #     "python-socketio",
-#     "pytest-homeassistant-custom-component==0.13.324",
+#     "pytest-homeassistant-custom-component==0.13.331",
 #     "types-PyYAML",
 # ]
 # ///

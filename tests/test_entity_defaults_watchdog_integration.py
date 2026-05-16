@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.324",
+#     "pytest-homeassistant-custom-component==0.13.331",
 #     "types-PyYAML",
 # ]
 # ///
@@ -468,10 +468,10 @@ class TestDeviceAttachedDisabledEntityFilter:
 
         await _setup_integration(hass)
 
-        # template.integration_entities() matches by config-
-        # entry title. Mock a config entry titled
-        # "fake_integration" so the watchdog scan can find
-        # our planted entities.
+        # The watchdog scan groups entities by their entity-
+        # registry ``platform``. Mock a config entry plus a
+        # registry entry whose ``platform="fake_integration"``
+        # so the scan picks up our planted entities.
         fake_entry = _mock_config_entry(
             domain="fake_integration",
             title="fake_integration",

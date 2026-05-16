@@ -163,6 +163,10 @@ Cross-handler accessors:
   appended at each call site.
 - `all_integration_ids(hass)` -- distinct integration IDs across the entity
   registry. Watchdog truth-set seed.
+- `integration_entity_ids(hass, integration_id)` -- entity IDs registered by
+  `integration_id` (matches the entity-registry entry's `platform` field).
+  Companion to `all_integration_ids` for watchdogs that want a per-integration
+  entity list keyed off the same registry walk.
 - `resolve_target_integrations(all, include, exclude)` -- apply include /
   exclude filters; empty `include` means "all" (matches the watchdog
   blueprints' documented behaviour).

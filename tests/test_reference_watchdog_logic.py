@@ -6,7 +6,7 @@
 #   "pytest-cov",
 #   "PyYAML>=6",
 #   "Jinja2>=3",
-#     "pytest-homeassistant-custom-component==0.13.324",
+#     "pytest-homeassistant-custom-component==0.13.331",
 #     "types-PyYAML",
 # ]
 # ///

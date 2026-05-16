@@ -23,7 +23,7 @@ contractual.
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
-#     "pytest-homeassistant-custom-component==0.13.324",
+#     "pytest-homeassistant-custom-component==0.13.331",
 # ]
 # ///
 

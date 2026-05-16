@@ -43,7 +43,6 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import template as ha_tmpl
 from homeassistant.util import dt as dt_util
 
 from ..const import DOMAIN
@@ -54,6 +53,7 @@ from ..helpers import (
     automation_friendly_name,
     cv_ha_domain_list,
     entry_for_domain,
+    integration_entity_ids,
     make_emit_config_error,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
@@ -487,13 +487,7 @@ def _build_device_inputs(
     populate_eids: dict[str, dict[str, list[str]]] = {}
 
     for integration_id in all_integration_ids:
-        try:
-            entity_ids = list(
-                ha_tmpl.integration_entities(hass, integration_id),
-            )
-        except (KeyError, ValueError):
-            # Integration not found or invalid -- skip.
-            continue
+        entity_ids = integration_entity_ids(hass, integration_id)
         for entity_id in entity_ids:
             entry = ent_reg.async_get(entity_id)
             if entry is None or entry.device_id is None:
