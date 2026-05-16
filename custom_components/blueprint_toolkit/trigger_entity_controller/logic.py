@@ -84,7 +84,7 @@ class Inputs:
     event_type: EventType
     changed_entity: str
     triggers_on: bool
-    controlled_on: bool
+    controlled_on_entities: list[str]
     is_day_time: bool
     triggers_disabled: bool
     auto_off_disabled: bool
@@ -92,6 +92,11 @@ class Inputs:
     friendly_names: dict[str, str] = field(
         default_factory=dict,
     )
+
+    @property
+    def controlled_on(self) -> bool:
+        """True iff any controlled entity is currently on."""
+        return bool(self.controlled_on_entities)
 
 
 @dataclass
@@ -445,13 +450,22 @@ def _handle_timer(
         and inputs.current_time >= inputs.auto_off_at
         and not inputs.auto_off_disabled
     ):
+        # Auto-off targets and notifies only the entities
+        # actually on at expiry. Listing entities already
+        # off would be misleading (and the no-op turn_off
+        # against them is wasted dispatch).
+        if not inputs.controlled_on_entities:
+            return Result(
+                auto_off_at=None,
+                reason="auto-off timer expired, all already off",
+            )
         names = _friendly_list(
-            config.controlled_entities,
+            inputs.controlled_on_entities,
             inputs.friendly_names,
         )
         return Result(
             action=ActionType.TURN_OFF,
-            target_entities=list(config.controlled_entities),
+            target_entities=list(inputs.controlled_on_entities),
             auto_off_at=None,
             reason="auto-off timer expired",
             notification=_format_notification(

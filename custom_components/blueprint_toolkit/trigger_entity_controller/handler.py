@@ -395,6 +395,19 @@ async def _async_argparse(
 # --------------------------------------------------------
 
 
+def _filter_on(hass: HomeAssistant, entities: list[str]) -> list[str]:
+    """Return the subset of ``entities`` whose state is ``"on"``.
+
+    Order-preserving so the auto-off notification body
+    lists entities in the user's configured order.
+    """
+    return [
+        eid
+        for eid in entities
+        if (s := hass.states.get(eid)) is not None and s.state == "on"
+    ]
+
+
 def _any_on(hass: HomeAssistant, entities: list[str]) -> bool:
     return any(
         (s := hass.states.get(eid)) is not None and s.state == "on"
@@ -463,7 +476,7 @@ async def _async_service_layer(
         event_type=event_type,
         changed_entity=trigger_entity_id,
         triggers_on=_any_on(hass, config.trigger_entities),
-        controlled_on=_any_on(hass, config.controlled_entities),
+        controlled_on_entities=_filter_on(hass, config.controlled_entities),
         is_day_time=_is_day_time(hass),
         triggers_disabled=_any_on(hass, config.trigger_disabling_entities),
         auto_off_disabled=_any_on(hass, config.auto_off_disabling_entities),

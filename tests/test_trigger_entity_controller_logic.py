@@ -67,6 +67,7 @@ def _inputs(
     changed_entity: str = "timer",
     triggers_on: bool = False,
     controlled_on: bool = False,
+    controlled_on_entities: list[str] | None = None,
     is_day_time: bool = False,
     triggers_disabled: bool = False,
     auto_off_disabled: bool = False,
@@ -74,12 +75,18 @@ def _inputs(
     current_time: datetime = T0,
     friendly_names: dict[str, str] | None = None,
 ) -> Inputs:
+    # Existing tests pass ``controlled_on`` as a bool; new
+    # tests that need to assert against the specific subset
+    # of entities currently on (auto-off behaviour) pass
+    # ``controlled_on_entities`` directly.
+    if controlled_on_entities is None:
+        controlled_on_entities = [LIGHT] if controlled_on else []
     return Inputs(
         current_time=current_time,
         event_type=event_type,
         changed_entity=changed_entity,
         triggers_on=triggers_on,
-        controlled_on=controlled_on,
+        controlled_on_entities=controlled_on_entities,
         is_day_time=is_day_time,
         triggers_disabled=triggers_disabled,
         auto_off_disabled=auto_off_disabled,
@@ -733,10 +740,55 @@ class TestTimer:
         )
         inp = _inputs(
             auto_off_at=T0 - timedelta(seconds=1),
+            controlled_on_entities=[LIGHT, LIGHT2],
         )
         result = evaluate(cfg, inp)
         assert result.action == ActionType.TURN_OFF
         assert result.target_entities == [LIGHT, LIGHT2]
+        assert result.auto_off_at is None
+
+    def test_expired_turns_off_only_on_subset(self) -> None:
+        """Mixed on/off subset: only ``LIGHT2`` is on, so
+        auto-off targets and lists only ``LIGHT2`` -- the
+        already-off ``LIGHT`` doesn't appear in either.
+        """
+        cfg = _config(
+            controlled_entities=[LIGHT, LIGHT2],
+            notification_events=[NotificationEvent.AUTO_OFF],
+        )
+        inp = _inputs(
+            auto_off_at=T0 - timedelta(seconds=1),
+            controlled_on_entities=[LIGHT2],
+            friendly_names={
+                LIGHT: "Hallway Light",
+                LIGHT2: "Hallway Light 2",
+            },
+        )
+        result = evaluate(cfg, inp)
+        assert result.action == ActionType.TURN_OFF
+        assert result.target_entities == [LIGHT2]
+        assert "Hallway Light 2" in result.notification
+        assert "Hallway Light" not in result.notification.replace(
+            "Hallway Light 2",
+            "",
+        )
+
+    def test_expired_all_already_off_is_noop(self) -> None:
+        """Timer expired but every controlled entity is
+        already off: no turn_off, no notification.
+        """
+        cfg = _config(
+            controlled_entities=[LIGHT, LIGHT2],
+            notification_events=[NotificationEvent.AUTO_OFF],
+        )
+        inp = _inputs(
+            auto_off_at=T0 - timedelta(seconds=1),
+            controlled_on_entities=[],
+        )
+        result = evaluate(cfg, inp)
+        assert result.action == ActionType.NONE
+        assert result.target_entities == []
+        assert result.notification == ""
         assert result.auto_off_at is None
 
     def test_not_expired_no_action(self) -> None:
@@ -755,7 +807,11 @@ class TestTimer:
 
     def test_exact_boundary_triggers(self) -> None:
         cfg = _config()
-        inp = _inputs(auto_off_at=T0, current_time=T0)
+        inp = _inputs(
+            auto_off_at=T0,
+            current_time=T0,
+            controlled_on=True,
+        )
         result = evaluate(cfg, inp)
         assert result.action == ActionType.TURN_OFF
 
@@ -769,6 +825,7 @@ class TestTimer:
         )
         inp = _inputs(
             auto_off_at=T0 - timedelta(seconds=1),
+            controlled_on=True,
             friendly_names={LIGHT: "Hallway Light"},
         )
         result = evaluate(cfg, inp)
@@ -890,6 +947,7 @@ class TestAutoOffDisabling:
         inp = _inputs(
             auto_off_at=T0 - timedelta(seconds=1),
             auto_off_disabled=False,
+            controlled_on=True,
         )
         result = evaluate(cfg, inp)
         assert result.action == ActionType.TURN_OFF
@@ -1078,6 +1136,7 @@ class TestEndToEndScenarios:
             _inputs(
                 auto_off_at=r3.auto_off_at,
                 current_time=T0 + timedelta(seconds=121),
+                controlled_on=True,
             ),
         )
         assert r5.action == ActionType.TURN_OFF
@@ -1125,6 +1184,7 @@ class TestEndToEndScenarios:
             _inputs(
                 auto_off_at=r1.auto_off_at,
                 current_time=T0 + timedelta(minutes=5, seconds=1),
+                controlled_on=True,
             ),
         )
         assert r2.action == ActionType.TURN_OFF
