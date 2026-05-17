@@ -42,6 +42,8 @@ from .helpers_logic import (
     spec_bucket,
 )
 from .helpers_runtime import (
+    dismiss_handler_crash_notification,
+    emit_handler_crash_notification,
     kick_via_automation_trigger,
 )
 
@@ -464,7 +466,74 @@ async def register_blueprint_handler(
         hass.services.async_remove(DOMAIN, spec.service)
 
     async def _service_wrapper(call: ServiceCall) -> Any:
-        return await spec.service_handler(hass, call)
+        # ``getattr`` rather than ``call.data`` directly so
+        # that synthetic test invocations passing a bare
+        # placeholder (no ``.data`` attribute) still flow
+        # through the wrap correctly. Real ``ServiceCall``
+        # objects always carry a ``data`` mapping; missing
+        # / ``None`` lands in the per-service
+        # ``__unknown__crash`` slot.
+        raw = getattr(call, "data", None)
+        raw_data = dict(raw) if raw is not None else {}
+        try:
+            result = await spec.service_handler(hass, call)
+        except Exception as exc:
+            # Intentionally broad: anything the handler
+            # raised that wasn't already caught + surfaced
+            # by its own argparse / state-write path is a
+            # crash from HA's perspective and would
+            # otherwise leave the user with only a log
+            # entry as evidence. ``asyncio.CancelledError``
+            # inherits from ``BaseException`` since
+            # Python 3.8 and is intentionally NOT caught
+            # here. After emitting the PN, the original
+            # exception is re-raised so HA's own
+            # error-handling fires too (automation page
+            # indicator, logbook entry, ERROR-level
+            # traceback in the log).
+            try:
+                await emit_handler_crash_notification(
+                    hass,
+                    service=spec.service,
+                    service_tag=spec.service_tag,
+                    raw_data=raw_data,
+                    exc=exc,
+                )
+            except Exception:  # noqa: BLE001
+                # The PN dispatch itself failed (HA
+                # shutting down, services unavailable,
+                # ...). Log it so the failure to surface
+                # the underlying crash is itself visible,
+                # then proceed -- don't shadow the real
+                # exception with the notification dispatch
+                # failure.
+                _LOGGER.exception(
+                    "Failed to emit handler-crash notification for %s",
+                    spec.service,
+                )
+            raise
+        try:
+            # Auto-clear any prior ``__crash`` PN now that
+            # the handler ran cleanly. The dismiss is a
+            # no-op when no crash PN is active (handled
+            # inside ``process_persistent_notifications``),
+            # so the steady-state success path costs one
+            # dict lookup. Wrapped in its own try / except
+            # so a dismiss-time failure can't break a
+            # successful handler invocation -- the worst
+            # case is a stale ``__crash`` PN that the
+            # next clean run gets another chance to clear.
+            await dismiss_handler_crash_notification(
+                hass,
+                service=spec.service,
+                raw_data=raw_data,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "Failed to dismiss prior handler-crash notification for %s",
+                spec.service,
+            )
+        return result
 
     # Per-spec ``supports_response`` plumbing: handlers that
     # hand a ``ServiceResponse`` mapping back to the calling

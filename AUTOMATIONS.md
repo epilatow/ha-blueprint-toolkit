@@ -344,7 +344,24 @@ Lifecycle wiring:
 - `spec_bucket(entry, service)` -- per-handler slot under
   `entry.runtime_data.handlers[service]`.
 - `register_blueprint_handler(hass, entry, spec)` -- wire up service +
-  listeners + restart-recovery; idempotent.
+  listeners + restart-recovery; idempotent. Also wraps the spec's
+  `service_handler` in a top-level try / except: unhandled exceptions surface
+  as a per-instance `__crash` PN via `emit_handler_crash_notification` and
+  re-raise so HA's own error machinery still fires; successful runs call
+  `dismiss_handler_crash_notification` to clear any prior `__crash` PN so a
+  recovered handler always drops its own stale finding.
+- `emit_handler_crash_notification(hass, *, ..., exc)` -- emit a per-instance
+  `__crash` PN summarising an unhandled handler exception. Body is terse on
+  purpose (exception class + `md_escape`-d message + "see HA log" pointer);
+  the full traceback lives in the HA log via the dispatcher's re-raise. ID
+  follows the per-instance `blueprint_toolkit_{service}__{instance_id}__crash`
+  convention.
+- `dismiss_handler_crash_notification(hass, *, service, raw_data)` --
+  companion to the emit helper. Dispatches a dismiss against the same
+  `__crash` slot; a no-op when no crash PN is currently active. Called by the
+  dispatcher's success path so the auto-clear contract is uniform across
+  handlers, independent of whether a handler happens to use the sweep
+  dispatcher elsewhere.
 - `unregister_blueprint_handler(hass, entry, spec)` -- tear down service +
   listeners + on_teardown.
 - `parse_entity_registry_update(event_data)` -- extract
@@ -713,7 +730,12 @@ against that field).
 - **Notification IDs follow
   `blueprint_toolkit_{service}__{instance_id}__{kind}`.** `__` is the reserved
   field separator; HA entity_ids can never contain `__` so the format stays
-  parseable.
+  parseable. Two `{kind}` slots are shared infrastructure that fires for every
+  handler: `__config_error` (schema / cross-field validation failure; managed
+  by `emit_config_error`) and `__crash` (unhandled handler exception; managed
+  by `register_blueprint_handler`'s wrap via `emit_handler_crash_notification`
+  / `dismiss_handler_crash_notification`). Other `{kind}` values are
+  per-handler.
 - **Pick the right dispatcher.** `process_persistent_notifications_with_sweep`
   is the right choice when the caller is asserting the COMPLETE per-instance
   notification state for this run -- it dismisses any prior-run notifications

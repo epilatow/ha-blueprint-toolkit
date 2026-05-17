@@ -40,6 +40,8 @@ from .helpers_logic import (
     instance_id_for_config_error,
     instance_state_entity_id,
     make_config_error_notification,
+    md_escape,
+    notification_prefix,
     spec_bucket,
 )
 
@@ -317,6 +319,122 @@ async def process_persistent_notifications_with_sweep(
         keep_pattern=keep_pattern,
     )
     await process_persistent_notifications(hass, notifications + orphans)
+
+
+def _handler_crash_notification_id(
+    service: str, raw_data: dict[str, Any]
+) -> tuple[str, str]:
+    """Resolve the (instance_id, notification_id) for the crash slot.
+
+    Shared by the create + dismiss helpers so both
+    target the same per-instance slot. ``instance_id``
+    extraction is best-effort via
+    ``instance_id_for_config_error``: the crash may
+    have fired before schema validation parsed
+    ``instance_id`` out of ``call.data``, so the helper
+    falls back to whatever the raw payload exposes. A
+    handler whose payload never carries an
+    ``instance_id`` lands in the per-service
+    ``__unknown__crash`` slot.
+    """
+    instance_id = instance_id_for_config_error(raw_data)
+    return instance_id, f"{notification_prefix(service, instance_id)}crash"
+
+
+async def emit_handler_crash_notification(
+    hass: HomeAssistant,
+    *,
+    service: str,
+    service_tag: str,
+    raw_data: dict[str, Any],
+    exc: BaseException,
+) -> None:
+    """Surface an unhandled handler exception as a PN.
+
+    The ``register_blueprint_handler`` dispatcher wraps
+    every handler entrypoint with a try / except that
+    calls this on failure, then re-raises so HA's own
+    error machinery (automation page error indicator,
+    logbook entry, full traceback at the ``ERROR``
+    log level) still fires. Without this PN the
+    "automation completes but crashes mid-handler"
+    failure mode is invisible to anyone not actively
+    reading the HA log.
+
+    Notification ID is
+    ``blueprint_toolkit_{service}__{instance_id}__crash``,
+    matching the per-instance convention. The wrap's
+    success path calls
+    ``dismiss_handler_crash_notification`` against the
+    same slot so a recovered handler clears its own
+    prior crash PN regardless of whether the handler
+    happens to use the sweep dispatcher elsewhere.
+
+    Body content stays terse on purpose: exception class
+    + message + "see HA log" pointer. The full traceback
+    is HA's job (we re-raise into it); the PN's job is
+    just to surface that *something* failed so the
+    operator knows to look. ``md_escape`` is applied to
+    the exception message because user-supplied / API-
+    derived strings can contain ``[`` / ``]`` / ``\\``
+    that would corrupt the rendered markdown body.
+    """
+    instance_id, notification_id = _handler_crash_notification_id(
+        service, raw_data
+    )
+    title = f"{service_tag}: Handler crash"
+    body = (
+        f"`{type(exc).__name__}`: {md_escape(str(exc))}\n"
+        f"\n"
+        f"See the Home Assistant log for the full traceback."
+    )
+    spec = PersistentNotification(
+        notification_id=notification_id,
+        title=title,
+        message=body,
+        instance_id=instance_id,
+        active=True,
+    )
+    _LOGGER.warning(
+        "[%s] handler crash for %s: %s: %s",
+        service_tag,
+        instance_id,
+        type(exc).__name__,
+        exc,
+    )
+    await process_persistent_notifications(hass, [spec])
+
+
+async def dismiss_handler_crash_notification(
+    hass: HomeAssistant,
+    *,
+    service: str,
+    raw_data: dict[str, Any],
+) -> None:
+    """Clear the per-instance ``__crash`` PN, if any.
+
+    Called by the dispatcher's success path so a handler
+    that recovers from a prior crash drops its crash PN
+    on the next clean run -- the auto-clear contract
+    holds for every handler, not just those that happen
+    to call ``process_persistent_notifications_with_sweep``.
+
+    ``process_persistent_notifications``'s dismiss path
+    is a no-op when the notification ID isn't currently
+    active, so calling this on every success is free in
+    the steady state (no service call dispatched).
+    """
+    instance_id, notification_id = _handler_crash_notification_id(
+        service, raw_data
+    )
+    spec = PersistentNotification(
+        notification_id=notification_id,
+        title="",
+        message="",
+        instance_id=instance_id,
+        active=False,
+    )
+    await process_persistent_notifications(hass, [spec])
 
 
 async def emit_config_error(
@@ -688,7 +806,9 @@ async def unregister_blueprint_handler(
 
 __all__ = [
     "automation_friendly_name",
+    "dismiss_handler_crash_notification",
     "emit_config_error",
+    "emit_handler_crash_notification",
     "entry_for_domain",
     "kick_via_automation_trigger",
     "make_periodic_trigger_callback",

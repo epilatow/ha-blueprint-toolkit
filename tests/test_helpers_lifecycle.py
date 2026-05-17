@@ -1190,6 +1190,177 @@ class TestRegisterBlueprintHandler:
         assert result == {"notification_message": "hello"}
 
     @pytest.mark.asyncio
+    async def test_service_wrapper_emits_crash_pn_and_reraises(
+        self,
+    ) -> None:
+        """A handler that raises an unexpected exception
+        must surface as a per-instance ``__crash``
+        persistent notification AND re-raise so HA's own
+        error machinery (automation page indicator,
+        logbook entry, full traceback at ERROR level)
+        still fires. Without this the user only sees the
+        crash in the HA log, which goes unread until
+        someone notices state-entity drift or a missing
+        notification stream.
+        """
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+
+        class _Boom(RuntimeError):
+            pass
+
+        async def _crashing_handler(_h: Any, _call: Any) -> Any:
+            raise _Boom("template helper [removed]")
+
+        spec = _make_spec(service_handler=_crashing_handler)
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,
+            spec,
+        )
+        wrapper = hass.services.registered[(DOMAIN, spec.service)]
+
+        class _Call:
+            data = {"instance_id": "automation.test"}
+
+        with pytest.raises(_Boom):
+            await wrapper(_Call())
+
+        pn_creates = [
+            c
+            for c in hass.services.calls
+            if c[0] == "persistent_notification" and c[1] == "create"
+        ]
+        assert len(pn_creates) == 1
+        data = pn_creates[0][2]
+        assert data["notification_id"] == (
+            "blueprint_toolkit_trigger_entity_controller__"
+            "automation.test__crash"
+        )
+        # Title carries the service tag so the operator
+        # can scan the panel and pick out which handler
+        # crashed without opening the body.
+        assert "TEC" in data["title"]
+        # Body names the exception class + carries the
+        # md-escaped message so ``[`` / ``]`` in the
+        # message text don't corrupt the rendered
+        # markdown.
+        assert "_Boom" in data["message"]
+        assert "\\[removed\\]" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_service_wrapper_skips_crash_pn_on_success(
+        self,
+    ) -> None:
+        """A successful handler run must not emit a
+        crash PN. Guards against the wrap firing on
+        every call.
+        """
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+        spec = _make_spec()
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,
+            spec,
+        )
+        wrapper = hass.services.registered[(DOMAIN, spec.service)]
+        await wrapper(object())
+        pn_creates = [
+            c
+            for c in hass.services.calls
+            if c[0] == "persistent_notification" and c[1] == "create"
+        ]
+        assert pn_creates == []
+
+    @pytest.mark.asyncio
+    async def test_service_wrapper_dismisses_prior_crash_pn_on_success(
+        self,
+    ) -> None:
+        """A successful handler run must dismiss any
+        prior ``__crash`` PN -- the auto-clear contract
+        has to hold for every handler, not just those
+        that happen to use the sweep dispatcher
+        elsewhere in their success path.
+        """
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+        spec = _make_spec()
+
+        crash_nid = (
+            "blueprint_toolkit_trigger_entity_controller__"
+            "automation.test__crash"
+        )
+        # Seed the persistent-notification store so the
+        # dispatcher's "skip dismiss when ID isn't
+        # currently active" guard doesn't elide the call
+        # we're asserting on.
+        hass.data["persistent_notification"] = {
+            crash_nid: _stub_existing_pn(
+                crash_nid, title="stale", message="stale"
+            ),
+        }
+
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,
+            spec,
+        )
+        wrapper = hass.services.registered[(DOMAIN, spec.service)]
+
+        class _Call:
+            data = {"instance_id": "automation.test"}
+
+        await wrapper(_Call())
+
+        dismisses = [
+            c
+            for c in hass.services.calls
+            if c[0] == "persistent_notification" and c[1] == "dismiss"
+        ]
+        assert len(dismisses) == 1
+        assert dismisses[0][2] == {"notification_id": crash_nid}
+
+    @pytest.mark.asyncio
+    async def test_service_wrapper_reraises_when_pn_dispatch_fails(
+        self,
+    ) -> None:
+        """If the crash-PN dispatch itself fails (HA
+        shutting down, services unavailable, ...), the
+        original handler exception must still propagate.
+        Otherwise the wrapper would shadow the real
+        crash with a notification-dispatch failure and
+        the operator would chase the wrong symptom.
+        """
+        hass = _MockHass(is_running=True)
+        entry = _MockEntry()
+
+        class _Boom(RuntimeError):
+            pass
+
+        async def _crashing_handler(_h: Any, _call: Any) -> Any:
+            raise _Boom("handler crash")
+
+        async def _failing_async_call(*_args: Any, **_kwargs: Any) -> None:
+            raise OSError("pn dispatch unavailable")
+
+        hass.services.async_call = _failing_async_call  # type: ignore[method-assign]
+
+        spec = _make_spec(service_handler=_crashing_handler)
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,
+            spec,
+        )
+        wrapper = hass.services.registered[(DOMAIN, spec.service)]
+
+        class _Call:
+            data = {"instance_id": "automation.test"}
+
+        with pytest.raises(_Boom):
+            await wrapper(_Call())
+
+    @pytest.mark.asyncio
     async def test_idempotent_under_re_register(self) -> None:
         hass = _MockHass(is_running=True)
 
