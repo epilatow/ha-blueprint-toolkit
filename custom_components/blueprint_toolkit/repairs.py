@@ -145,7 +145,7 @@ def _format_conflict_list(conflicts: list[dict[str, str]]) -> str:
         kind = c.get("kind", "?")
         dest = c.get("destination", "?")
         details = c.get("details", "")
-        if kind == "unknown_symlink":
+        if kind == "foreign_symlink":
             lines.append(f"unexpected symlink: {dest} ({details})")
         elif kind == "regular_file":
             lines.append(f"unexpected file: {dest}")

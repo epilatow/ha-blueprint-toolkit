@@ -38,7 +38,7 @@ custom_components/blueprint_toolkit/
 |                              # initialises entry.runtime_data
 |                              # imports + delegates to each handler
 +-- helpers.py                 # all shared helpers (see below)
-+-- const.py                   # DOMAIN, OPTION_*, STORAGE_*
++-- const.py                   # DOMAIN, OPTION_*
 +-- <service>/                 # one subpackage per automation
 |   +-- __init__.py            # minimal shim: marker + one-line
 |   |                          # docstring; no exports

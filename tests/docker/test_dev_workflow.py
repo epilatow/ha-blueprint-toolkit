@@ -112,9 +112,7 @@ def _clear_installed_symlinks(docker_ha: DockerHA) -> None:
     Leaves the repo clone and HA state alone.
     """
     docker_ha.exec_shell(
-        "rm -rf /config/blueprints "
-        "/config/www/blueprint_toolkit && "
-        "rm -f /config/.blueprint_toolkit.manifest.json",
+        "rm -rf /config/blueprints /config/www/blueprint_toolkit",
     )
 
 

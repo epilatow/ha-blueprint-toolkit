@@ -27,11 +27,14 @@ package off ``<integration>/..``; the integration's
 ``__init__.py`` keeps its module-level imports HA-free for
 exactly this case.
 
-The reconciler runs in ``MANUAL`` mode so symlinks pointing
-into any deployed copy of the integration's bundled subtree
-are treated as ours. That lets the developer redeploy from a
+The reconciler identifies ours-symlinks by their target
+containing the bundled subtree marker, so symlinks pointing
+into any deployed copy of the integration's bundle are
+treated as ours. That lets the developer redeploy from a
 different build directory without tripping the
-unknown-symlink conflict path.
+foreign-symlink conflict path, and lets dev-install share
+ownership semantics with the integration's startup
+reconcile without needing a shared on-disk manifest.
 
 Backward-compatibility contract
 -------------------------------
@@ -53,54 +56,19 @@ contract:
 dev-deploy is allowed to assume the modern shape only when
 it invokes the dev-install.py inside the *current* build
 (not the snapshot copy used by --restore).
-
-State
------
-
-A small JSON manifest is written to
-``<ha-config>/.blueprint_toolkit.manifest.json`` listing
-the destination paths we currently own. Subsequent runs diff
-against this file so stale symlinks (from files that used to
-be bundled but aren't anymore) get removed.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
-
-MANIFEST_FILENAME = ".blueprint_toolkit.manifest.json"
 
 # This file lives at <integration>/scripts/dev-install.py;
 # resolved so a symlink in the repo (scripts/dev-install.py
 # -> ../custom_components/.../scripts/dev-install.py) still
 # points discovery at the real integration directory.
 _INTEGRATION_DIR = Path(__file__).resolve().parent.parent
-
-
-def _load_manifest(ha_config: Path) -> frozenset[Path]:
-    path = ha_config / MANIFEST_FILENAME
-    if not path.exists():
-        return frozenset()
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        # Broken manifest is treated as "no prior state";
-        # next reconcile rebuilds from scratch.
-        return frozenset()
-    destinations = data.get("destinations", [])
-    return frozenset(Path(p) for p in destinations)
-
-
-def _write_manifest(ha_config: Path, manifest: frozenset[Path]) -> None:
-    path = ha_config / MANIFEST_FILENAME
-    data = {
-        "version": 1,
-        "destinations": sorted(str(p) for p in manifest),
-    }
-    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -166,18 +134,11 @@ def main() -> int:
     # resolve correctly.
     sys.path.insert(0, str(_INTEGRATION_DIR.parent))
     from blueprint_toolkit import installer  # noqa: PLC0415
-    from blueprint_toolkit.reconciler import (  # noqa: PLC0415
-        ActionKind,
-        Mode,
-        plan,
-    )
+    from blueprint_toolkit.reconciler import ActionKind, plan  # noqa: PLC0415
 
-    prior_manifest = _load_manifest(ha_config)
     the_plan = plan(
         bundled_root=bundled_root,
         config_root=ha_config,
-        prior_manifest=prior_manifest,
-        mode=Mode.MANUAL,
         cli_symlink_dir=(
             args.cli_symlink_dir.resolve() if args.cli_symlink_dir else None
         ),
@@ -208,12 +169,6 @@ def main() -> int:
     )
     for err in result.errors:
         sys.stderr.write(f"error: {err}\n")
-
-    # Persist the manifest only if the apply succeeded; if
-    # any action errored we leave the manifest untouched so
-    # the next run re-attempts the missing work.
-    if not result.errors:
-        _write_manifest(ha_config, the_plan.new_manifest)
 
     if result.errors:
         return 1

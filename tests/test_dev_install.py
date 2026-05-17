@@ -10,16 +10,16 @@
 # This is AI generated code
 """Tests for scripts/dev-install.py.
 
-Replaces tests/test_install.py (bash-based install.sh is
-deleted in this commit). Invokes dev-install.py as a
-subprocess against tempdir-based repo + config layouts,
-verifying symlink creation, idempotency, manifest
-persistence, error handling, and CLI install.
+Invokes dev-install.py as a subprocess against tempdir-based
+repo + config layouts, verifying symlink creation,
+idempotency, error handling, and CLI install. Ownership
+recognition is driven entirely by the bundle-marker check
+in the reconciler -- no on-disk manifest is consulted or
+written.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -31,7 +31,6 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 INTEGRATION_SRC = REPO_ROOT / "custom_components" / "blueprint_toolkit"
 DEV_INSTALL_REL = "scripts/dev-install.py"
-MANIFEST_FILENAME = ".blueprint_toolkit.manifest.json"
 
 
 # ---- Helpers --------------------------------------------------
@@ -111,14 +110,6 @@ def _installed_paths(ha_config: Path) -> list[Path]:
     return sorted(p for p in ha_config.rglob("*") if p.is_symlink())
 
 
-def _load_manifest(ha_config: Path) -> list[str]:
-    path = ha_config / MANIFEST_FILENAME
-    if not path.exists():
-        return []
-    data = json.loads(path.read_text())
-    return sorted(data.get("destinations", []))
-
-
 # ---- Fresh install --------------------------------------------
 
 
@@ -159,17 +150,6 @@ class TestFreshInstall:
                 / "demo.yaml"
             ).resolve()
         )
-
-    def test_manifest_persisted(self, tmp_path: Path) -> None:
-        integration = _make_fake_integration(tmp_path / "build")
-        config = tmp_path / "config"
-        config.mkdir()
-
-        _run_dev_install(integration_dir=integration, ha_config=config)
-        paths = _load_manifest(config)
-        assert len(paths) == 1  # blueprints only (no www, no cli)
-        for p in paths:
-            assert p.startswith(str(config))
 
 
 # ---- Idempotency ----------------------------------------------
@@ -239,7 +219,6 @@ class TestDryRun:
         )
         assert r.returncode == 0
         assert not _installed_paths(config)
-        assert not (config / MANIFEST_FILENAME).exists()
         # Plan should still be printed.
         assert "install:" in r.stdout
 

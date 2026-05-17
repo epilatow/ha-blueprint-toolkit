@@ -62,7 +62,6 @@ if TYPE_CHECKING:
 # the test functions themselves.
 DOMAIN = "blueprint_toolkit"
 OPTION_CLI_SYMLINK_DIR = "cli_symlink_dir"
-STORAGE_KEY = f"{DOMAIN}.installed"
 
 
 @pytest.fixture(autouse=True)
@@ -229,32 +228,6 @@ class TestSetupEntry:
         config_dir = Path(hass.config.config_dir)
         for dest in _expected_destinations(config_dir):
             assert dest.is_symlink(), f"missing expected symlink: {dest}"
-
-    async def test_setup_writes_manifest_store(
-        self, hass: HomeAssistant
-    ) -> None:
-        entry = _mock_config_entry(domain=DOMAIN, data={})
-        entry.add_to_hass(hass)
-        await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-        # pytest-HACC intercepts .storage writes -- the
-        # file does not land on disk. Read back via the
-        # Store API instead, which goes through the same
-        # mock and returns the data the integration saved.
-        from homeassistant.helpers.storage import Store
-
-        store: Store[dict[str, Any]] = Store(hass, 1, STORAGE_KEY)
-        body = await store.async_load()
-        assert body is not None, "manifest store not written"
-        destinations = set(body["destinations"])
-        expected = {
-            str(p)
-            for p in _expected_destinations(
-                Path(hass.config.config_dir),
-            )
-        }
-        assert destinations == expected
 
     async def test_setup_registers_services(self, hass: HomeAssistant) -> None:
         # Asserts every handler registers its service on

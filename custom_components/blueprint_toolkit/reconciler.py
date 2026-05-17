@@ -1,19 +1,26 @@
 # This is AI generated code
 """Pure-function planner for the blueprint_toolkit install.
 
-Given the bundled payload, the target config directory, a
-prior-run manifest, and a mode (HACS vs manual dev-install),
+Given the bundled payload and the target config directory,
 return a ``ReconcilePlan`` describing the symlink
 ``install`` / ``update`` / ``remove`` / ``keep`` actions
 that should happen next. Destinations occupied by unexpected
-content (regular files, unknown symlinks) are surfaced as
+content (regular files, foreign symlinks) are surfaced as
 ``Conflict``s; the installer refuses to overwrite them unless
 explicitly forced via the Repairs UI.
 
+Ownership of an existing symlink is determined by its target:
+any symlink whose target string (or resolved path) contains
+the bundled subtree marker is treated as ours. The bundle
+itself is the source of truth -- there is no separate
+on-disk allowlist of "what we previously installed", so the
+dev-install CLI and the integration agree on what's ours
+without sharing state.
+
 No HA imports; no side effects beyond read-only filesystem
-probes (``exists``, ``is_symlink``, ``readlink``). This
-module is safe to import outside of HA and is reused by
-``scripts/dev-install.py``.
+probes (``exists``, ``is_symlink``, ``readlink``, directory
+enumeration). This module is safe to import outside of HA
+and is reused by ``scripts/dev-install.py``.
 """
 
 from __future__ import annotations
@@ -23,13 +30,19 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-# Path marker that identifies "ours" in manual mode: any
-# symlink whose target contains this segment is treated as
-# a blueprint_toolkit-owned symlink, regardless of
-# which clone path the target goes through. Lets
-# dev-install.py safely repoint symlinks when the dev
-# clone moves (e.g., /root/old -> /root/new).
-BUNDLED_MARKER = "/custom_components/blueprint_toolkit/bundled/"
+# Path marker that identifies "ours": any symlink whose
+# target contains this segment is treated as a
+# blueprint_toolkit-owned symlink. The integration's
+# directory name is unique to this project, so any path
+# ending in ``blueprint_toolkit/bundled/<...>`` necessarily
+# points at our private bundle subtree -- regardless of
+# whether the parent is ``/custom_components/`` (HACS
+# install path), ``/<dev-deploy-workspace>/<timestamp>/``
+# (dev-deploy snapshot path), or another layout a future
+# dev workflow might introduce.
+BUNDLED_MARKER = "/blueprint_toolkit/bundled/"
+
+_BLUEPRINTS_SUBDIR = Path("blueprints/automation/blueprint_toolkit")
 
 
 class ActionKind(Enum):
@@ -37,25 +50,8 @@ class ActionKind(Enum):
 
     INSTALL = "install"  # dest missing; create a new symlink
     UPDATE = "update"  # dest is our symlink, target changed; replace
-    REMOVE = "remove"  # dest in prior manifest but no longer bundled
+    REMOVE = "remove"  # dest is an ours-symlink no longer bundled
     KEEP = "keep"  # dest already correct; no-op
-
-
-class Mode(Enum):
-    """How strict to be about recognizing existing destinations.
-
-    HACS: a non-matching symlink is "ours" only if recorded
-    in prior_manifest. Otherwise it's a conflict; the Repairs
-    UI decides whether to overwrite.
-
-    MANUAL: dev-install.py sees its own symlinks plus symlinks
-    from prior clone layouts. Any symlink whose target goes
-    through ``BUNDLED_MARKER`` is treated as ours so the dev
-    loop can freely switch between clone locations.
-    """
-
-    HACS = "hacs"
-    MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -68,14 +64,13 @@ class Action:
 @dataclass(frozen=True)
 class Conflict:
     destination: Path
-    kind: str  # "regular_file" | "regular_dir" | "unknown_symlink" | "other"
-    details: str  # e.g. readlink output for unknown_symlink
+    kind: str  # "regular_file" | "regular_dir" | "foreign_symlink" | "other"
+    details: str  # e.g. readlink output for foreign_symlink
 
 
 @dataclass(frozen=True)
 class ReconcilePlan:
     actions: tuple[Action, ...]
-    new_manifest: frozenset[Path]
     conflicts: tuple[Conflict, ...]
 
 
@@ -122,6 +117,70 @@ def _destination_mapping(
     return mapping
 
 
+def _is_ours(destination: Path) -> bool:
+    """True if ``destination`` is a symlink whose target points
+    into our bundled subtree.
+
+    Checks both the literal target string (catches relative
+    symlinks that traverse through the marker) and the
+    resolved path (catches absolute symlinks or chains that
+    end up inside the bundle through another route).
+    """
+    if not destination.is_symlink():
+        return False
+    try:
+        current_target = os.readlink(destination)
+    except OSError:
+        return False
+    if BUNDLED_MARKER in current_target:
+        return True
+    try:
+        resolved = (destination.parent / current_target).resolve(strict=False)
+    except OSError:
+        return False
+    return BUNDLED_MARKER in str(resolved)
+
+
+def _install_roots(
+    config_root: Path,
+    cli_symlink_dir: Path | None,
+) -> list[Path]:
+    """Return the directories the integration installs symlinks into.
+
+    Used by the sweep pass to find ours-symlinks the current
+    bundled mapping no longer covers (renamed or removed
+    bundled files). MUST stay in lockstep with the set of
+    destination roots ``_destination_mapping`` writes into;
+    a destination installed outside one of these roots
+    would never be swept on removal.
+    """
+    roots = [config_root / _BLUEPRINTS_SUBDIR]
+    if cli_symlink_dir is not None:
+        roots.append(cli_symlink_dir)
+    return roots
+
+
+def discover_ours_destinations(
+    config_root: Path,
+    cli_symlink_dir: Path | None = None,
+) -> frozenset[Path]:
+    """Return every existing ours-symlink under the install roots.
+
+    Caller uses this for the uninstall sweep (where the
+    bundled mapping is empty) and the in-process tests.
+    Recurses into subdirectories so nested bundled layouts
+    (if added later) stay sweep-correct.
+    """
+    found: set[Path] = set()
+    for root in _install_roots(config_root, cli_symlink_dir):
+        if not root.is_dir():
+            continue
+        for child in root.rglob("*"):
+            if _is_ours(child):
+                found.add(child)
+    return frozenset(found)
+
+
 def _compute_symlink_target(destination: Path, source: Path) -> Path:
     """Compute the relative symlink target from destination to source.
 
@@ -142,8 +201,6 @@ def _compute_symlink_target(destination: Path, source: Path) -> Path:
 def _classify_destination(
     destination: Path,
     expected_target: Path,
-    prior_manifest: frozenset[Path],
-    mode: Mode,
     *,
     force_overwrite: bool = False,
 ) -> tuple[ActionKind | None, Conflict | None]:
@@ -155,8 +212,7 @@ def _classify_destination(
     is occupied by something we refuse to overwrite.
 
     REMOVE actions are not produced here; they're synthesized
-    by ``plan`` from ``prior_manifest`` entries that fall out
-    of the current bundled set.
+    by ``plan`` from the sweep over existing ours-symlinks.
 
     ``force_overwrite=True`` (used by the Repairs Overwrite
     flow) treats any existing destination as ours-to-replace:
@@ -174,35 +230,15 @@ def _classify_destination(
     # this branch or we'd try to create another in its place.
     if destination.is_symlink():
         current_target = os.readlink(destination)
-        expected_target_str = str(expected_target)
-        if current_target == expected_target_str:
+        if current_target == str(expected_target):
             return ActionKind.KEEP, None
 
-        if force_overwrite:
+        if force_overwrite or _is_ours(destination):
             return ActionKind.UPDATE, None
 
-        recognized = destination in prior_manifest
-        if mode == Mode.MANUAL and not recognized:
-            # Accept symlinks whose target string references
-            # the bundled subtree, or whose resolved path
-            # lands inside it. Covers same-host clone moves.
-            if BUNDLED_MARKER in current_target:
-                recognized = True
-            else:
-                try:
-                    resolved = (destination.parent / current_target).resolve(
-                        strict=False
-                    )
-                    if BUNDLED_MARKER in str(resolved):
-                        recognized = True
-                except OSError:
-                    pass
-
-        if recognized:
-            return ActionKind.UPDATE, None
         return None, Conflict(
             destination=destination,
-            kind="unknown_symlink",
+            kind="foreign_symlink",
             details=f"target={current_target!r}",
         )
 
@@ -237,8 +273,6 @@ def plan(
     *,
     bundled_root: Path,
     config_root: Path,
-    prior_manifest: frozenset[Path],
-    mode: Mode = Mode.HACS,
     cli_symlink_dir: Path | None = None,
     force_destinations: frozenset[Path] = frozenset(),
 ) -> ReconcilePlan:
@@ -248,12 +282,6 @@ def plan(
         bundled_root: Absolute path to
             ``.../custom_components/blueprint_toolkit/bundled/``.
         config_root: Absolute path to HA's ``/config/`` dir.
-        prior_manifest: Set of destination paths the installer
-            recorded after its last successful apply. Empty on
-            first install.
-        mode: ``HACS`` (strict) or ``MANUAL`` (lenient --
-            symlinks pointing into any bundled subtree are
-            recognized).
         cli_symlink_dir: If given, install ``bundled/cli/*.py``
             into this directory. If None (default), CLI files
             are not installed.
@@ -268,7 +296,7 @@ def plan(
 
     actions: list[Action] = []
     conflicts: list[Conflict] = []
-    new_manifest: set[Path] = set()
+    install_dests: set[Path] = set()
 
     for dest in sorted(mapping):
         src = mapping[dest]
@@ -276,25 +304,25 @@ def plan(
         kind, conflict = _classify_destination(
             destination=dest,
             expected_target=target,
-            prior_manifest=prior_manifest,
-            mode=mode,
             force_overwrite=dest in force_destinations,
         )
         if conflict is not None:
             conflicts.append(conflict)
             continue
         assert kind is not None
-        new_manifest.add(dest)
+        install_dests.add(dest)
         actions.append(
             Action(kind=kind, destination=dest, target=target),
         )
 
-    # Any destination we recorded previously but that falls
-    # out of the current mapping gets a REMOVE action. We do
-    # not REMOVE destinations that are now conflicts; those
-    # will be listed in the Repairs UI and the user decides.
+    # Sweep: any ours-symlink under our install roots that
+    # the current bundled mapping no longer covers gets a
+    # REMOVE action. We do not REMOVE destinations that are
+    # now conflicts; those will be listed in the Repairs UI
+    # and the user decides.
     conflict_dests = {c.destination for c in conflicts}
-    for dest in sorted(prior_manifest - new_manifest - conflict_dests):
+    existing = discover_ours_destinations(config_root, cli_symlink_dir)
+    for dest in sorted(existing - install_dests - conflict_dests):
         actions.append(
             Action(
                 kind=ActionKind.REMOVE,
@@ -305,6 +333,5 @@ def plan(
 
     return ReconcilePlan(
         actions=tuple(actions),
-        new_manifest=frozenset(new_manifest),
         conflicts=tuple(conflicts),
     )

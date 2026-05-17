@@ -32,12 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import installer, reconciler
-from .const import (
-    DOMAIN,
-    OPTION_CLI_SYMLINK_DIR,
-    STORAGE_KEY,
-    STORAGE_VERSION,
-)
+from .const import DOMAIN, OPTION_CLI_SYMLINK_DIR
 
 # Repairs issue IDs are duplicated here (the source-of-
 # truth lives in repairs.py) rather than imported, so this
@@ -92,37 +87,6 @@ def _coerce_cli_symlink_dir(raw: object) -> Path | None:
     if not raw:
         return None
     return Path(raw)
-
-
-async def _load_prior_manifest(hass: HomeAssistant) -> frozenset[Path]:
-    from homeassistant.helpers.storage import Store
-
-    store: Store[dict[str, object]] = Store(
-        hass,
-        STORAGE_VERSION,
-        STORAGE_KEY,
-    )
-    raw = await store.async_load() or {}
-    maybe_paths = raw.get("destinations")
-    if not isinstance(maybe_paths, list):
-        return frozenset()
-    return frozenset(Path(p) for p in maybe_paths if isinstance(p, str))
-
-
-async def _save_manifest(
-    hass: HomeAssistant,
-    destinations: frozenset[Path],
-) -> None:
-    from homeassistant.helpers.storage import Store
-
-    store: Store[dict[str, object]] = Store(
-        hass,
-        STORAGE_VERSION,
-        STORAGE_KEY,
-    )
-    await store.async_save(
-        {"destinations": sorted(str(p) for p in destinations)},
-    )
 
 
 async def _fire_reload_services(
@@ -282,7 +246,6 @@ async def async_setup_entry(
         entry.options.get(OPTION_CLI_SYMLINK_DIR),
     )
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
-    prior = await _load_prior_manifest(hass)
     force_destinations = _consume_pending_force_destinations(hass)
 
     plan = await hass.async_add_executor_job(
@@ -290,8 +253,6 @@ async def async_setup_entry(
             reconciler.plan,
             bundled_root=_BUNDLED_ROOT,
             config_root=config_root,
-            prior_manifest=prior,
-            mode=reconciler.Mode.HACS,
             cli_symlink_dir=cli_symlink_dir,
             force_destinations=force_destinations,
         ),
@@ -313,8 +274,6 @@ async def async_setup_entry(
 
     _surface_conflicts(hass, entry, plan.conflicts)
     _surface_failure(hass, entry, result.errors)
-
-    await _save_manifest(hass, plan.new_manifest)
 
     # Re-render blueprint-backed automation actions when
     # the bundled blueprint YAML changed, so HA picks up
@@ -382,9 +341,19 @@ async def async_remove_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> None:
-    """Remove the config entry, wiping everything we installed."""
-    prior = await _load_prior_manifest(hass)
-    if not prior:
+    """Remove the config entry, wiping every ours-symlink we own."""
+    config_root = Path(hass.config.config_dir)
+    cli_symlink_dir = _coerce_cli_symlink_dir(
+        entry.options.get(OPTION_CLI_SYMLINK_DIR),
+    )
+    ours = await hass.async_add_executor_job(
+        functools.partial(
+            reconciler.discover_ours_destinations,
+            config_root,
+            cli_symlink_dir,
+        ),
+    )
+    if not ours:
         return
 
     actions = tuple(
@@ -393,13 +362,8 @@ async def async_remove_entry(
             destination=dest,
             target=None,
         )
-        for dest in sorted(prior)
+        for dest in sorted(ours)
     )
-    plan = reconciler.ReconcilePlan(
-        actions=actions,
-        new_manifest=frozenset(),
-        conflicts=(),
-    )
+    plan = reconciler.ReconcilePlan(actions=actions, conflicts=())
     await hass.async_add_executor_job(installer.apply, plan)
-    await _save_manifest(hass, frozenset())
     await _fire_reload_services(hass, automation=True)

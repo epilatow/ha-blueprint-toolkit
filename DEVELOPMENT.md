@@ -459,12 +459,13 @@ By default the working tree must be clean. Useful flags:
 Plain Python (no uv). Reads the checked-out repo under `--repo-dir` and
 reconciles its bundled payload into `/config/blueprints/` (and optionally
 `<cli-symlink-dir>/`) as symlinks pointing back into the bundled subtree.
-Idempotent; tracks state in `<ha-config>/.blueprint_toolkit.manifest.json` so
-stale symlinks from renamed or removed bundled files get cleaned up on the
-next run. Refuses to overwrite regular files at any destination; existing
-symlinks whose targets match the bundled marker are treated as ours and
-rewritten. Invoked by `dev-deploy.py` on every push, but can also be run
-directly on the host during debugging.
+Idempotent: ownership of an existing symlink is decided by its target -- any
+symlink whose target string contains the bundled subtree marker
+(`/custom_components/blueprint_toolkit/bundled/`) is treated as ours. Stale
+symlinks from renamed or removed bundled files get swept on the next run.
+Refuses to overwrite regular files at any destination. Invoked by
+`dev-deploy.py` on every push, but can also be run directly on the host during
+debugging.
 
 Flags: `--ha-config <path>` (default `/config`), `--cli-symlink-dir <path>`
 (omit to skip CLI), `--dry-run`.

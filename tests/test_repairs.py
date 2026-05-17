@@ -138,7 +138,7 @@ async def _get_issue(
 
 
 class TestInstallConflictsFlow:
-    async def test_unknown_symlink_creates_issue_and_overwrite_clears_it(
+    async def test_foreign_symlink_creates_issue_and_overwrite_clears_it(
         self,
         hass: HomeAssistant,
         tmp_path: Path,
@@ -153,7 +153,7 @@ class TestInstallConflictsFlow:
         dest.symlink_to(stray)
 
         # Run setup; reconciler should classify the
-        # pre-seeded symlink as unknown_symlink and
+        # pre-seeded symlink as foreign_symlink and
         # surface a repair issue.
         entry = _mock_config_entry(domain=DOMAIN, data={})
         entry.add_to_hass(hass)
