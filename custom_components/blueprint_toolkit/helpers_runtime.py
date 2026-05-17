@@ -806,11 +806,8 @@ async def unregister_blueprint_handler(
 
 __all__ = [
     "automation_friendly_name",
-    "dismiss_handler_crash_notification",
     "emit_config_error",
-    "emit_handler_crash_notification",
     "entry_for_domain",
-    "kick_via_automation_trigger",
     "make_periodic_trigger_callback",
     "prepare_notifications",
     "process_persistent_notifications",

@@ -320,9 +320,6 @@ Notifications:
 - `validate_payload_or_emit_config_error(hass, raw, schema, emit)` -- run a
   `vol.Schema` over `raw`; on `MultipleInvalid` / `Invalid`, emit a
   config-error notification and return `None`; caller short-circuits.
-- `instance_id_for_config_error(raw_data)` -- best-effort instance_id
-  extraction for config-error paths where schema validation failed before the
-  field could be parsed.
 - `prepare_notifications(...)` -- sort + cap helper consuming `CappableResult`
   objects; emits clean-result notifications when the cap is exceeded; always
   emits a cap-summary slot.
@@ -344,51 +341,24 @@ Lifecycle wiring:
 - `spec_bucket(entry, service)` -- per-handler slot under
   `entry.runtime_data.handlers[service]`.
 - `register_blueprint_handler(hass, entry, spec)` -- wire up service +
-  listeners + restart-recovery; idempotent. Also wraps the spec's
-  `service_handler` in a top-level try / except: unhandled exceptions surface
-  as a per-instance `__crash` PN via `emit_handler_crash_notification` and
-  re-raise so HA's own error machinery still fires; successful runs call
-  `dismiss_handler_crash_notification` to clear any prior `__crash` PN so a
-  recovered handler always drops its own stale finding.
-- `emit_handler_crash_notification(hass, *, ..., exc)` -- emit a per-instance
-  `__crash` PN summarising an unhandled handler exception. Body is terse on
-  purpose (exception class + `md_escape`-d message + "see HA log" pointer);
-  the full traceback lives in the HA log via the dispatcher's re-raise. ID
-  follows the per-instance `blueprint_toolkit_{service}__{instance_id}__crash`
-  convention.
-- `dismiss_handler_crash_notification(hass, *, service, raw_data)` --
-  companion to the emit helper. Dispatches a dismiss against the same
-  `__crash` slot; a no-op when no crash PN is currently active. Called by the
-  dispatcher's success path so the auto-clear contract is uniform across
-  handlers, independent of whether a handler happens to use the sweep
-  dispatcher elsewhere.
+  listeners + restart-recovery; idempotent. Also surfaces any unhandled
+  handler exception as a per-instance `__crash` persistent notification
+  (auto-cleared on the next successful run) so silently-broken automations are
+  visible to the operator.
 - `unregister_blueprint_handler(hass, entry, spec)` -- tear down service +
   listeners + on_teardown.
-- `parse_entity_registry_update(event_data)` -- extract
-  `(action, old_id, new_id)` for automation entities.
-- `discover_automations_using_blueprint(hass, blueprint_path)` -- walk
-  `DATA_COMPONENT.entities`.
-- `recover_at_startup(hass, *, service_tag, blueprint_path, kick)` --
-  discovery + standardized "kicking N for catch-up" log + per-entity `kick`
-  (best-effort).
 - `schedule_periodic_with_jitter(...)` -- per-instance jittered periodic
   scheduling that hands the action through an entry-scoped task.
-- `make_periodic_trigger_callback(hass, instance_id, *, instances_getter, extra_variables=None)`
-  -- canonical `automation.trigger` callback (`trigger_id="periodic"` plus
-  optional flat extra variables) for handlers that run a periodic scan. Drops
-  silently if the instance has been removed between scheduling and firing.
-- `kick_via_automation_trigger(hass, entity_id, variables)` -- thin
-  `automation.trigger` wrapper consumed by every handler's restart-recovery
-  `_async_kick_for_recovery` and any other synthetic invocation path.
-  `variables` is flat; nested `trigger.*` overrides get silently dropped by
-  HA's `automation.trigger`.
+- `make_periodic_trigger_callback(...)` -- canonical `automation.trigger`
+  callback (`trigger_id="periodic"` plus optional flat extra variables) for
+  handlers that run a periodic scan. Drops silently if the instance has been
+  removed between scheduling and firing. See "Spec + lifecycle" below for the
+  kwargs handlers pass.
 - `make_lifecycle_mutators(...)` -- factory returning a `LifecycleMutators`
-  (`on_reload`, `on_entity_remove`, `on_entity_rename`, `on_teardown`).
-  Required kwargs: `instances_getter`, `cancel_field`, `service_tag`,
-  `logger`. Optional: `reset_armed_interval_on_reload` (default `False`).
-  Reads the cancel- callable via `getattr(s, cancel_field, None)` so the same
-  helper works for both `cancel_timer` and `cancel_wakeup`-flavoured state
-  objects.
+  bundle (`on_reload`, `on_entity_remove`, `on_entity_rename`, `on_teardown`)
+  bound for the `BlueprintHandlerSpec`. Reads the cancel- callable via
+  `getattr(s, cancel_field, None)` so the same helper works for both
+  `cancel_timer` and `cancel_wakeup`-flavoured state objects.
 
 ## Schema + argparse
 
@@ -615,12 +585,11 @@ async action directly routes subsequent ticks through HA's internal
 - **Restart-recovery kick** -- handlers that need restart-recovery set
   `kick_variables=` on `_SPEC` to a flat `automation.trigger` variables dict
   (e.g. `{"trigger_id": "manual"}` for the watchdogs, TEC's synthetic TIMER
-  `{"trigger_entity_id": "timer", "trigger_to_state": ""}`). The
-  `register_blueprint_handler` dispatcher invokes
-  `kick_via_automation_trigger` against each discovered automation;
-  per-handler `_async_kick_for_recovery` wrappers have been removed. The
-  blueprint action reads the flat top-level keys; HA's `automation.trigger`
-  strips any nested `trigger.*` overrides.
+  `{"trigger_entity_id": "timer", "trigger_to_state": ""}`). The dispatcher
+  fires `automation.trigger` with that payload against every discovered
+  automation on HA-started + reload events. The blueprint action reads the
+  flat top-level keys; HA's `automation.trigger` strips any nested `trigger.*`
+  overrides.
 - **Mutator callbacks** -- one `helpers.make_lifecycle_mutators(...)` call
   (kwargs: `instances_getter=_instances`, `cancel_field=...`,
   `service_tag=_SERVICE_TAG`, `logger=_LOGGER`, optional
@@ -653,7 +622,7 @@ against that field).
   `triggers:` key at all parses but HA renders the resulting automations as
   `unavailable`, the recovery kick never fires, and no scan runs after deploy.
 - **No `homeassistant: start` / `homeassistant: shutdown` triggers** in
-  handler-backed blueprints. The integration's `recover_at_startup` already
+  handler-backed blueprints. The integration's startup-recovery hook already
   kicks every discovered automation when HA fires
   `EVENT_HOMEASSISTANT_STARTED`, and the reload listener handles
   `EVENT_AUTOMATION_RELOADED`. Standalone blueprints don't get the
@@ -733,9 +702,7 @@ against that field).
   parseable. Two `{kind}` slots are shared infrastructure that fires for every
   handler: `__config_error` (schema / cross-field validation failure; managed
   by `emit_config_error`) and `__crash` (unhandled handler exception; managed
-  by `register_blueprint_handler`'s wrap via `emit_handler_crash_notification`
-  / `dismiss_handler_crash_notification`). Other `{kind}` values are
-  per-handler.
+  by `register_blueprint_handler`). Other `{kind}` values are per-handler.
 - **Pick the right dispatcher.** `process_persistent_notifications_with_sweep`
   is the right choice when the caller is asserting the COMPLETE per-instance
   notification state for this run -- it dismisses any prior-run notifications

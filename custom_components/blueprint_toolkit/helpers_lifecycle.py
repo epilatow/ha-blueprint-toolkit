@@ -734,11 +734,9 @@ async def register_blueprint_handler(
 __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
-    "discover_automations_using_blueprint",
     "file_editor_addon_ingress_url",
     "integration_entity_ids",
     "make_lifecycle_mutators",
-    "recover_at_startup",
     "register_blueprint_handler",
     "schedule_periodic_with_jitter",
 ]

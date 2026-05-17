@@ -12,14 +12,12 @@
 # This is AI generated code
 """Unit tests for the shared blueprint_toolkit helpers.
 
-Covers the pure-Python pieces of
-``custom_components/blueprint_toolkit/helpers.py``
-(``parse_entity_registry_update``,
-``make_config_error_notification``,
-``PersistentNotification``) and the lifecycle
-dispatcher (``register_blueprint_handler`` /
-``unregister_blueprint_handler``) using a lightweight
-mock ``hass`` -- enough surface to exercise:
+Covers the pure-Python pieces of the helpers subsystem
+(notification specs, config-error machinery, registry-
+update parsing) and the lifecycle dispatcher
+(``register_blueprint_handler`` / ``unregister_blueprint_handler``)
+using a lightweight mock ``hass`` -- enough surface to
+exercise:
 
 - service-name registration + idempotent re-register
 - conditional listener wiring based on which spec
@@ -146,7 +144,10 @@ sys.modules["homeassistant.helpers.entity_registry"] = _ha_helpers_er
 sys.modules["homeassistant.helpers.event"] = _ha_helpers_event
 sys.modules["homeassistant.helpers.hassio"] = _ha_helpers_hassio
 
-from custom_components.blueprint_toolkit import helpers  # noqa: E402
+from custom_components.blueprint_toolkit import (  # noqa: E402
+    helpers,
+    helpers_logic,
+)
 from custom_components.blueprint_toolkit.const import DOMAIN  # noqa: E402
 
 # --------------------------------------------------------
@@ -404,7 +405,7 @@ def _make_spec(**overrides: Any) -> helpers.BlueprintHandlerSpec:
 
 class TestParseEntityRegistryUpdate:
     def test_remove_action_returns_tuple(self) -> None:
-        result = helpers.parse_entity_registry_update(
+        result = helpers_logic.parse_entity_registry_update(
             {
                 "action": "remove",
                 "entity_id": "automation.foo",
@@ -414,7 +415,7 @@ class TestParseEntityRegistryUpdate:
         assert result == ("remove", "automation.foo", "automation.foo")
 
     def test_update_with_rename_returns_distinct_ids(self) -> None:
-        result = helpers.parse_entity_registry_update(
+        result = helpers_logic.parse_entity_registry_update(
             {
                 "action": "update",
                 "entity_id": "automation.bar",
@@ -425,7 +426,7 @@ class TestParseEntityRegistryUpdate:
 
     def test_non_automation_returns_none(self) -> None:
         assert (
-            helpers.parse_entity_registry_update(
+            helpers_logic.parse_entity_registry_update(
                 {
                     "action": "update",
                     "entity_id": "light.kitchen",
@@ -437,14 +438,14 @@ class TestParseEntityRegistryUpdate:
 
     def test_missing_action_returns_none(self) -> None:
         assert (
-            helpers.parse_entity_registry_update(
+            helpers_logic.parse_entity_registry_update(
                 {"entity_id": "automation.foo"},
             )
             is None
         )
 
     def test_old_id_falls_back_to_new_id_when_absent(self) -> None:
-        result = helpers.parse_entity_registry_update(
+        result = helpers_logic.parse_entity_registry_update(
             {"action": "create", "entity_id": "automation.foo"},
         )
         assert result == ("create", "automation.foo", "automation.foo")
