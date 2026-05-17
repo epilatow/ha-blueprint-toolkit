@@ -10,9 +10,10 @@ file owns each symbol.
 
 Add a new helper to whichever file matches its
 HA-dependency profile and re-export from this shim --
-``test_helpers_shim_re_exports_every_public_symbol``
-catches drift if a new public symbol lands in a flavour
-file but the shim re-export is forgotten.
+``TestHelpersShimReExportsEveryPublicSymbol`` (in
+``tests/test_helpers_lifecycle.py``) catches drift if a
+new public symbol lands in a flavour file but the shim
+re-export is forgotten.
 """
 
 from __future__ import annotations
