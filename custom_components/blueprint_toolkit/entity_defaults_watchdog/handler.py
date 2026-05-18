@@ -48,6 +48,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
+    FixEdwDeviceDrift,
     JoinedRegexLine,
     PersistentNotification,
     all_integration_ids,
@@ -883,10 +884,7 @@ def _build_repair_specs(
                     "device_name": device_name,
                     "count": str(drift_count),
                 },
-                repair_callback=(
-                    "fix_edw_device_drift",
-                    {"device_id": device_id},
-                ),
+                repair_callback=FixEdwDeviceDrift(device_id=device_id),
             ),
         )
     return specs

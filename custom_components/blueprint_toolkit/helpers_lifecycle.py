@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -609,9 +610,9 @@ async def _dispatch_repairs_with_sweep(
         # Pre-filtered by ``process_repairs_with_sweep`` --
         # every active spec routed here has a real repair
         # callback. The assert pins that invariant and lets
-        # mypy narrow the tuple-unpack on the next line.
+        # mypy narrow the FixService access below.
         assert spec.repair_callback is not None
-        service_name, service_data = spec.repair_callback
+        fix = spec.repair_callback
         active_ids.add(spec.notification_id)
         ir.async_create_issue(
             hass,
@@ -623,8 +624,8 @@ async def _dispatch_repairs_with_sweep(
             translation_placeholders=spec.translation_placeholders or {},
             data=_flatten_repair_data(
                 spec.translation_key,
-                service_name,
-                service_data,
+                fix.service_name,
+                asdict(fix),
             ),
         )
 

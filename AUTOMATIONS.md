@@ -304,10 +304,17 @@ Notifications:
   dispatcher prepends. Optional `repair_callback` / `translation_key` /
   `translation_placeholders` fields opt the spec into the Repairs surface (see
   "Repairs" below).
-- `RepairServiceData` (type alias) -- the JSON-primitive-only payload type the
-  issue registry's data round-trip can persist safely. Lists of dicts and
-  other nested objects fail silently or corrupt on restore; the type alias
-  makes the constraint visible at every fix-service signature.
+- `FixService` (ABC) + concrete subclasses (`FixEdwDeviceDrift`,
+  `FixDwDeviceDisabledDiagnostics`, ...) -- typed payloads for the per-device
+  repair fix services. Each subclass is a frozen dataclass whose fields are
+  the fix service's signature; `service_name` (property) names the registered
+  HA service. The dispatcher serialises an instance to the wire dict via
+  `dataclasses.asdict` only at the boundary, mirroring the
+  `TypedServiceResponse` pattern. Field types must be JSON primitives because
+  HA's issue registry persists `data` to `.storage` via JSON round-trip and
+  types it as `dict[str, str | int | float | None]`. Adding a new repairable
+  finding means defining a subclass here, registering the matching service in
+  `__init__.py:_register_fix_services`, and adding the strings.json entry.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active
@@ -736,13 +743,13 @@ diagnostic entity); other handlers don't gain the toggle because their
 findings aren't deterministically automatable.
 
 - **Spec extension.** `PersistentNotification` carries optional
-  `repair_callback: tuple[str, dict[str, JSONPrimitive]] | None = None`,
-  `translation_key: str = ""`, and `translation_placeholders` fields. A spec
-  with `repair_callback` set is a repair candidate; one with `None` is always
-  a notification. The payload type alias `RepairServiceData` enforces the
-  JSON-primitive-only constraint -- HA's issue registry persists `data` to
-  `.storage` via JSON round-trip, so nested objects fail silently or corrupt
-  at restore.
+  `repair_callback: FixService | None = None`, `translation_key: str = ""`,
+  and `translation_placeholders` fields. A spec with `repair_callback` set is
+  a repair candidate; one with `None` is always a notification. `FixService`
+  is the typed-payload base described under "Shared helpers" above -- the
+  dispatcher calls `dataclasses.asdict(fix)` at the boundary so the on-wire
+  payload stays a flat dict of JSON primitives (HA's issue-registry storage
+  constraint).
 - **Dispatcher.**
   `process_repairs_with_sweep(hass, specs, sweep_prefix=, create_repairs=, repair_cap=)`
   (in `helpers_lifecycle.py`) replaces
@@ -763,14 +770,14 @@ findings aren't deterministically automatable.
   notifications panel's "Dismiss all"; only findings backed by a real
   automatable fix service belong in the issue registry.
 - **Fix services.** Each repairable finding kind backs a per-device service
-  registered from `async_setup_entry`: `fix_edw_device_drift(device_id)`,
-  `fix_dw_device_disabled_diagnostics(device_id)`. Each takes a single
-  `device_id` payload and walks the device's entities at apply time,
-  re-resolving drift / disabled state against the live entity registry rather
-  than relying on a snapshot embedded in the repair. This keeps
-  `RepairServiceData` flat (HA's issue registry stores `data` as JSON
-  primitives only) and matches the per-device notification grouping the
-  watchdogs already use -- a device with twenty drifted entities surfaces as
+  registered from `async_setup_entry`. The handler-side payload is a typed
+  `FixService` subclass (`FixEdwDeviceDrift`,
+  `FixDwDeviceDisabledDiagnostics`); the registered service handler reads the
+  flat-dict form HA delivered via `call.data`. Each fix service walks the
+  device's entities at apply time, re-resolving drift / disabled state against
+  the live entity registry rather than relying on a snapshot embedded in the
+  repair. Per-device grouping mirrors the per-device notification each
+  watchdog already emits -- a device with twenty drifted entities surfaces as
   one Submit-once repair, not twenty.
 - **Issue ID format.**
   `blueprint_toolkit_{service}__{instance_id}__repair_<kind>__<device_id>` --

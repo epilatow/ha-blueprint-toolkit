@@ -25,6 +25,7 @@ explicitly.
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -703,16 +704,66 @@ class TypedServiceResponse:
     notification_message: str = ""
 
 
-# Service-data payload type for ``PersistentNotification.repair_callback``.
-# Constrained to JSON primitives because HA's issue
-# registry persists ``data`` to ``.storage`` via JSON
-# round-trip; nested objects and non-primitive values fail
-# silently or corrupt at restore. The flat-dict shape
-# matches every fix in scope (each takes a single
-# ``entity_id`` plus optionally one target value); a future
-# finding kind that needs a richer payload extends this
-# contract deliberately rather than smuggling nested data.
-RepairServiceData = dict[str, str | int | float | bool | None]
+@dataclass(frozen=True)
+class FixService(ABC):
+    """Typed payload for a per-device repair fix service.
+
+    Each subclass corresponds to one registered service
+    under the ``blueprint_toolkit`` domain. Subclasses are
+    frozen dataclasses whose fields ARE the service's
+    signature; ``service_name`` names the registered
+    service. The dispatcher converts an instance to the
+    wire payload via ``dataclasses.asdict`` only at the
+    boundary, so the rest of the integration handles a
+    strongly-typed object instead of a free-form
+    ``(name, dict)`` tuple.
+
+    Mirrors the ``TypedServiceResponse`` shape: typed in
+    code, plain dict on the wire. The wire constraint is
+    HA's issue registry: it persists ``data`` to
+    ``.storage`` via JSON round-trip and types it as
+    ``dict[str, str | int | float | None]``, so every
+    field on every subclass must be a JSON primitive.
+
+    Adding a new fix service means defining a subclass
+    here, registering the matching
+    ``hass.services.async_register`` in
+    ``__init__.py:_register_fix_services``, and adding
+    the spec to ``strings.json`` / ``translations/en.json``.
+    """
+
+    @property
+    @abstractmethod
+    def service_name(self) -> str:
+        """The HA service name to dispatch this payload to."""
+
+
+@dataclass(frozen=True)
+class FixEdwDeviceDrift(FixService):
+    """Per-device EDW fix: regenerate drifted entity IDs +
+    clear stale name overrides on every entity attached to
+    ``device_id``. Backed by ``fix_edw_device_drift``.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fix_edw_device_drift"
+
+
+@dataclass(frozen=True)
+class FixDwDeviceDisabledDiagnostics(FixService):
+    """Per-device DW fix: re-enable each disabled
+    recommended-diagnostic entity attached to ``device_id``.
+    Backed by ``fix_dw_device_disabled_diagnostics``.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fix_dw_device_disabled_diagnostics"
 
 
 @dataclass
@@ -736,20 +787,26 @@ class PersistentNotification:
     notifications can leave it empty.
 
     ``repair_callback`` opts the spec into the HA Repairs
-    surface. When set to ``(service_name, service_data)``
-    AND the dispatcher is told ``create_repairs=True``, the
-    spec is routed to the issue registry instead of
-    persistent notifications -- the issue's fix flow
-    invokes ``hass.services.async_call(DOMAIN, *spec.repair_callback)``
-    when the user clicks Submit. ``service_data`` must be a
-    flat dict of JSON primitives (see ``RepairServiceData``).
-    Other ``PersistentNotification`` fields remain meaningful
-    for the issue: ``title`` / ``message`` feed the issue's
-    translation placeholders, ``notification_id`` doubles as
-    the issue ID. Specs with ``repair_callback=None`` always
-    route to persistent notifications regardless of the
-    dispatcher's ``create_repairs`` flag, so a non-repairable
-    finding emitted alongside repairable ones still surfaces
+    surface. When set to a ``FixService`` instance AND the
+    dispatcher is told ``create_repairs=True``, the spec
+    routes to the issue registry instead of persistent
+    notifications -- the issue's fix flow invokes
+    ``hass.services.async_call(DOMAIN, fix.service_name,
+    asdict(fix))`` when the user clicks Submit. The
+    ``FixService`` subclass hierarchy pins each fix
+    service's typed signature in one place; ``asdict`` at
+    the boundary keeps the on-wire payload a flat dict of
+    JSON primitives, which is what HA's issue registry can
+    persist to ``.storage``.
+
+    Other ``PersistentNotification`` fields remain
+    meaningful for the issue: ``title`` / ``message`` feed
+    the issue's translation placeholders,
+    ``notification_id`` doubles as the issue ID. Specs with
+    ``repair_callback=None`` always route to persistent
+    notifications regardless of the dispatcher's
+    ``create_repairs`` flag, so a non-repairable finding
+    emitted alongside repairable ones still surfaces
     correctly.
 
     ``translation_key`` selects the entry under
@@ -759,9 +816,9 @@ class PersistentNotification:
     notification-routed specs.
 
     ``translation_placeholders`` carries dynamic values the
-    selected translation entry interpolates (``{entity_id}``,
-    ``{default_entity_id}``, etc). Ignored for notification-
-    routed specs.
+    selected translation entry interpolates (``{device_name}``,
+    ``{count}``, etc). Ignored for notification-routed
+    specs.
     """
 
     active: bool
@@ -769,7 +826,7 @@ class PersistentNotification:
     title: str
     message: str
     instance_id: str | None = None
-    repair_callback: tuple[str, RepairServiceData] | None = None
+    repair_callback: FixService | None = None
     translation_key: str = ""
     translation_placeholders: dict[str, str] | None = None
 
@@ -1318,12 +1375,14 @@ __all__ = [
     "BlueprintHandlerSpec",
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
+    "FixDwDeviceDisabledDiagnostics",
+    "FixEdwDeviceDrift",
+    "FixService",
     "IssueNotification",
     "JoinedRegexLine",
     "JoinedRegexResult",
     "LifecycleMutators",
     "PersistentNotification",
-    "RepairServiceData",
     "TypedServiceResponse",
     "UnmatchedDirective",
     "automation_edit_link",

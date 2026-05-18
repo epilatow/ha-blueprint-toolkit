@@ -48,6 +48,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
+    FixDwDeviceDisabledDiagnostics,
     JoinedRegexLine,
     PersistentNotification,
     all_integration_ids,
@@ -637,9 +638,8 @@ def _build_repair_specs(
                 translation_placeholders={
                     "count": str(len(findings)),
                 },
-                repair_callback=(
-                    "fix_dw_device_disabled_diagnostics",
-                    {"device_id": device_id},
+                repair_callback=FixDwDeviceDisabledDiagnostics(
+                    device_id=device_id,
                 ),
             ),
         )

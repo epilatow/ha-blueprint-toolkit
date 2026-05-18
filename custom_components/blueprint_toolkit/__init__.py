@@ -178,9 +178,10 @@ def _register_fix_services(hass: HomeAssistant) -> None:
     the device's entities at apply time, re-resolving drift /
     disabled-diagnostic state against the live registry rather
     than relying on a snapshot embedded in the repair issue.
-    This keeps ``RepairServiceData`` flat (HA's issue registry
-    stores ``data`` as JSON primitives only) and matches the
-    user-visible mental model: one device, one click, fix
+    This keeps the on-wire payload a flat dict of JSON
+    primitives (HA's issue registry stores ``data`` via
+    ``.storage`` JSON round-trip) and matches the user-
+    visible mental model: one device, one click, fix
     everything the watchdog flagged on it.
 
     Per-device grouping mirrors the per-device persistent
