@@ -762,15 +762,18 @@ findings aren't deterministically automatable.
   through the notification dispatcher lets the user bulk-clear it via the
   notifications panel's "Dismiss all"; only findings backed by a real
   automatable fix service belong in the issue registry.
-- **Fix services.** Each repairable finding kind backs a per-integration
-  service registered from `async_setup_entry`:
-  `fix_edw_entity_id_drift(entity_id, new_entity_id)`,
-  `fix_edw_entity_name_drift(entity_id, name)`,
-  `fix_dw_disabled_diagnostic_entity(entity_id)`. Each takes a single-entity
-  payload; the WatchdogFixFlow's Submit button calls them with the data the
-  dispatcher flattened onto the issue.
+- **Fix services.** Each repairable finding kind backs a per-device service
+  registered from `async_setup_entry`: `fix_edw_device_drift(device_id)`,
+  `fix_dw_device_disabled_diagnostics(device_id)`. Each takes a single
+  `device_id` payload and walks the device's entities at apply time,
+  re-resolving drift / disabled state against the live entity registry rather
+  than relying on a snapshot embedded in the repair. This keeps
+  `RepairServiceData` flat (HA's issue registry stores `data` as JSON
+  primitives only) and matches the per-device notification grouping the
+  watchdogs already use -- a device with twenty drifted entities surfaces as
+  one Submit-once repair, not twenty.
 - **Issue ID format.**
-  `blueprint_toolkit_{service}__{instance_id}__repair_<kind>__<entity_id>` --
+  `blueprint_toolkit_{service}__{instance_id}__repair_<kind>__<device_id>` --
   the same `__` separator convention as notifications. The `__repair_`
   substring is the routing key for `repairs.async_create_fix_flow` to pick the
   `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /

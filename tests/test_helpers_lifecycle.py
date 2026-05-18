@@ -2343,8 +2343,8 @@ class TestProcessRepairsWithSweep:
     def _repair(
         self,
         notification_id: str,
-        translation_key: str = "edw_entity_id_drift",
-        entity_id: str = "switch.foo",
+        translation_key: str = "edw_device_drift",
+        device_id: str = "abc123",
     ) -> helpers.PersistentNotification:
         return helpers.PersistentNotification(
             active=True,
@@ -2352,10 +2352,10 @@ class TestProcessRepairsWithSweep:
             title="",
             message="",
             translation_key=translation_key,
-            translation_placeholders={"entity_id": entity_id},
+            translation_placeholders={"device_name": "Foo", "count": "1"},
             repair_callback=(
-                "fix_edw_entity_id_drift",
-                {"entity_id": entity_id, "new_entity_id": "switch.bar"},
+                "fix_edw_device_drift",
+                {"device_id": device_id},
             ),
         )
 

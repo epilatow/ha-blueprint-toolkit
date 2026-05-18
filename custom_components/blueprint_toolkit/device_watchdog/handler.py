@@ -100,10 +100,9 @@ class DwInstanceState:
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
     # Latest exclusion config from the most recent service
-    # call. Read by ``fix_dw_disabled_diagnostic_entity`` to
-    # short-circuit the entity-registry mutation when the
-    # user has added the entity to an exclusion list since
-    # the repair issue was created.
+    # call. Read by ``fix_dw_device_disabled_diagnostics`` to
+    # skip entities the user has added to an exclusion list
+    # since the per-device repair issue was created.
     excluded_entity_id_regex: str = ""
 
 
@@ -303,10 +302,9 @@ async def _async_service_layer(
         instance_id,
         DwInstanceState(instance_id=instance_id),
     )
-    # Refresh exclusion snapshot so the
-    # fix_dw_disabled_diagnostic_entity service can short-
-    # circuit when the user has added the entity to an
-    # exclusion regex since the repair issue was created.
+    # Refresh exclusion snapshot so the per-device fix
+    # service skips entities the user added to an exclusion
+    # regex after the repair was issued.
     state.excluded_entity_id_regex = exclude_entity_id_regex
 
     # Make sure the periodic timer is armed with the
@@ -408,7 +406,11 @@ async def _async_service_layer(
     # runs) get dismissed automatically. The unmatched-
     # directives spec is appended outside the per-device
     # cap so a typo'd exclusion always surfaces.
-    repair_specs = _build_repair_specs(ev.disabled_diagnostics, notif_prefix)
+    repair_specs = _build_repair_specs(
+        hass,
+        ev.disabled_diagnostics,
+        notif_prefix,
+    )
     await process_repairs_with_sweep(
         hass,
         list(ev.notifications) + repair_specs + [unmatched_spec],
@@ -597,36 +599,47 @@ def _build_device_inputs(
 
 
 def _build_repair_specs(
+    hass: HomeAssistant,
     disabled: list[logic.DisabledDiagnostic],
     notif_prefix: str,
 ) -> list[PersistentNotification]:
-    """Per-entity repair specs for disabled-diagnostic findings.
+    """One per-device repair spec per device with disabled diagnostics.
 
-    One spec per disabled entity rather than one per device
-    -- the surface matches the per-entity granularity of the
-    Repairs UI (each finding has its own Submit button).
-    The handler's existing per-device summary notification
-    keeps its grouped body; the repair-spec list runs
-    alongside.
+    Groups the findings by their owning device (resolved
+    from the entity registry) so a device with multiple
+    disabled recommended-diagnostic entities surfaces as a
+    single Submit-once repair instead of one per entity.
+    The accompanying per-device persistent notification
+    keeps its grouped body. The fix service walks the
+    device's diagnostic entities at apply time, so dropping
+    the per-entity payload doesn't lose information.
     """
-    specs: list[PersistentNotification] = []
+    ent_reg = er.async_get(hass)
+    by_device: dict[str, list[logic.DisabledDiagnostic]] = {}
     for d in disabled:
+        entry = ent_reg.async_get(d.entity_id)
+        if entry is None or entry.device_id is None:
+            continue
+        by_device.setdefault(entry.device_id, []).append(d)
+
+    specs: list[PersistentNotification] = []
+    for device_id, findings in by_device.items():
         specs.append(
             PersistentNotification(
                 active=True,
                 notification_id=(
-                    f"{notif_prefix}repair_disabled_diagnostic_entity__"
-                    f"{d.entity_id}"
+                    f"{notif_prefix}repair_device_disabled_diagnostics__"
+                    f"{device_id}"
                 ),
                 title="",
                 message="",
-                translation_key="dw_disabled_diagnostic_entity",
+                translation_key="dw_device_disabled_diagnostics",
                 translation_placeholders={
-                    "entity_id": d.entity_id,
+                    "count": str(len(findings)),
                 },
                 repair_callback=(
-                    "fix_dw_disabled_diagnostic_entity",
-                    {"entity_id": d.entity_id},
+                    "fix_dw_device_disabled_diagnostics",
+                    {"device_id": device_id},
                 ),
             ),
         )

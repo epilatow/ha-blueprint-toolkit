@@ -146,9 +146,11 @@ class DriftDetail:
     has_redundant_prefix: bool = False
     recommended_override: str | None = None
     # Default entity_id the registry would have if no
-    # rename had drifted it. Threaded through so the
-    # repair-spec builder can hand it to
-    # ``fix_edw_entity_id_drift`` as the target ID.
+    # rename had drifted it. Rendered in the per-device
+    # notification body so the user can see the target id
+    # alongside the current one; the per-device repair
+    # service re-derives the same value on apply via
+    # ``async_regenerate_entity_id``.
     expected_entity_id: str | None = None
 
 

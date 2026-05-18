@@ -133,9 +133,8 @@ def _register_docs_static_route(hass: HomeAssistant) -> None:
 
 
 _FIX_SERVICES = (
-    "fix_edw_entity_id_drift",
-    "fix_edw_entity_name_drift",
-    "fix_dw_disabled_diagnostic_entity",
+    "fix_edw_device_drift",
+    "fix_dw_device_disabled_diagnostics",
 )
 
 
@@ -146,9 +145,8 @@ def _entity_excluded_anywhere(hass: HomeAssistant, entity_id: str) -> bool:
     entry bucket. A repair issue can outlive its underlying
     finding when the user adds an exclusion between the scan
     that created the issue and the click on Submit; this guard
-    lets the fix service surface the conflict in the Repairs
-    UI rather than mutating an entity the user told the
-    watchdog to ignore.
+    lets the fix service skip the entity rather than mutating
+    one the user told the watchdog to ignore.
     """
     from homeassistant.helpers import (  # noqa: PLC0415
         config_validation as cv,
@@ -173,109 +171,106 @@ def _entity_excluded_anywhere(hass: HomeAssistant, entity_id: str) -> bool:
 
 
 def _register_fix_services(hass: HomeAssistant) -> None:
-    """Register the per-finding repair services.
+    """Register the per-device repair services.
 
-    Three services back the WatchdogFixFlow's Submit step:
+    Each service takes a single ``device_id`` payload and walks
+    the device's entities at apply time, re-resolving drift /
+    disabled-diagnostic state against the live registry rather
+    than relying on a snapshot embedded in the repair issue.
+    This keeps ``RepairServiceData`` flat (HA's issue registry
+    stores ``data`` as JSON primitives only) and matches the
+    user-visible mental model: one device, one click, fix
+    everything the watchdog flagged on it.
 
-    - ``fix_edw_entity_id_drift`` -- ``er.async_update_entity(entity_id,
-      new_entity_id=...)``.
-    - ``fix_edw_entity_name_drift`` -- ``er.async_update_entity(entity_id,
-      name=...)``.
-    - ``fix_dw_disabled_diagnostic_entity`` -- ``er.async_update_entity(
-      entity_id, disabled_by=None)``.
+    Per-device grouping mirrors the per-device persistent
+    notification each watchdog already emits -- a device with
+    twenty drifted entities surfaces as one repair to click,
+    not twenty.
 
-    Each takes a single-entity payload (no bulk variants) and is
-    registered idempotently -- ``hass.services.has_service`` guards
-    re-registration on options-driven entry reload. Schemas live
-    inline because the surface is small and the fields are
-    standard cv types.
+    Excluded entities are skipped silently per-entity rather
+    than aborting the whole device: a repair issue can outlive
+    a newly-added exclusion, and the user's intent (don't
+    touch these specific entities) should be honored without
+    blocking the rest of the device's fix.
 
-    Each service guards on ``_entity_excluded_anywhere`` so a
-    repair issue created before the user added the entity to an
-    exclusion list raises ``HomeAssistantError`` rather than
-    mutating the entity behind the user's back.
+    Registered idempotently -- ``hass.services.has_service``
+    guards re-registration on options-driven entry reload.
     """
     import voluptuous as vol  # noqa: PLC0415
-    from homeassistant.exceptions import (  # noqa: PLC0415
-        HomeAssistantError,
-    )
     from homeassistant.helpers import (  # noqa: PLC0415
         config_validation as cv,
+    )
+    from homeassistant.helpers import (  # noqa: PLC0415
+        device_registry as dr,
     )
     from homeassistant.helpers import (  # noqa: PLC0415
         entity_registry as er,
     )
 
-    def _check_excluded(entity_id: str) -> None:
-        if _entity_excluded_anywhere(hass, entity_id):
-            msg = (
-                f"`{entity_id}` is excluded by an active watchdog instance. "
-                "Remove the exclusion (or wait for the next scan to clear "
-                "this repair) before applying the fix."
-            )
-            raise HomeAssistantError(msg)
-
-    async def _fix_edw_entity_id_drift(call: Any) -> None:
-        _check_excluded(call.data["entity_id"])
+    def _device_entries(device_id: str) -> list[er.RegistryEntry]:
         ent_reg = er.async_get(hass)
-        ent_reg.async_update_entity(
-            call.data["entity_id"],
-            new_entity_id=call.data["new_entity_id"],
-        )
+        dev_reg = dr.async_get(hass)
+        if dev_reg.async_get(device_id) is None:
+            return []
+        return [
+            entry
+            for entry in list(ent_reg.entities.values())
+            if entry.device_id == device_id
+        ]
 
-    async def _fix_edw_entity_name_drift(call: Any) -> None:
-        _check_excluded(call.data["entity_id"])
+    async def _fix_edw_device_drift(call: Any) -> None:
         ent_reg = er.async_get(hass)
-        ent_reg.async_update_entity(
-            call.data["entity_id"],
-            name=call.data["name"],
-        )
+        for entry in _device_entries(call.data["device_id"]):
+            if _entity_excluded_anywhere(hass, entry.entity_id):
+                continue
+            # Regenerate entity_id if drifted. The registry's
+            # generator computes the default from the current
+            # device name + entity name, which is the same
+            # source EDW's scan uses to detect the drift.
+            expected_id = ent_reg.async_regenerate_entity_id(entry)
+            if expected_id and entry.entity_id != expected_id:
+                ent_reg.async_update_entity(
+                    entry.entity_id,
+                    new_entity_id=expected_id,
+                )
+                # Re-fetch after rename so the subsequent
+                # name-drift check operates on the new key.
+                refetched = ent_reg.async_get(expected_id)
+                if refetched is not None:
+                    entry = refetched
+            # Clear stale name overrides. Reverts to the
+            # integration-provided ``original_name``;
+            # legacy recommended-override stripping is
+            # surfaced in the device's notification body
+            # for users who want to keep a customised name.
+            if entry.name is not None and entry.name != entry.original_name:
+                ent_reg.async_update_entity(entry.entity_id, name=None)
 
-    async def _fix_dw_disabled_diagnostic_entity(call: Any) -> None:
-        _check_excluded(call.data["entity_id"])
+    async def _fix_dw_device_disabled_diagnostics(call: Any) -> None:
         ent_reg = er.async_get(hass)
-        ent_reg.async_update_entity(
-            call.data["entity_id"],
-            disabled_by=None,
-        )
+        for entry in _device_entries(call.data["device_id"]):
+            if entry.disabled_by is None:
+                continue
+            if _entity_excluded_anywhere(hass, entry.entity_id):
+                continue
+            ent_reg.async_update_entity(entry.entity_id, disabled_by=None)
 
-    if not hass.services.has_service(DOMAIN, "fix_edw_entity_id_drift"):
+    if not hass.services.has_service(DOMAIN, "fix_edw_device_drift"):
         hass.services.async_register(
             DOMAIN,
-            "fix_edw_entity_id_drift",
-            _fix_edw_entity_id_drift,
-            schema=vol.Schema(
-                {
-                    vol.Required("entity_id"): cv.entity_id,
-                    vol.Required("new_entity_id"): cv.entity_id,
-                },
-            ),
-        )
-    if not hass.services.has_service(DOMAIN, "fix_edw_entity_name_drift"):
-        hass.services.async_register(
-            DOMAIN,
-            "fix_edw_entity_name_drift",
-            _fix_edw_entity_name_drift,
-            schema=vol.Schema(
-                {
-                    vol.Required("entity_id"): cv.entity_id,
-                    vol.Required("name"): vol.Coerce(str),
-                },
-            ),
+            "fix_edw_device_drift",
+            _fix_edw_device_drift,
+            schema=vol.Schema({vol.Required("device_id"): cv.string}),
         )
     if not hass.services.has_service(
         DOMAIN,
-        "fix_dw_disabled_diagnostic_entity",
+        "fix_dw_device_disabled_diagnostics",
     ):
         hass.services.async_register(
             DOMAIN,
-            "fix_dw_disabled_diagnostic_entity",
-            _fix_dw_disabled_diagnostic_entity,
-            schema=vol.Schema(
-                {
-                    vol.Required("entity_id"): cv.entity_id,
-                },
-            ),
+            "fix_dw_device_disabled_diagnostics",
+            _fix_dw_device_disabled_diagnostics,
+            schema=vol.Schema({vol.Required("device_id"): cv.string}),
         )
 
 

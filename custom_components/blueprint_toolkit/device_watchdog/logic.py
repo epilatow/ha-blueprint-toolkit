@@ -165,11 +165,10 @@ RECOMMENDED_DIAGNOSTICS: dict[str, list[str]] = {
 class DisabledDiagnostic:
     """One disabled recommended diagnostic entity.
 
-    Surfaced both for the per-device notification body
-    (renders ``original_name``) and the per-finding repair
-    spec the handler stamps on the dispatch path (calls
-    ``fix_dw_disabled_diagnostic_entity`` with
-    ``entity_id``).
+    Surfaced in the per-device notification body (which
+    renders ``original_name``); the handler also groups
+    these by owning device on the dispatch path to emit
+    one per-device repair issue per affected device.
     """
 
     original_name: str

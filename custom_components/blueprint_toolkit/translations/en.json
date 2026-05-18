@@ -48,38 +48,26 @@
         }
       }
     },
-    "edw_entity_id_drift": {
-      "title": "Entity ID drift: {entity_id}",
-      "description": "Entity `{entity_id}` has drifted from its default ID `{default_entity_id}`. Click Submit to rename it back to the default.",
+    "edw_device_drift": {
+      "title": "Entity drift on device: {device_name}",
+      "description": "Device `{device_name}` has {count} entities whose IDs or names have drifted from their defaults. Click Submit to regenerate drifted entity IDs and clear stale name overrides on this device.",
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Rename entity?",
-            "description": "Rename `{entity_id}` to `{default_entity_id}`.\n\nClick Submit to apply."
+            "title": "Re-sync entity defaults?",
+            "description": "Regenerate drifted entity IDs and clear stale name overrides on `{device_name}` ({count} entities).\n\nEntities currently excluded by an active Entity Defaults Watchdog instance are left alone.\n\nClick Submit to apply."
           }
         }
       }
     },
-    "edw_entity_name_drift": {
-      "title": "Entity name drift: {entity_id}",
-      "description": "Entity `{entity_id}` has a custom friendly name `{current_name}`; the default is `{default_name}`. Click Submit to reset to the default.",
+    "dw_device_disabled_diagnostics": {
+      "title": "Disabled diagnostic entities on device",
+      "description": "This device has {count} recommended diagnostic entities that are currently disabled. Click Submit to re-enable all of them.",
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Reset entity name?",
-            "description": "Reset friendly name on `{entity_id}` from `{current_name}` to `{default_name}`.\n\nClick Submit to apply."
-          }
-        }
-      }
-    },
-    "dw_disabled_diagnostic_entity": {
-      "title": "Disabled diagnostic entity: {entity_id}",
-      "description": "Entity `{entity_id}` is disabled but the device watchdog needs it for monitoring. Click Submit to re-enable.",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Re-enable entity?",
-            "description": "Set `disabled_by=None` on `{entity_id}`.\n\nClick Submit to apply."
+            "title": "Re-enable diagnostic entities?",
+            "description": "Set `disabled_by=None` on each of the {count} disabled recommended-diagnostic entities on this device.\n\nEntities currently excluded by an active Device Watchdog instance are left alone.\n\nClick Submit to apply."
           }
         }
       }
