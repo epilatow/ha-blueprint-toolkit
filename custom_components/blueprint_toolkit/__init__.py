@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import functools
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -193,10 +194,20 @@ def _register_fix_services(hass: HomeAssistant) -> None:
     touch these specific entities) should be honored without
     blocking the rest of the device's fix.
 
+    Each registered handler is wrapped in a crash-PN guard
+    (see ``_wrap_fix_service``) so an unhandled exception
+    surfaces as a per-(service, target) persistent
+    notification before re-raising into HA -- the same
+    silent-failure shield the blueprint dispatcher's
+    ``register_blueprint_handler`` applies to its handlers,
+    adapted to the fix-service surface (which does NOT go
+    through that dispatcher).
+
     Registered idempotently -- ``hass.services.has_service``
     guards re-registration on options-driven entry reload.
     """
     import voluptuous as vol  # noqa: PLC0415
+    from homeassistant.core import ServiceCall  # noqa: PLC0415
     from homeassistant.helpers import (  # noqa: PLC0415
         config_validation as cv,
     )
@@ -205,6 +216,11 @@ def _register_fix_services(hass: HomeAssistant) -> None:
     )
     from homeassistant.helpers import (  # noqa: PLC0415
         entity_registry as er,
+    )
+
+    from .helpers import (  # noqa: PLC0415
+        dismiss_fix_service_crash_notification,
+        emit_fix_service_crash_notification,
     )
 
     def _device_entries(device_id: str) -> list[er.RegistryEntry]:
@@ -218,7 +234,58 @@ def _register_fix_services(hass: HomeAssistant) -> None:
             if entry.device_id == device_id
         ]
 
-    async def _fix_edw_device_drift(call: Any) -> None:
+    def _wrap_fix_service(
+        service_name: str,
+        handler: Callable[[ServiceCall], Any],
+    ) -> Callable[[ServiceCall], Any]:
+        """Return ``handler`` wrapped in a crash-PN guard.
+
+        Mirrors the dispatcher wrap in
+        ``register_blueprint_handler`` but with fix-service
+        semantics: the surfaced PN identifies the fix
+        service + target rather than any automation, and the
+        success path dismisses any prior crash PN for the
+        same (service, target) so a recovered fix clears
+        its own breadcrumb.
+        """
+
+        async def _wrapped(call: ServiceCall) -> None:
+            raw_data = dict(call.data) if call.data else {}
+            try:
+                await handler(call)
+            except Exception as exc:
+                # Broad: we want every unhandled fix-service
+                # exception to land in the PN. Re-raise so
+                # HA's UI / log surfaces it through its own
+                # channels too.
+                try:
+                    await emit_fix_service_crash_notification(
+                        hass,
+                        service_name=service_name,
+                        raw_data=raw_data,
+                        exc=exc,
+                    )
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception(
+                        "failed to emit fix-service crash notification for %s",
+                        service_name,
+                    )
+                raise
+            try:
+                await dismiss_fix_service_crash_notification(
+                    hass,
+                    service_name=service_name,
+                    raw_data=raw_data,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "failed to dismiss fix-service crash notification for %s",
+                    service_name,
+                )
+
+        return _wrapped
+
+    async def _fix_edw_device_drift(call: ServiceCall) -> None:
         ent_reg = er.async_get(hass)
         for entry in _device_entries(call.data["device_id"]):
             if _entity_excluded_anywhere(hass, entry.entity_id):
@@ -246,7 +313,7 @@ def _register_fix_services(hass: HomeAssistant) -> None:
             if entry.name is not None and entry.name != entry.original_name:
                 ent_reg.async_update_entity(entry.entity_id, name=None)
 
-    async def _fix_dw_device_disabled_diagnostics(call: Any) -> None:
+    async def _fix_dw_device_disabled_diagnostics(call: ServiceCall) -> None:
         ent_reg = er.async_get(hass)
         for entry in _device_entries(call.data["device_id"]):
             if entry.disabled_by is None:
@@ -259,7 +326,7 @@ def _register_fix_services(hass: HomeAssistant) -> None:
         hass.services.async_register(
             DOMAIN,
             "fix_edw_device_drift",
-            _fix_edw_device_drift,
+            _wrap_fix_service("fix_edw_device_drift", _fix_edw_device_drift),
             schema=vol.Schema({vol.Required("device_id"): cv.string}),
         )
     if not hass.services.has_service(
@@ -269,7 +336,10 @@ def _register_fix_services(hass: HomeAssistant) -> None:
         hass.services.async_register(
             DOMAIN,
             "fix_dw_device_disabled_diagnostics",
-            _fix_dw_device_disabled_diagnostics,
+            _wrap_fix_service(
+                "fix_dw_device_disabled_diagnostics",
+                _fix_dw_device_disabled_diagnostics,
+            ),
             schema=vol.Schema({vol.Required("device_id"): cv.string}),
         )
 

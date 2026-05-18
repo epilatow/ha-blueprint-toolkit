@@ -2529,6 +2529,129 @@ class TestProcessRepairsWithSweep:
             json.dumps(call["data"])
 
 
+class TestFixServiceCrashNotification:
+    """Tests for the per-(service, target) crash PN helpers.
+
+    Repair fix services are registered directly via
+    ``hass.services.async_register`` rather than through the
+    blueprint dispatcher's ``register_blueprint_handler``,
+    so the dispatcher's per-instance crash wrap doesn't
+    cover them. These helpers back the parallel wrap in
+    ``custom_components.blueprint_toolkit.__init__`` and
+    deliberately scope the PN to the fix service itself
+    rather than to any automation -- a fix-service crash
+    means the fix service is broken, not the automation
+    that emitted the repair.
+    """
+
+    def _hass(self) -> _MockHass:
+        return _MockHass()
+
+    @pytest.mark.asyncio
+    async def test_emit_creates_pn_keyed_to_service_and_target(self) -> None:
+        hass = self._hass()
+        await helpers.emit_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_edw_device_drift",
+            raw_data={"device_id": "abc123"},
+            exc=RuntimeError("nope [bad]"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert len(creates) == 1
+        data = creates[0]
+        assert data["notification_id"] == (
+            "blueprint_toolkit__fix_edw_device_drift__crash__abc123"
+        )
+        # Title identifies the fix service.
+        assert "fix_edw_device_drift" in data["title"]
+        # Body names the service, the target, the exception
+        # class, and md_escape's the message so brackets
+        # in the exception text don't corrupt the rendered
+        # markdown.
+        assert "fix_edw_device_drift" in data["message"]
+        assert "abc123" in data["message"]
+        assert "RuntimeError" in data["message"]
+        assert "\\[bad\\]" in data["message"]
+        # The PN deliberately does NOT carry an instance_id
+        # prefix -- it's not attributable to any one
+        # automation. The dispatcher only prepends the
+        # ``Automation: ...`` line when the spec opts in.
+        assert "Automation:" not in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_emit_falls_back_to_entity_id_target(self) -> None:
+        # Legacy / future per-entity fix services pass
+        # ``entity_id`` instead of ``device_id``; the slot
+        # ID should pick whichever is present so concurrent
+        # failures stay on distinct PNs.
+        hass = self._hass()
+        await helpers.emit_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_xyz",
+            raw_data={"entity_id": "sensor.foo"},
+            exc=ValueError("oops"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert creates[0]["notification_id"] == (
+            "blueprint_toolkit__fix_xyz__crash__sensor.foo"
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_uses_unknown_target_when_no_id_present(self) -> None:
+        # Pathological / out-of-band call payloads still
+        # surface a single PN rather than crashing the
+        # crash-PN helper itself.
+        hass = self._hass()
+        await helpers.emit_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_xyz",
+            raw_data={},
+            exc=RuntimeError("hmm"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert creates[0]["notification_id"] == (
+            "blueprint_toolkit__fix_xyz__crash__unknown"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dismiss_targets_same_slot(self) -> None:
+        # The dismiss helper has to use the same slot ID
+        # the emit helper writes so a recovered fix run
+        # actually clears its prior crash PN. Seed the
+        # PN store so the dispatcher's
+        # "skip-dismiss-when-inactive" guard doesn't elide
+        # the call we're asserting on.
+        hass = self._hass()
+        slot = "blueprint_toolkit__fix_edw_device_drift__crash__abc123"
+        hass.data["persistent_notification"] = {
+            slot: _stub_existing_pn(slot, title="stale", message="stale"),
+        }
+        await helpers.dismiss_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_edw_device_drift",
+            raw_data={"device_id": "abc123"},
+        )
+        dismisses = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "dismiss"
+        ]
+        assert len(dismisses) == 1
+        assert dismisses[0]["notification_id"] == slot
+
+
 class TestStaleInputKeyReferences:
     """Repo-wide grep test pinning the renamed-input
     convention.

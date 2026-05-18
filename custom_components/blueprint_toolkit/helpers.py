@@ -80,7 +80,9 @@ from .helpers_logic import (
 )
 from .helpers_runtime import (
     automation_friendly_name,
+    dismiss_fix_service_crash_notification,
     emit_config_error,
+    emit_fix_service_crash_notification,
     entry_for_domain,
     make_periodic_trigger_callback,
     prepare_notifications,
@@ -118,9 +120,11 @@ __all__ = [
     "device_link",
     "device_url",
     "deviceless_entity_link",
+    "dismiss_fix_service_crash_notification",
     "domain_entities_link",
     "domain_entities_url",
     "emit_config_error",
+    "emit_fix_service_crash_notification",
     "entities_dashboard_url",
     "entry_for_domain",
     "file_editor_addon_ingress_url",
