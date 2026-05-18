@@ -48,14 +48,26 @@
         }
       }
     },
-    "edw_device_drift": {
-      "title": "Entity drift on device: {device_name}",
-      "description": "Device `{device_name}` has {count} entities whose IDs or names have drifted from their defaults. Click Submit to regenerate drifted entity IDs and clear stale name overrides on this device.",
+    "edw_device_entity_id_drift": {
+      "title": "Entity ID drift on device: {device_name}",
+      "description": "Device `{device_name}` has {count} entities whose entity IDs have drifted from their defaults. Click Submit to regenerate them.",
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Re-sync entity defaults?",
-            "description": "Regenerate drifted entity IDs and clear stale name overrides on `{device_name}` ({count} entities).\n\nEntities currently excluded by an active Entity Defaults Watchdog instance are left alone.\n\nClick Submit to apply."
+            "title": "Regenerate entity IDs?",
+            "description": "Regenerate drifted entity IDs on `{device_name}` ({count} entities).\n\nEntities currently excluded by an active Entity Defaults Watchdog instance are left alone.\n\nClick Submit to apply."
+          }
+        }
+      }
+    },
+    "edw_device_entity_name_drift": {
+      "title": "Entity name drift on device: {device_name}",
+      "description": "Device `{device_name}` has {count} entities with stale custom name overrides. Click Submit to clear the overrides and revert to the integration-provided names.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Clear name overrides?",
+            "description": "Clear stale name overrides on `{device_name}` ({count} entities). The integration-provided default name takes over.\n\nEntities currently excluded by an active Entity Defaults Watchdog instance are left alone.\n\nClick Submit to apply."
           }
         }
       }

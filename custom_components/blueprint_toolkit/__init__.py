@@ -134,7 +134,8 @@ def _register_docs_static_route(hass: HomeAssistant) -> None:
 
 
 _FIX_SERVICES = (
-    "fix_edw_device_drift",
+    "fix_edw_device_entity_id_drift",
+    "fix_edw_device_entity_name_drift",
     "fix_dw_device_disabled_diagnostics",
 )
 
@@ -286,7 +287,7 @@ def _register_fix_services(hass: HomeAssistant) -> None:
 
         return _wrapped
 
-    async def _fix_edw_device_drift(call: ServiceCall) -> None:
+    async def _fix_edw_device_entity_id_drift(call: ServiceCall) -> None:
         ent_reg = er.async_get(hass)
         for entry in _device_entries(call.data["device_id"]):
             if _entity_excluded_anywhere(hass, entry.entity_id):
@@ -301,11 +302,14 @@ def _register_fix_services(hass: HomeAssistant) -> None:
                     entry.entity_id,
                     new_entity_id=expected_id,
                 )
-                # Re-fetch after rename so the subsequent
-                # name-drift check operates on the new key.
-                refetched = ent_reg.async_get(expected_id)
-                if refetched is not None:
-                    entry = refetched
+
+    async def _fix_edw_device_entity_name_drift(
+        call: ServiceCall,
+    ) -> None:
+        ent_reg = er.async_get(hass)
+        for entry in _device_entries(call.data["device_id"]):
+            if _entity_excluded_anywhere(hass, entry.entity_id):
+                continue
             # Clear stale name overrides. Reverts to the
             # integration-provided ``original_name``;
             # legacy recommended-override stripping is
@@ -323,11 +327,30 @@ def _register_fix_services(hass: HomeAssistant) -> None:
                 continue
             ent_reg.async_update_entity(entry.entity_id, disabled_by=None)
 
-    if not hass.services.has_service(DOMAIN, "fix_edw_device_drift"):
+    if not hass.services.has_service(
+        DOMAIN,
+        "fix_edw_device_entity_id_drift",
+    ):
         hass.services.async_register(
             DOMAIN,
-            "fix_edw_device_drift",
-            _wrap_fix_service("fix_edw_device_drift", _fix_edw_device_drift),
+            "fix_edw_device_entity_id_drift",
+            _wrap_fix_service(
+                "fix_edw_device_entity_id_drift",
+                _fix_edw_device_entity_id_drift,
+            ),
+            schema=vol.Schema({vol.Required("device_id"): cv.string}),
+        )
+    if not hass.services.has_service(
+        DOMAIN,
+        "fix_edw_device_entity_name_drift",
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_edw_device_entity_name_drift",
+            _wrap_fix_service(
+                "fix_edw_device_entity_name_drift",
+                _fix_edw_device_entity_name_drift,
+            ),
             schema=vol.Schema({vol.Required("device_id"): cv.string}),
         )
     if not hass.services.has_service(

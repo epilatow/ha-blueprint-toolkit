@@ -2353,7 +2353,9 @@ class TestProcessRepairsWithSweep:
             message="",
             translation_key=translation_key,
             translation_placeholders={"device_name": "Foo", "count": "1"},
-            repair_callback=helpers.FixEdwDeviceDrift(device_id=device_id),
+            repair_callback=helpers.FixEdwDeviceEntityIdDrift(
+                device_id=device_id,
+            ),
         )
 
     def _notif(

@@ -739,17 +739,31 @@ class FixService(ABC):
 
 
 @dataclass(frozen=True)
-class FixEdwDeviceDrift(FixService):
-    """Per-device EDW fix: regenerate drifted entity IDs +
-    clear stale name overrides on every entity attached to
-    ``device_id``. Backed by ``fix_edw_device_drift``.
+class FixEdwDeviceEntityIdDrift(FixService):
+    """Per-device EDW fix: regenerate drifted entity IDs
+    on every entity attached to ``device_id``. Backed by
+    ``fix_edw_device_entity_id_drift``.
     """
 
     device_id: str
 
     @property
     def service_name(self) -> str:
-        return "fix_edw_device_drift"
+        return "fix_edw_device_entity_id_drift"
+
+
+@dataclass(frozen=True)
+class FixEdwDeviceEntityNameDrift(FixService):
+    """Per-device EDW fix: clear stale name overrides on
+    every entity attached to ``device_id``. Backed by
+    ``fix_edw_device_entity_name_drift``.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fix_edw_device_entity_name_drift"
 
 
 @dataclass(frozen=True)
@@ -1376,7 +1390,8 @@ __all__ = [
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
     "FixDwDeviceDisabledDiagnostics",
-    "FixEdwDeviceDrift",
+    "FixEdwDeviceEntityIdDrift",
+    "FixEdwDeviceEntityNameDrift",
     "FixService",
     "IssueNotification",
     "JoinedRegexLine",

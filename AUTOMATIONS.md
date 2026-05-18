@@ -304,17 +304,15 @@ Notifications:
   dispatcher prepends. Optional `repair_callback` / `translation_key` /
   `translation_placeholders` fields opt the spec into the Repairs surface (see
   "Repairs" below).
-- `FixService` (ABC) + concrete subclasses (`FixEdwDeviceDrift`,
-  `FixDwDeviceDisabledDiagnostics`, ...) -- typed payloads for the per-device
-  repair fix services. Each subclass is a frozen dataclass whose fields are
-  the fix service's signature; `service_name` (property) names the registered
-  HA service. The dispatcher serialises an instance to the wire dict via
-  `dataclasses.asdict` only at the boundary, mirroring the
-  `TypedServiceResponse` pattern. Field types must be JSON primitives because
-  HA's issue registry persists `data` to `.storage` via JSON round-trip and
-  types it as `dict[str, str | int | float | None]`. Adding a new repairable
-  finding means defining a subclass here, registering the matching service in
-  `__init__.py:_register_fix_services`, and adding the strings.json entry.
+- `FixService` (ABC) + concrete subclasses (`FixEdwDeviceEntityIdDrift`,
+  `FixEdwDeviceEntityNameDrift`, `FixDwDeviceDisabledDiagnostics`, ...) --
+  typed payloads for the per-device repair fix services. Each subclass is a
+  frozen dataclass whose fields are the fix service's signature;
+  `service_name` (property) names the registered HA service. The dispatcher
+  serialises an instance to the wire dict via `dataclasses.asdict` only at the
+  boundary, mirroring the `TypedServiceResponse` pattern. Field types must be
+  JSON primitives because HA's issue registry persists `data` to `.storage`
+  via JSON round-trip.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active

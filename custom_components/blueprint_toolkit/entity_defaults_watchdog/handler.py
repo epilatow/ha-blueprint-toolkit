@@ -48,7 +48,8 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
-    FixEdwDeviceDrift,
+    FixEdwDeviceEntityIdDrift,
+    FixEdwDeviceEntityNameDrift,
     JoinedRegexLine,
     PersistentNotification,
     all_integration_ids,
@@ -838,55 +839,80 @@ def _build_repair_specs(
     results: list[logic.DeviceResult],
     notif_prefix: str,
 ) -> list[PersistentNotification]:
-    """One per-device repair spec per device with drift.
+    """Per-device repair specs, separated by drift kind.
 
-    Mirrors the per-device persistent notification grouping:
-    a device with N drifted entities surfaces as one repair
-    issue (not N), and the fix service walks the device's
-    entities at apply time to regenerate drifted IDs and
-    clear stale name overrides. Issue IDs follow the
-    canonical ``{notif_prefix}repair_device_drift__{device_id}``
-    shape so the dispatcher's sweep + the WatchdogFixFlow
-    factory both route them.
+    Entity-id drift and entity-name drift are independent
+    fixes with independent semantics (regenerate the
+    entity_id vs clear a stale friendly-name override), so
+    each gets its own repair issue per device. A device with
+    both kinds surfaces as two repairs the user can apply
+    independently; a device with only one kind surfaces as
+    one repair.
 
-    Devices with name-override-only drift whose ideal
-    correction is a partial customisation (a non-empty
-    ``recommended_override``) still get the device-level
-    repair: the fix clears the override entirely, and the
-    accompanying persistent notification body retains the
-    manual-edit instructions for users who want to keep a
-    custom name.
+    Per-device grouping mirrors the persistent notification:
+    a device with twenty drifted entity IDs is one Submit,
+    not twenty. The accompanying per-device notification
+    body keeps its full, instruction-rich grouping for the
+    rest of the EDW findings (redundant prefixes, recommended
+    overrides) which don't have a deterministic one-click
+    fix.
     """
     specs: list[PersistentNotification] = []
     for r in results:
         if r.device_excluded or not r.has_issue:
             continue
-        drift_count = sum(
+        id_count = sum(
             1
             for d in r.drifted_entities
-            if (d.id_drifted and d.expected_entity_id)
-            or (d.name_drifted and d.expected_name is not None)
+            if d.id_drifted and d.expected_entity_id
         )
-        if drift_count == 0:
-            continue
+        name_count = sum(
+            1
+            for d in r.drifted_entities
+            if d.name_drifted and d.expected_name is not None
+        )
         device_id = r.device_id
         device_name = r.device_name or device_id
-        specs.append(
-            PersistentNotification(
-                active=True,
-                notification_id=(
-                    f"{notif_prefix}repair_device_drift__{device_id}"
+        if id_count > 0:
+            specs.append(
+                PersistentNotification(
+                    active=True,
+                    notification_id=(
+                        f"{notif_prefix}repair_device_entity_id_drift"
+                        f"__{device_id}"
+                    ),
+                    title="",
+                    message="",
+                    translation_key="edw_device_entity_id_drift",
+                    translation_placeholders={
+                        "device_name": device_name,
+                        "count": str(id_count),
+                    },
+                    repair_callback=FixEdwDeviceEntityIdDrift(
+                        device_id=device_id,
+                    ),
                 ),
-                title="",
-                message="",
-                translation_key="edw_device_drift",
-                translation_placeholders={
-                    "device_name": device_name,
-                    "count": str(drift_count),
-                },
-                repair_callback=FixEdwDeviceDrift(device_id=device_id),
-            ),
-        )
+            )
+        if name_count > 0:
+            specs.append(
+                PersistentNotification(
+                    active=True,
+                    notification_id=(
+                        f"{notif_prefix}repair_device_entity_name_drift"
+                        f"__{device_id}"
+                    ),
+                    title="",
+                    message="",
+                    translation_key="edw_device_entity_name_drift",
+                    translation_placeholders={
+                        "device_name": device_name,
+                        "count": str(name_count),
+                    },
+                    repair_callback=FixEdwDeviceEntityNameDrift(
+                        device_id=device_id,
+                    ),
+                ),
+            )
     return specs
 
 
