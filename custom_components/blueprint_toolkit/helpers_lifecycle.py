@@ -484,7 +484,7 @@ async def process_repairs_with_sweep(
       otherwise to the notification dispatcher (so a user with the
       toggle off keeps today's behavior).
     - ``active=True, repair_callback=None`` -- always a
-      notification (config-error specs, non-repairable findings).
+      notification
     - ``active=False`` -- dismiss spec for either backend.
 
     Sweep semantics mirror today's
@@ -496,13 +496,7 @@ async def process_repairs_with_sweep(
     repair specs surface as issues; the rest are summarised by a
     single cap-summary notification under the per-instance
     prefix. The cap-summary slot is always dispatched (active
-    when over cap, inactive otherwise) so a previously-active
-    summary auto-dismisses when the next run is back under cap.
-    The summary routes through the notification dispatcher
-    rather than the issue registry: there is no automatable fix
-    to back it, and the notifications panel has a "Dismiss all"
-    that the Repairs UI lacks -- non-actionable signal belongs
-    on the surface the user can bulk-clear.
+    when over cap, inactive otherwise).
     """
     notif_specs: list[PersistentNotification] = []
     repair_specs: list[PersistentNotification] = []
@@ -607,10 +601,7 @@ async def _dispatch_repairs_with_sweep(
         if not spec.active:
             ir.async_delete_issue(hass, DOMAIN, spec.notification_id)
             continue
-        # Pre-filtered by ``process_repairs_with_sweep`` --
-        # every active spec routed here has a real repair
-        # callback. The assert pins that invariant and lets
-        # mypy narrow the FixService access below.
+
         assert spec.repair_callback is not None
         fix = spec.repair_callback
         active_ids.add(spec.notification_id)
