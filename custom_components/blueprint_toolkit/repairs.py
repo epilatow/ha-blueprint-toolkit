@@ -119,16 +119,28 @@ class InstallFailureFlow(RepairsFlow):
 class WatchdogFixFlow(RepairsFlow):
     """Confirm-and-call flow for watchdog-finding repairs.
 
-    Single-step confirm: shows the issue's translation
-    placeholders + a Submit button. On submit, replays the
-    stashed ``(service_name, service_data)`` against the
-    integration's domain. ``service_data`` is rebuilt from
-    the dispatcher's flattened ``service_data_<key>``
-    encoding so the JSON-only storage round-trip on the
-    issue registry's ``data`` field stays well-formed.
+    Single-step confirm: renders the issue's title and
+    description (translation-placeholder substituted) plus
+    a Submit button. On submit, dispatches the stashed
+    ``(service_name, service_data)`` to the integration's
+    domain. ``service_data`` is rebuilt from the
+    dispatcher's flattened ``service_data_<key>`` encoding
+    so the JSON-only storage round-trip on the issue
+    registry's ``data`` field stays well-formed.
+
+    The fix services are small (per-device entity-registry
+    updates over a bounded entity set) so the flow uses
+    ``blocking=True`` to surface failures via the Repairs
+    UI before the modal closes; the fix-service wrapper's
+    crash-PN guard handles the underlying error reporting.
     """
 
-    def __init__(self, data: dict[str, Any] | None) -> None:
+    def __init__(
+        self,
+        issue_id: str,
+        data: dict[str, Any] | None,
+    ) -> None:
+        self._issue_id = issue_id
         self._data = data or {}
 
     async def async_step_init(
@@ -156,9 +168,20 @@ class WatchdogFixFlow(RepairsFlow):
                     blocking=True,
                 )
             return self.async_create_entry(data={})
+        # Replay the issue's translation placeholders so the
+        # confirm modal's description renders ``{device_name}``,
+        # ``{count}``, etc -- without this the modal text shows
+        # the literal braced tokens.
+        from homeassistant.helpers import issue_registry as ir
+
+        issue = ir.async_get(self.hass).async_get_issue(DOMAIN, self._issue_id)
+        placeholders = (
+            (issue.translation_placeholders or {}) if issue is not None else {}
+        )
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
+            description_placeholders=placeholders,
         )
 
 
@@ -173,7 +196,7 @@ async def async_create_fix_flow(
     if issue_id.startswith(ISSUE_INSTALL_FAILURE):
         return InstallFailureFlow(data)
     if "__repair_" in issue_id:
-        return WatchdogFixFlow(data)
+        return WatchdogFixFlow(issue_id, data)
     msg = f"unknown issue_id: {issue_id!r}"
     raise ValueError(msg)
 

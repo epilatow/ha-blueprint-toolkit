@@ -144,6 +144,21 @@ class EdwInstanceState:
     # falls through; the next scan will reconcile).
     excluded_entities: list[str] = field(default_factory=list)
     excluded_entity_id_regex: str = ""
+    # Per-scan flagged entity sets, populated by the
+    # service layer. Read by the fix services so they only
+    # mutate entities the most recent scan still flagged
+    # under this instance's full filter configuration
+    # (drift_checks, include / exclude integrations,
+    # device-name / entity-name / entity-id regexes, ...).
+    # Without this, the fix services would re-walk every
+    # entity on the target device and apply mutations the
+    # scan never flagged. ``flagged_id_drifts`` maps
+    # entity_id -> expected_entity_id; ``flagged_name_drifts``
+    # maps entity_id -> target_name (``None`` clears the
+    # override, str sets it to the recommended legacy
+    # value).
+    flagged_id_drifts: dict[str, str] = field(default_factory=dict)
+    flagged_name_drifts: dict[str, str | None] = field(default_factory=dict)
 
 
 # --------------------------------------------------------
@@ -461,6 +476,28 @@ async def _async_service_layer(
         instance_id=instance_id,
         unmatched=ev.unmatched_directives,
     )
+
+    # Refresh the per-instance flagged-entity index so the
+    # fix services only mutate entities this scan's full
+    # filter configuration still flags. Without this the
+    # fix services would re-walk every entity on a device
+    # and mutate things the scan didn't flag (e.g.
+    # entities in non-monitored domains / integrations,
+    # entities matching the user's exclude regexes).
+    state.flagged_id_drifts = {}
+    state.flagged_name_drifts = {}
+    for r in ev.results:
+        if r.device_excluded or not r.has_issue:
+            continue
+        for d in r.drifted_entities:
+            if d.id_drifted and d.expected_entity_id:
+                state.flagged_id_drifts[d.entity_id] = d.expected_entity_id
+            if d.name_drifted:
+                # ``recommended_override`` non-None means
+                # SET the name to the legacy-stripped
+                # value; ``None`` means CLEAR the override
+                # so the integration default takes over.
+                state.flagged_name_drifts[d.entity_id] = d.recommended_override
 
     # Sweep so prior-run notifications no longer present
     # this run (e.g. a device whose drift cleared between
@@ -1049,8 +1086,7 @@ FIX_SERVICES = (
 def _entity_excluded_by_edw(hass: HomeAssistant, entity_id: str) -> bool:
     """True when any active EDW instance excludes ``entity_id``."""
     for inst in _instances(hass).values():
-        excluded = list(getattr(inst, "excluded_entities", []) or [])
-        if entity_id in cv.ensure_list(excluded):
+        if entity_id in (getattr(inst, "excluded_entities", []) or []):
             return True
         regex = getattr(inst, "excluded_entity_id_regex", "") or ""
         if regex and matches_pattern(entity_id, regex):
@@ -1092,24 +1128,48 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     """
 
     async def _fix_id_drift(call: ServiceCall) -> None:
+        # Union the most recent scan's flagged-id-drift
+        # set across every loaded EDW instance. The fix
+        # mutates only entities the scan flagged under the
+        # user's full filter configuration, not every entity
+        # on the device. ``expected_id`` per entity comes
+        # from the scan's ``async_regenerate_entity_id``
+        # snapshot so it matches what the user saw at
+        # repair-creation time.
+        flagged: dict[str, str] = {}
+        for inst in _instances(hass).values():
+            flagged.update(inst.flagged_id_drifts)
         ent_reg = er.async_get(hass)
         for entry in _device_entries(hass, call.data["device_id"]):
+            expected_id = flagged.get(entry.entity_id)
+            if expected_id is None or expected_id == entry.entity_id:
+                continue
             if _entity_excluded_by_edw(hass, entry.entity_id):
                 continue
-            expected_id = ent_reg.async_regenerate_entity_id(entry)
-            if expected_id and entry.entity_id != expected_id:
-                ent_reg.async_update_entity(
-                    entry.entity_id,
-                    new_entity_id=expected_id,
-                )
+            ent_reg.async_update_entity(
+                entry.entity_id,
+                new_entity_id=expected_id,
+            )
 
     async def _fix_name_drift(call: ServiceCall) -> None:
+        # Same flagged-set pattern as _fix_id_drift. Per-
+        # entity target carries the scan's verdict on what
+        # to do: a non-None value SETS the override (the
+        # legacy ``recommended_override`` case), a None
+        # value CLEARS it.
+        flagged: dict[str, str | None] = {}
+        for inst in _instances(hass).values():
+            flagged.update(inst.flagged_name_drifts)
         ent_reg = er.async_get(hass)
         for entry in _device_entries(hass, call.data["device_id"]):
+            if entry.entity_id not in flagged:
+                continue
             if _entity_excluded_by_edw(hass, entry.entity_id):
                 continue
-            if entry.name is not None and entry.name != entry.original_name:
-                ent_reg.async_update_entity(entry.entity_id, name=None)
+            target = flagged[entry.entity_id]
+            if entry.name == target:
+                continue
+            ent_reg.async_update_entity(entry.entity_id, name=target)
 
     if not hass.services.has_service(DOMAIN, "fix_edw_device_entity_id_drift"):
         hass.services.async_register(

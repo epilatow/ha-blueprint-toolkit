@@ -714,6 +714,11 @@ against that field).
   handler: `__config_error` (schema / cross-field validation failure; managed
   by `emit_config_error`) and `__crash` (unhandled handler exception; managed
   by `register_blueprint_handler`). Other `{kind}` values are per-handler.
+  Repair fix-service crashes (registered directly via
+  `hass.services.async_register`, not through `register_blueprint_handler`)
+  use a separate scheme: `blueprint_toolkit__{service_name}__crash__{target}`
+  (no `instance_id`; the crash means the fix service is broken, not the
+  automation that emitted the repair).
 - **Pick the right dispatcher.** `process_persistent_notifications_with_sweep`
   is the right choice when the caller is asserting the COMPLETE per-instance
   notification state for this run -- it dismisses any prior-run notifications

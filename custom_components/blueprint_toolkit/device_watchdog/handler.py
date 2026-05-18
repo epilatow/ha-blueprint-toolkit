@@ -127,6 +127,14 @@ class DwInstanceState:
     # skip entities the user has added to an exclusion list
     # since the per-device repair issue was created.
     excluded_entity_id_regex: str = ""
+    # Per-scan disabled-diagnostic finding set, populated
+    # by the service layer. Read by the fix service so it
+    # only re-enables entities the most recent scan
+    # actually flagged -- i.e. entities in
+    # ``RECOMMENDED_DIAGNOSTICS`` for an integration this
+    # instance is monitoring, not every disabled entity
+    # the device happens to have.
+    flagged_disabled_diagnostics: set[str] = field(default_factory=set)
 
 
 # --------------------------------------------------------
@@ -423,6 +431,18 @@ async def _async_service_layer(
         instance_id=instance_id,
         unmatched=ev.unmatched_directives,
     )
+
+    # Refresh the per-instance flagged-entity index so the
+    # fix service only re-enables entities this scan's
+    # full filter configuration still flags as recommended-
+    # diagnostic findings. Without this the fix service
+    # would re-walk every disabled entity on the target
+    # device and re-enable things the watchdog didn't
+    # flag (manually-disabled non-diagnostic entities,
+    # entities from unmonitored integrations, ...).
+    state.flagged_disabled_diagnostics = {
+        d.entity_id for d in ev.disabled_diagnostics
+    }
 
     # Sweep so prior-run notifications no longer present
     # this run (e.g. a device whose health cleared between
@@ -801,8 +821,19 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     """
 
     async def _fix_disabled_diagnostics(call: ServiceCall) -> None:
+        # Union the most recent scan's flagged set across
+        # every loaded DW instance. The fix re-enables only
+        # entities the scan flagged under the user's full
+        # filter configuration (``RECOMMENDED_DIAGNOSTICS``
+        # for monitored integrations) rather than every
+        # disabled entity on the device.
+        flagged: set[str] = set()
+        for inst in _instances(hass).values():
+            flagged |= inst.flagged_disabled_diagnostics
         ent_reg = er.async_get(hass)
         for entry in _device_entries(hass, call.data["device_id"]):
+            if entry.entity_id not in flagged:
+                continue
             if entry.disabled_by is None:
                 continue
             if _entity_excluded_by_dw(hass, entry.entity_id):
