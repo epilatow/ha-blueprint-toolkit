@@ -2341,7 +2341,7 @@ class _FakeFixService(helpers.FixService):
     decoupled from handler-side payload shapes.
     """
 
-    device_id: str
+    notification_id: str
 
     @property
     def service_name(self) -> str:
@@ -2363,7 +2363,6 @@ class TestProcessRepairsWithSweep:
         self,
         notification_id: str,
         translation_key: str = "fake_fix",
-        device_id: str = "abc123",
     ) -> helpers.PersistentNotification:
         return helpers.PersistentNotification(
             active=True,
@@ -2372,7 +2371,7 @@ class TestProcessRepairsWithSweep:
             message="",
             translation_key=translation_key,
             translation_placeholders={"device_name": "Foo", "count": "1"},
-            repair_callback=_FakeFixService(device_id=device_id),
+            repair_callback=_FakeFixService(notification_id=notification_id),
         )
 
     def _notif(

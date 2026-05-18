@@ -35,6 +35,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 import voluptuous as vol
@@ -61,7 +62,6 @@ from ..helpers import (
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
-    matches_pattern,
     notification_prefix,
     process_repairs_with_sweep,
     register_blueprint_handler,
@@ -80,32 +80,88 @@ from . import logic
 # --------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class FixEdwDeviceEntityIdDrift(FixService):
-    """Regenerate drifted entity IDs on every entity
-    attached to ``device_id``. Backed by
-    ``fix_edw_device_entity_id_drift``.
+class FixServices(StrEnum):
+    """Enum of EDW's per-device repair fix service names.
+
+    Members' values are the HA service names registered
+    under the ``blueprint_toolkit`` domain; the StrEnum
+    base lets callers pass a member anywhere a ``str`` is
+    expected (e.g. ``hass.services.async_register(DOMAIN,
+    FixServices.DEVICE_ENTITY_ID_DRIFT, ...)``).
     """
 
-    device_id: str
+    DEVICE_ENTITY_ID_DRIFT = "fix_edw_device_entity_id_drift"
+    DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
+
+
+@dataclass(frozen=True)
+class FixEdwDeviceEntityIdDrift(FixService):
+    """Wire payload for the entity-id-drift fix.
+
+    Carries only ``notification_id`` -- the rich payload
+    (per-entity rename list) lives on the instance state
+    keyed by the same ``notification_id`` and is built at
+    scan time when the watchdog's full filter
+    configuration is still in scope. The fix service
+    re-applies that pre-computed rename set without
+    re-scoping anything.
+    """
+
+    notification_id: str
 
     @property
     def service_name(self) -> str:
-        return "fix_edw_device_entity_id_drift"
+        return FixServices.DEVICE_ENTITY_ID_DRIFT.value
 
 
 @dataclass(frozen=True)
 class FixEdwDeviceEntityNameDrift(FixService):
-    """Clear stale name overrides on every entity attached
-    to ``device_id``. Backed by
-    ``fix_edw_device_entity_name_drift``.
+    """Wire payload for the entity-name-drift fix.
+
+    Same shape as ``FixEdwDeviceEntityIdDrift`` -- the
+    rich payload (per-entity name-target list) lives on
+    instance state keyed by ``notification_id``.
     """
 
-    device_id: str
+    notification_id: str
 
     @property
     def service_name(self) -> str:
-        return "fix_edw_device_entity_name_drift"
+        return FixServices.DEVICE_ENTITY_NAME_DRIFT.value
+
+
+@dataclass(frozen=True)
+class _EdwIdDriftRepair:
+    """Per-repair rich payload for an EDW id-drift repair.
+
+    Lives on ``EdwInstanceState.repairs`` keyed by the
+    repair's notification_id. Captures the
+    (entity_id, expected_entity_id) renames the scan
+    flagged under this instance's full filter
+    configuration; the fix service applies them verbatim.
+    """
+
+    device_id: str
+    entity_renames: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class _EdwNameDriftRepair:
+    """Per-repair rich payload for an EDW name-drift repair.
+
+    Carries the (entity_id, target_name) pairs the scan
+    flagged. ``target_name=None`` means CLEAR the override
+    (the standard stale-override case); a non-None value
+    means SET the override to that string (the legacy
+    ``recommended_override`` case where stripping the
+    device-name prefix gives a stable kept-customisation).
+    """
+
+    device_id: str
+    entity_name_targets: tuple[tuple[str, str | None], ...]
+
+
+_EdwRepair = _EdwIdDriftRepair | _EdwNameDriftRepair
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,30 +191,18 @@ class EdwInstanceState:
     # we can detect blueprint-input changes and re-arm.
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
-    # Latest exclusion config from the most recent service
-    # call. Read by ``fix_edw_*`` services to short-circuit
-    # the entity-registry mutation when the user has added
-    # the entity to an exclusion list since the repair issue
-    # was created. Empty default keeps the pre-call window
-    # safe (no instance state -> no exclusions -> the fix
-    # falls through; the next scan will reconcile).
-    excluded_entities: list[str] = field(default_factory=list)
-    excluded_entity_id_regex: str = ""
-    # Per-scan flagged entity sets, populated by the
-    # service layer. Read by the fix services so they only
-    # mutate entities the most recent scan still flagged
-    # under this instance's full filter configuration
-    # (drift_checks, include / exclude integrations,
-    # device-name / entity-name / entity-id regexes, ...).
-    # Without this, the fix services would re-walk every
-    # entity on the target device and apply mutations the
-    # scan never flagged. ``flagged_id_drifts`` maps
-    # entity_id -> expected_entity_id; ``flagged_name_drifts``
-    # maps entity_id -> target_name (``None`` clears the
-    # override, str sets it to the recommended legacy
-    # value).
-    flagged_id_drifts: dict[str, str] = field(default_factory=dict)
-    flagged_name_drifts: dict[str, str | None] = field(default_factory=dict)
+    # Per-repair rich payloads, populated by the service
+    # layer on every scan. Keyed by the repair's
+    # ``notification_id``; each value carries everything
+    # the fix service needs to apply (per-entity rename
+    # list, per-entity name-target list, ...). The fix
+    # service looks up by notification_id and applies
+    # verbatim -- no re-scoping at apply time, because the
+    # scan that built this entry already applied the
+    # user's full filter configuration. Empty default
+    # keeps the post-restart window safe: a fix click
+    # before the next scan finds no payload and no-ops.
+    repairs: dict[str, _EdwRepair] = field(default_factory=dict)
 
 
 # --------------------------------------------------------
@@ -357,13 +401,6 @@ async def _async_service_layer(
         instance_id,
         EdwInstanceState(instance_id=instance_id),
     )
-    # Refresh exclusion snapshot so per-finding fix services
-    # can short-circuit when the user has added the entity
-    # to an exclusion list since the repair issue was
-    # created.
-    state.excluded_entities = list(exclude_entities)
-    state.excluded_entity_id_regex = exclude_entity_id_regex
-
     # Make sure the periodic timer is armed with the
     # current interval (handles first-run + interval
     # changes mid-flight).
@@ -484,20 +521,34 @@ async def _async_service_layer(
     # and mutate things the scan didn't flag (e.g.
     # entities in non-monitored domains / integrations,
     # entities matching the user's exclude regexes).
-    state.flagged_id_drifts = {}
-    state.flagged_name_drifts = {}
+    state.repairs = {}
     for r in ev.results:
         if r.device_excluded or not r.has_issue:
             continue
+        id_renames: list[tuple[str, str]] = []
+        name_targets: list[tuple[str, str | None]] = []
         for d in r.drifted_entities:
             if d.id_drifted and d.expected_entity_id:
-                state.flagged_id_drifts[d.entity_id] = d.expected_entity_id
+                id_renames.append((d.entity_id, d.expected_entity_id))
             if d.name_drifted:
                 # ``recommended_override`` non-None means
                 # SET the name to the legacy-stripped
                 # value; ``None`` means CLEAR the override
                 # so the integration default takes over.
-                state.flagged_name_drifts[d.entity_id] = d.recommended_override
+                name_targets.append((d.entity_id, d.recommended_override))
+        device_id = r.device_id
+        if id_renames:
+            nid = f"{notif_prefix}repair_device_entity_id_drift__{device_id}"
+            state.repairs[nid] = _EdwIdDriftRepair(
+                device_id=device_id,
+                entity_renames=tuple(id_renames),
+            )
+        if name_targets:
+            nid = f"{notif_prefix}repair_device_entity_name_drift__{device_id}"
+            state.repairs[nid] = _EdwNameDriftRepair(
+                device_id=device_id,
+                entity_name_targets=tuple(name_targets),
+            )
 
     # Sweep so prior-run notifications no longer present
     # this run (e.g. a device whose drift cleared between
@@ -945,13 +996,11 @@ def _build_repair_specs(
         device_id = r.device_id
         device_name = r.device_name or device_id
         if id_count > 0:
+            nid = f"{notif_prefix}repair_device_entity_id_drift__{device_id}"
             specs.append(
                 PersistentNotification(
                     active=True,
-                    notification_id=(
-                        f"{notif_prefix}repair_device_entity_id_drift"
-                        f"__{device_id}"
-                    ),
+                    notification_id=nid,
                     title="",
                     message="",
                     translation_key="edw_device_entity_id_drift",
@@ -960,18 +1009,16 @@ def _build_repair_specs(
                         "count": str(id_count),
                     },
                     repair_callback=FixEdwDeviceEntityIdDrift(
-                        device_id=device_id,
+                        notification_id=nid,
                     ),
                 ),
             )
         if name_count > 0:
+            nid = f"{notif_prefix}repair_device_entity_name_drift__{device_id}"
             specs.append(
                 PersistentNotification(
                     active=True,
-                    notification_id=(
-                        f"{notif_prefix}repair_device_entity_name_drift"
-                        f"__{device_id}"
-                    ),
+                    notification_id=nid,
                     title="",
                     message="",
                     translation_key="edw_device_entity_name_drift",
@@ -980,7 +1027,7 @@ def _build_repair_specs(
                         "count": str(name_count),
                     },
                     repair_callback=FixEdwDeviceEntityNameDrift(
-                        device_id=device_id,
+                        notification_id=nid,
                     ),
                 ),
             )
@@ -1077,39 +1124,19 @@ async def async_unregister(
 # Repair fix services
 # --------------------------------------------------------
 
-FIX_SERVICES = (
-    "fix_edw_device_entity_id_drift",
-    "fix_edw_device_entity_name_drift",
-)
+FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in FixServices)
 
 
-def _entity_excluded_by_edw(hass: HomeAssistant, entity_id: str) -> bool:
-    """True when any active EDW instance excludes ``entity_id``."""
+def _lookup_repair(
+    hass: HomeAssistant,
+    notification_id: str,
+) -> _EdwRepair | None:
+    """Find the per-repair payload across all loaded EDW instances."""
     for inst in _instances(hass).values():
-        if entity_id in (getattr(inst, "excluded_entities", []) or []):
-            return True
-        regex = getattr(inst, "excluded_entity_id_regex", "") or ""
-        if regex and matches_pattern(entity_id, regex):
-            return True
-    return False
-
-
-def _device_entries(hass: HomeAssistant, device_id: str) -> list[Any]:
-    """Entity registry entries attached to ``device_id``.
-
-    Returns an empty list if the device is no longer in
-    the registry (was removed between the scan that
-    created the repair issue and the click on Submit).
-    """
-    ent_reg = er.async_get(hass)
-    dev_reg = dr.async_get(hass)
-    if dev_reg.async_get(device_id) is None:
-        return []
-    return [
-        entry
-        for entry in list(ent_reg.entities.values())
-        if entry.device_id == device_id
-    ]
+        payload = inst.repairs.get(notification_id)
+        if payload is not None:
+            return payload
+    return None
 
 
 async def async_register_fix_services(hass: HomeAssistant) -> None:
@@ -1121,79 +1148,66 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     so a crash surfaces as a (service, target) crash PN
     before re-raising.
 
-    Per-handler scope on the exclusion check: an entry
-    excluded by an EDW instance is left alone here; DW
-    exclusions don't apply (DW has its own fix service
-    with its own exclusion guard).
+    Each fix service looks up its rich payload by
+    ``notification_id`` on the per-instance state. The
+    payload was built at scan time with the user's full
+    filter configuration in scope, so the fix service
+    re-applies the captured mutations verbatim without any
+    re-scoping. A click after restart (instance state lost)
+    or after the next scan removed the finding (payload
+    cleared) finds nothing and no-ops; the issue is
+    rebuilt or swept on the next periodic tick.
     """
 
     async def _fix_id_drift(call: ServiceCall) -> None:
-        # Union the most recent scan's flagged-id-drift
-        # set across every loaded EDW instance. The fix
-        # mutates only entities the scan flagged under the
-        # user's full filter configuration, not every entity
-        # on the device. ``expected_id`` per entity comes
-        # from the scan's ``async_regenerate_entity_id``
-        # snapshot so it matches what the user saw at
-        # repair-creation time.
-        flagged: dict[str, str] = {}
-        for inst in _instances(hass).values():
-            flagged.update(inst.flagged_id_drifts)
+        notification_id = call.data["notification_id"]
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, _EdwIdDriftRepair):
+            return
         ent_reg = er.async_get(hass)
-        for entry in _device_entries(hass, call.data["device_id"]):
-            expected_id = flagged.get(entry.entity_id)
-            if expected_id is None or expected_id == entry.entity_id:
+        for entity_id, expected_id in payload.entity_renames:
+            entry = ent_reg.async_get(entity_id)
+            if entry is None or entry.entity_id == expected_id:
                 continue
-            if _entity_excluded_by_edw(hass, entry.entity_id):
-                continue
-            ent_reg.async_update_entity(
-                entry.entity_id,
-                new_entity_id=expected_id,
-            )
+            ent_reg.async_update_entity(entity_id, new_entity_id=expected_id)
 
     async def _fix_name_drift(call: ServiceCall) -> None:
-        # Same flagged-set pattern as _fix_id_drift. Per-
-        # entity target carries the scan's verdict on what
-        # to do: a non-None value SETS the override (the
-        # legacy ``recommended_override`` case), a None
-        # value CLEARS it.
-        flagged: dict[str, str | None] = {}
-        for inst in _instances(hass).values():
-            flagged.update(inst.flagged_name_drifts)
+        notification_id = call.data["notification_id"]
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, _EdwNameDriftRepair):
+            return
         ent_reg = er.async_get(hass)
-        for entry in _device_entries(hass, call.data["device_id"]):
-            if entry.entity_id not in flagged:
+        for entity_id, target in payload.entity_name_targets:
+            entry = ent_reg.async_get(entity_id)
+            if entry is None or entry.name == target:
                 continue
-            if _entity_excluded_by_edw(hass, entry.entity_id):
-                continue
-            target = flagged[entry.entity_id]
-            if entry.name == target:
-                continue
-            ent_reg.async_update_entity(entry.entity_id, name=target)
+            ent_reg.async_update_entity(entity_id, name=target)
 
-    if not hass.services.has_service(DOMAIN, "fix_edw_device_entity_id_drift"):
-        hass.services.async_register(
-            DOMAIN,
-            "fix_edw_device_entity_id_drift",
-            make_fix_service_wrapper(
-                hass,
-                "fix_edw_device_entity_id_drift",
-                _fix_id_drift,
-            ),
-            schema=vol.Schema({vol.Required("device_id"): cv.string}),
-        )
     if not hass.services.has_service(
-        DOMAIN, "fix_edw_device_entity_name_drift"
+        DOMAIN, FixServices.DEVICE_ENTITY_ID_DRIFT
     ):
         hass.services.async_register(
             DOMAIN,
-            "fix_edw_device_entity_name_drift",
+            FixServices.DEVICE_ENTITY_ID_DRIFT,
             make_fix_service_wrapper(
                 hass,
-                "fix_edw_device_entity_name_drift",
+                FixServices.DEVICE_ENTITY_ID_DRIFT,
+                _fix_id_drift,
+            ),
+            schema=vol.Schema({vol.Required("notification_id"): cv.string}),
+        )
+    if not hass.services.has_service(
+        DOMAIN, FixServices.DEVICE_ENTITY_NAME_DRIFT
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            FixServices.DEVICE_ENTITY_NAME_DRIFT,
+            make_fix_service_wrapper(
+                hass,
+                FixServices.DEVICE_ENTITY_NAME_DRIFT,
                 _fix_name_drift,
             ),
-            schema=vol.Schema({vol.Required("device_id"): cv.string}),
+            schema=vol.Schema({vol.Required("notification_id"): cv.string}),
         )
 
 
@@ -1203,6 +1217,7 @@ __all__ = [
     "EdwInstanceState",
     "FixEdwDeviceEntityIdDrift",
     "FixEdwDeviceEntityNameDrift",
+    "FixServices",
     "async_register",
     "async_register_fix_services",
     "async_unregister",

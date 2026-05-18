@@ -443,14 +443,20 @@ def _fix_service_crash_notification_id(
     """Per-target slot ID for a fix-service crash PN.
 
     Shared by the emit + dismiss helpers so both target the
-    same slot. The target identifier comes from the call's
-    ``device_id`` (per-device fix services) or ``entity_id``
-    (legacy / future per-entity fix services); the slot
-    falls back to ``unknown`` when neither is present so a
-    pathological call still surfaces a single PN rather
-    than a key collision.
+    same slot. The target identifier prefers the call's
+    ``notification_id`` (the repair-issue ID, unique per
+    instance + finding-kind + device), falling back to
+    ``device_id`` and ``entity_id`` for fix services that
+    use one of those legacy / future payload shapes, and
+    finally to ``unknown`` so a pathological call still
+    surfaces a single PN rather than a key collision.
     """
-    target = raw_data.get("device_id") or raw_data.get("entity_id") or "unknown"
+    target = (
+        raw_data.get("notification_id")
+        or raw_data.get("device_id")
+        or raw_data.get("entity_id")
+        or "unknown"
+    )
     return f"blueprint_toolkit__{service_name}__crash__{target}"
 
 
