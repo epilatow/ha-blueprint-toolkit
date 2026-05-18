@@ -511,6 +511,15 @@ async def process_repairs_with_sweep(
         # repair_callback=None spec), so the user sees the
         # finding once via the original notification surface.
 
+    # Deterministic cap: sort by notification_id (the
+    # natural key for a repair spec -- its title and
+    # message are translation-rendered and intentionally
+    # empty here, so notification_id is the only
+    # caller-stable key) so the visible / suppressed split
+    # is reproducible across runs. Matches the notification-
+    # side sort that ``prepare_notifications`` performs.
+    repair_specs.sort(key=lambda s: s.notification_id)
+
     if create_repairs:
         # The cap-summary inherits the batch's instance_id so
         # the notification dispatcher prepends the standard

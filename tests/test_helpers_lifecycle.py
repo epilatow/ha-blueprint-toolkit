@@ -2458,6 +2458,35 @@ class TestProcessRepairsWithSweep:
         assert "`max_repairs`" in cap_notif["message"]
 
     @pytest.mark.asyncio
+    async def test_repair_cap_picks_deterministic_subset(self) -> None:
+        # Caller-side iteration order on the inputs is not
+        # guaranteed (the per-handler spec builders walk
+        # registry / device dicts). The dispatcher must sort
+        # by notification_id before applying the cap so the
+        # visible / suppressed split stays reproducible
+        # across runs and so caller refactors that change
+        # iteration order can't silently shift which
+        # findings the user sees.
+        hass = self._hass()
+        scrambled = [
+            self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
+            for i in (5, 2, 0, 6, 3, 1, 4)
+        ]
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            scrambled,
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+            repair_cap=3,
+        )
+        repair_ids = sorted(c["issue_id"] for c in _CREATE_ISSUE_CALLS)
+        assert repair_ids == [
+            "blueprint_toolkit_x__a__repair_e0",
+            "blueprint_toolkit_x__a__repair_e1",
+            "blueprint_toolkit_x__a__repair_e2",
+        ]
+
+    @pytest.mark.asyncio
     async def test_repair_cap_zero_unlimited(self) -> None:
         hass = self._hass()
         specs = [
