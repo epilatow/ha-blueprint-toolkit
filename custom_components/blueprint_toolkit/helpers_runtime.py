@@ -47,7 +47,7 @@ from .helpers_logic import (
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import HomeAssistant, ServiceCall
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -517,6 +517,61 @@ async def emit_fix_service_crash_notification(
     await process_persistent_notifications(hass, [spec])
 
 
+def make_fix_service_wrapper(
+    hass: HomeAssistant,
+    service_name: str,
+    handler: Callable[[ServiceCall], Any],
+) -> Callable[[ServiceCall], Any]:
+    """Wrap a fix-service handler in a crash-PN guard.
+
+    Repair fix services are registered directly via
+    ``hass.services.async_register`` rather than through
+    the blueprint dispatcher, so the dispatcher's per-
+    instance crash wrap doesn't cover them. This factory
+    returns a drop-in replacement that emits a per-
+    (service, target) ``__crash`` PN on unhandled
+    exceptions before re-raising, and dismisses the same
+    slot on a successful run so a recovered fix clears its
+    own breadcrumb.
+    """
+
+    async def _wrapped(call: ServiceCall) -> None:
+        raw_data = dict(call.data) if call.data else {}
+        try:
+            await handler(call)
+        except Exception as exc:
+            # Broad: every unhandled fix-service exception
+            # should land in the PN. Re-raise so HA's UI /
+            # log machinery surfaces it through its own
+            # channels too.
+            try:
+                await emit_fix_service_crash_notification(
+                    hass,
+                    service_name=service_name,
+                    raw_data=raw_data,
+                    exc=exc,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "failed to emit fix-service crash notification for %s",
+                    service_name,
+                )
+            raise
+        try:
+            await dismiss_fix_service_crash_notification(
+                hass,
+                service_name=service_name,
+                raw_data=raw_data,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "failed to dismiss fix-service crash notification for %s",
+                service_name,
+            )
+
+    return _wrapped
+
+
 async def dismiss_fix_service_crash_notification(
     hass: HomeAssistant,
     *,
@@ -915,6 +970,7 @@ __all__ = [
     "emit_config_error",
     "emit_fix_service_crash_notification",
     "entry_for_domain",
+    "make_fix_service_wrapper",
     "make_periodic_trigger_callback",
     "prepare_notifications",
     "process_persistent_notifications",

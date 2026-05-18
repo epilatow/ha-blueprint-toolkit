@@ -2329,6 +2329,25 @@ class TestFileEditorAddonIngressUrl:
         )
 
 
+@dataclass(frozen=True)
+class _FakeFixService(helpers.FixService):
+    """Synthetic FixService subclass for dispatcher tests.
+
+    The real per-handler subclasses live in
+    ``entity_defaults_watchdog/handler.py`` and
+    ``device_watchdog/handler.py``. The dispatcher only
+    cares about the abstract ``FixService`` interface, so
+    the tests here use a local stub to keep coverage
+    decoupled from handler-side payload shapes.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fake_fix"
+
+
 class TestProcessRepairsWithSweep:
     """Routing + cap + sweep behaviour for the repairs dispatcher."""
 
@@ -2343,7 +2362,7 @@ class TestProcessRepairsWithSweep:
     def _repair(
         self,
         notification_id: str,
-        translation_key: str = "edw_device_drift",
+        translation_key: str = "fake_fix",
         device_id: str = "abc123",
     ) -> helpers.PersistentNotification:
         return helpers.PersistentNotification(
@@ -2353,9 +2372,7 @@ class TestProcessRepairsWithSweep:
             message="",
             translation_key=translation_key,
             translation_placeholders={"device_name": "Foo", "count": "1"},
-            repair_callback=helpers.FixEdwDeviceEntityIdDrift(
-                device_id=device_id,
-            ),
+            repair_callback=_FakeFixService(device_id=device_id),
         )
 
     def _notif(

@@ -48,8 +48,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
-    FixEdwDeviceEntityIdDrift,
-    FixEdwDeviceEntityNameDrift,
+    FixService,
     JoinedRegexLine,
     PersistentNotification,
     all_integration_ids,
@@ -58,9 +57,11 @@ from ..helpers import (
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
+    make_fix_service_wrapper,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
+    matches_pattern,
     notification_prefix,
     process_repairs_with_sweep,
     register_blueprint_handler,
@@ -73,6 +74,39 @@ from ..helpers import (
     validate_payload_or_emit_config_error,
 )
 from . import logic
+
+# --------------------------------------------------------
+# Per-device repair-fix payload types
+# --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FixEdwDeviceEntityIdDrift(FixService):
+    """Regenerate drifted entity IDs on every entity
+    attached to ``device_id``. Backed by
+    ``fix_edw_device_entity_id_drift``.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fix_edw_device_entity_id_drift"
+
+
+@dataclass(frozen=True)
+class FixEdwDeviceEntityNameDrift(FixService):
+    """Clear stale name overrides on every entity attached
+    to ``device_id``. Backed by
+    ``fix_edw_device_entity_name_drift``.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fix_edw_device_entity_name_drift"
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1002,9 +1036,114 @@ async def async_unregister(
     await unregister_blueprint_handler(hass, entry, _SPEC)
 
 
+# --------------------------------------------------------
+# Repair fix services
+# --------------------------------------------------------
+
+FIX_SERVICES = (
+    "fix_edw_device_entity_id_drift",
+    "fix_edw_device_entity_name_drift",
+)
+
+
+def _entity_excluded_by_edw(hass: HomeAssistant, entity_id: str) -> bool:
+    """True when any active EDW instance excludes ``entity_id``."""
+    for inst in _instances(hass).values():
+        excluded = list(getattr(inst, "excluded_entities", []) or [])
+        if entity_id in cv.ensure_list(excluded):
+            return True
+        regex = getattr(inst, "excluded_entity_id_regex", "") or ""
+        if regex and matches_pattern(entity_id, regex):
+            return True
+    return False
+
+
+def _device_entries(hass: HomeAssistant, device_id: str) -> list[Any]:
+    """Entity registry entries attached to ``device_id``.
+
+    Returns an empty list if the device is no longer in
+    the registry (was removed between the scan that
+    created the repair issue and the click on Submit).
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    if dev_reg.async_get(device_id) is None:
+        return []
+    return [
+        entry
+        for entry in list(ent_reg.entities.values())
+        if entry.device_id == device_id
+    ]
+
+
+async def async_register_fix_services(hass: HomeAssistant) -> None:
+    """Register EDW's per-device repair fix services.
+
+    Idempotent under config-entry reload --
+    ``hass.services.has_service`` guards re-registration.
+    Each handler is wrapped via ``make_fix_service_wrapper``
+    so a crash surfaces as a (service, target) crash PN
+    before re-raising.
+
+    Per-handler scope on the exclusion check: an entry
+    excluded by an EDW instance is left alone here; DW
+    exclusions don't apply (DW has its own fix service
+    with its own exclusion guard).
+    """
+
+    async def _fix_id_drift(call: ServiceCall) -> None:
+        ent_reg = er.async_get(hass)
+        for entry in _device_entries(hass, call.data["device_id"]):
+            if _entity_excluded_by_edw(hass, entry.entity_id):
+                continue
+            expected_id = ent_reg.async_regenerate_entity_id(entry)
+            if expected_id and entry.entity_id != expected_id:
+                ent_reg.async_update_entity(
+                    entry.entity_id,
+                    new_entity_id=expected_id,
+                )
+
+    async def _fix_name_drift(call: ServiceCall) -> None:
+        ent_reg = er.async_get(hass)
+        for entry in _device_entries(hass, call.data["device_id"]):
+            if _entity_excluded_by_edw(hass, entry.entity_id):
+                continue
+            if entry.name is not None and entry.name != entry.original_name:
+                ent_reg.async_update_entity(entry.entity_id, name=None)
+
+    if not hass.services.has_service(DOMAIN, "fix_edw_device_entity_id_drift"):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_edw_device_entity_id_drift",
+            make_fix_service_wrapper(
+                hass,
+                "fix_edw_device_entity_id_drift",
+                _fix_id_drift,
+            ),
+            schema=vol.Schema({vol.Required("device_id"): cv.string}),
+        )
+    if not hass.services.has_service(
+        DOMAIN, "fix_edw_device_entity_name_drift"
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_edw_device_entity_name_drift",
+            make_fix_service_wrapper(
+                hass,
+                "fix_edw_device_entity_name_drift",
+                _fix_name_drift,
+            ),
+            schema=vol.Schema({vol.Required("device_id"): cv.string}),
+        )
+
+
 __all__ = [
     "BLUEPRINT_PATH",
+    "FIX_SERVICES",
     "EdwInstanceState",
+    "FixEdwDeviceEntityIdDrift",
+    "FixEdwDeviceEntityNameDrift",
     "async_register",
+    "async_register_fix_services",
     "async_unregister",
 ]

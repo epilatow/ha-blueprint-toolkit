@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -131,241 +130,6 @@ def _register_docs_static_route(hass: HomeAssistant) -> None:
         path=str(docs_dir),
         show_index=False,
     )
-
-
-_FIX_SERVICES = (
-    "fix_edw_device_entity_id_drift",
-    "fix_edw_device_entity_name_drift",
-    "fix_dw_device_disabled_diagnostics",
-)
-
-
-def _entity_excluded_anywhere(hass: HomeAssistant, entity_id: str) -> bool:
-    """True when any active EDW / DW instance excludes ``entity_id``.
-
-    Walks the per-instance state on the integration's config-
-    entry bucket. A repair issue can outlive its underlying
-    finding when the user adds an exclusion between the scan
-    that created the issue and the click on Submit; this guard
-    lets the fix service skip the entity rather than mutating
-    one the user told the watchdog to ignore.
-    """
-    from homeassistant.helpers import (  # noqa: PLC0415
-        config_validation as cv,
-    )
-
-    from .helpers import matches_pattern  # noqa: PLC0415
-
-    entries = hass.config_entries.async_entries(DOMAIN)
-    if not entries:
-        return False
-    bucket = entries[0].runtime_data.handlers if entries[0].runtime_data else {}
-    for service_key in ("entity_defaults_watchdog", "device_watchdog"):
-        instances = bucket.get(service_key, {}).get("instances", {})
-        for inst in instances.values():
-            excluded = list(getattr(inst, "excluded_entities", []) or [])
-            if entity_id in cv.ensure_list(excluded):
-                return True
-            regex = getattr(inst, "excluded_entity_id_regex", "") or ""
-            if regex and matches_pattern(entity_id, regex):
-                return True
-    return False
-
-
-def _register_fix_services(hass: HomeAssistant) -> None:
-    """Register the per-device repair services.
-
-    Each service takes a single ``device_id`` payload and walks
-    the device's entities at apply time, re-resolving drift /
-    disabled-diagnostic state against the live registry rather
-    than relying on a snapshot embedded in the repair issue.
-    This keeps the on-wire payload a flat dict of JSON
-    primitives (HA's issue registry stores ``data`` via
-    ``.storage`` JSON round-trip) and matches the user-
-    visible mental model: one device, one click, fix
-    everything the watchdog flagged on it.
-
-    Per-device grouping mirrors the per-device persistent
-    notification each watchdog already emits -- a device with
-    twenty drifted entities surfaces as one repair to click,
-    not twenty.
-
-    Excluded entities are skipped silently per-entity rather
-    than aborting the whole device: a repair issue can outlive
-    a newly-added exclusion, and the user's intent (don't
-    touch these specific entities) should be honored without
-    blocking the rest of the device's fix.
-
-    Each registered handler is wrapped in a crash-PN guard
-    (see ``_wrap_fix_service``) so an unhandled exception
-    surfaces as a per-(service, target) persistent
-    notification before re-raising into HA -- the same
-    silent-failure shield the blueprint dispatcher's
-    ``register_blueprint_handler`` applies to its handlers,
-    adapted to the fix-service surface (which does NOT go
-    through that dispatcher).
-
-    Registered idempotently -- ``hass.services.has_service``
-    guards re-registration on options-driven entry reload.
-    """
-    import voluptuous as vol  # noqa: PLC0415
-    from homeassistant.core import ServiceCall  # noqa: PLC0415
-    from homeassistant.helpers import (  # noqa: PLC0415
-        config_validation as cv,
-    )
-    from homeassistant.helpers import (  # noqa: PLC0415
-        device_registry as dr,
-    )
-    from homeassistant.helpers import (  # noqa: PLC0415
-        entity_registry as er,
-    )
-
-    from .helpers import (  # noqa: PLC0415
-        dismiss_fix_service_crash_notification,
-        emit_fix_service_crash_notification,
-    )
-
-    def _device_entries(device_id: str) -> list[er.RegistryEntry]:
-        ent_reg = er.async_get(hass)
-        dev_reg = dr.async_get(hass)
-        if dev_reg.async_get(device_id) is None:
-            return []
-        return [
-            entry
-            for entry in list(ent_reg.entities.values())
-            if entry.device_id == device_id
-        ]
-
-    def _wrap_fix_service(
-        service_name: str,
-        handler: Callable[[ServiceCall], Any],
-    ) -> Callable[[ServiceCall], Any]:
-        """Return ``handler`` wrapped in a crash-PN guard.
-
-        Mirrors the dispatcher wrap in
-        ``register_blueprint_handler`` but with fix-service
-        semantics: the surfaced PN identifies the fix
-        service + target rather than any automation, and the
-        success path dismisses any prior crash PN for the
-        same (service, target) so a recovered fix clears
-        its own breadcrumb.
-        """
-
-        async def _wrapped(call: ServiceCall) -> None:
-            raw_data = dict(call.data) if call.data else {}
-            try:
-                await handler(call)
-            except Exception as exc:
-                # Broad: we want every unhandled fix-service
-                # exception to land in the PN. Re-raise so
-                # HA's UI / log surfaces it through its own
-                # channels too.
-                try:
-                    await emit_fix_service_crash_notification(
-                        hass,
-                        service_name=service_name,
-                        raw_data=raw_data,
-                        exc=exc,
-                    )
-                except Exception:  # noqa: BLE001
-                    _LOGGER.exception(
-                        "failed to emit fix-service crash notification for %s",
-                        service_name,
-                    )
-                raise
-            try:
-                await dismiss_fix_service_crash_notification(
-                    hass,
-                    service_name=service_name,
-                    raw_data=raw_data,
-                )
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception(
-                    "failed to dismiss fix-service crash notification for %s",
-                    service_name,
-                )
-
-        return _wrapped
-
-    async def _fix_edw_device_entity_id_drift(call: ServiceCall) -> None:
-        ent_reg = er.async_get(hass)
-        for entry in _device_entries(call.data["device_id"]):
-            if _entity_excluded_anywhere(hass, entry.entity_id):
-                continue
-            # Regenerate entity_id if drifted. The registry's
-            # generator computes the default from the current
-            # device name + entity name, which is the same
-            # source EDW's scan uses to detect the drift.
-            expected_id = ent_reg.async_regenerate_entity_id(entry)
-            if expected_id and entry.entity_id != expected_id:
-                ent_reg.async_update_entity(
-                    entry.entity_id,
-                    new_entity_id=expected_id,
-                )
-
-    async def _fix_edw_device_entity_name_drift(
-        call: ServiceCall,
-    ) -> None:
-        ent_reg = er.async_get(hass)
-        for entry in _device_entries(call.data["device_id"]):
-            if _entity_excluded_anywhere(hass, entry.entity_id):
-                continue
-            # Clear stale name overrides. Reverts to the
-            # integration-provided ``original_name``;
-            # legacy recommended-override stripping is
-            # surfaced in the device's notification body
-            # for users who want to keep a customised name.
-            if entry.name is not None and entry.name != entry.original_name:
-                ent_reg.async_update_entity(entry.entity_id, name=None)
-
-    async def _fix_dw_device_disabled_diagnostics(call: ServiceCall) -> None:
-        ent_reg = er.async_get(hass)
-        for entry in _device_entries(call.data["device_id"]):
-            if entry.disabled_by is None:
-                continue
-            if _entity_excluded_anywhere(hass, entry.entity_id):
-                continue
-            ent_reg.async_update_entity(entry.entity_id, disabled_by=None)
-
-    if not hass.services.has_service(
-        DOMAIN,
-        "fix_edw_device_entity_id_drift",
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            "fix_edw_device_entity_id_drift",
-            _wrap_fix_service(
-                "fix_edw_device_entity_id_drift",
-                _fix_edw_device_entity_id_drift,
-            ),
-            schema=vol.Schema({vol.Required("device_id"): cv.string}),
-        )
-    if not hass.services.has_service(
-        DOMAIN,
-        "fix_edw_device_entity_name_drift",
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            "fix_edw_device_entity_name_drift",
-            _wrap_fix_service(
-                "fix_edw_device_entity_name_drift",
-                _fix_edw_device_entity_name_drift,
-            ),
-            schema=vol.Schema({vol.Required("device_id"): cv.string}),
-        )
-    if not hass.services.has_service(
-        DOMAIN,
-        "fix_dw_device_disabled_diagnostics",
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            "fix_dw_device_disabled_diagnostics",
-            _wrap_fix_service(
-                "fix_dw_device_disabled_diagnostics",
-                _fix_dw_device_disabled_diagnostics,
-            ),
-            schema=vol.Schema({vol.Required("device_id"): cv.string}),
-        )
 
 
 async def _async_options_updated(
@@ -538,7 +302,13 @@ async def async_setup_entry(
     await dw_handler.async_register(hass, entry)
     await stsc_handler.async_register(hass, entry)
 
-    _register_fix_services(hass)
+    # Per-handler repair fix services. Each watchdog owns
+    # its own ``FixService`` subclasses and registers the
+    # backing ``hass.services.async_register`` calls; this
+    # module just orchestrates the per-handler registration
+    # pass.
+    await edw_handler.async_register_fix_services(hass)
+    await dw_handler.async_register_fix_services(hass)
 
     # Conflicts surface to the user via Repairs rather
     # than by failing the setup. Real install errors raise
@@ -572,7 +342,10 @@ async def async_unload_entry(
     await edw_handler.async_unregister(hass, entry)
     await dw_handler.async_unregister(hass, entry)
     await stsc_handler.async_unregister(hass, entry)
-    for service in _FIX_SERVICES:
+    for service in (
+        *edw_handler.FIX_SERVICES,
+        *dw_handler.FIX_SERVICES,
+    ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
     return True

@@ -706,17 +706,17 @@ class TypedServiceResponse:
 
 @dataclass(frozen=True)
 class FixService(ABC):
-    """Typed payload for a per-device repair fix service.
+    """Typed payload for a repair fix service.
 
-    Each subclass corresponds to one registered service
+    Each subclass lives in the handler module that owns
+    the fix and corresponds to one registered service
     under the ``blueprint_toolkit`` domain. Subclasses are
     frozen dataclasses whose fields ARE the service's
     signature; ``service_name`` names the registered
-    service. The dispatcher converts an instance to the
-    wire payload via ``dataclasses.asdict`` only at the
-    boundary, so the rest of the integration handles a
-    strongly-typed object instead of a free-form
-    ``(name, dict)`` tuple.
+    service. The repairs dispatcher converts an instance
+    to the wire payload via ``dataclasses.asdict`` only at
+    the boundary -- handlers and tests work with a
+    strongly-typed object.
 
     Mirrors the ``TypedServiceResponse`` shape: typed in
     code, plain dict on the wire. The wire constraint is
@@ -724,60 +724,12 @@ class FixService(ABC):
     ``.storage`` via JSON round-trip and types it as
     ``dict[str, str | int | float | None]``, so every
     field on every subclass must be a JSON primitive.
-
-    Adding a new fix service means defining a subclass
-    here, registering the matching
-    ``hass.services.async_register`` in
-    ``__init__.py:_register_fix_services``, and adding
-    the spec to ``strings.json`` / ``translations/en.json``.
     """
 
     @property
     @abstractmethod
     def service_name(self) -> str:
         """The HA service name to dispatch this payload to."""
-
-
-@dataclass(frozen=True)
-class FixEdwDeviceEntityIdDrift(FixService):
-    """Per-device EDW fix: regenerate drifted entity IDs
-    on every entity attached to ``device_id``. Backed by
-    ``fix_edw_device_entity_id_drift``.
-    """
-
-    device_id: str
-
-    @property
-    def service_name(self) -> str:
-        return "fix_edw_device_entity_id_drift"
-
-
-@dataclass(frozen=True)
-class FixEdwDeviceEntityNameDrift(FixService):
-    """Per-device EDW fix: clear stale name overrides on
-    every entity attached to ``device_id``. Backed by
-    ``fix_edw_device_entity_name_drift``.
-    """
-
-    device_id: str
-
-    @property
-    def service_name(self) -> str:
-        return "fix_edw_device_entity_name_drift"
-
-
-@dataclass(frozen=True)
-class FixDwDeviceDisabledDiagnostics(FixService):
-    """Per-device DW fix: re-enable each disabled
-    recommended-diagnostic entity attached to ``device_id``.
-    Backed by ``fix_dw_device_disabled_diagnostics``.
-    """
-
-    device_id: str
-
-    @property
-    def service_name(self) -> str:
-        return "fix_dw_device_disabled_diagnostics"
 
 
 @dataclass
@@ -1389,9 +1341,6 @@ __all__ = [
     "BlueprintHandlerSpec",
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
-    "FixDwDeviceDisabledDiagnostics",
-    "FixEdwDeviceEntityIdDrift",
-    "FixEdwDeviceEntityNameDrift",
     "FixService",
     "IssueNotification",
     "JoinedRegexLine",

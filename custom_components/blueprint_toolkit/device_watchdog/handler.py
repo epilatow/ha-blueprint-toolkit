@@ -36,6 +36,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -48,7 +49,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
-    FixDwDeviceDisabledDiagnostics,
+    FixService,
     JoinedRegexLine,
     PersistentNotification,
     all_integration_ids,
@@ -57,9 +58,11 @@ from ..helpers import (
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
+    make_fix_service_wrapper,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
+    matches_pattern,
     notification_prefix,
     process_repairs_with_sweep,
     register_blueprint_handler,
@@ -72,6 +75,25 @@ from ..helpers import (
     validate_payload_or_emit_config_error,
 )
 from . import logic
+
+# --------------------------------------------------------
+# Per-device repair-fix payload type
+# --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FixDwDeviceDisabledDiagnostics(FixService):
+    """Re-enable each disabled recommended-diagnostic entity
+    attached to ``device_id``. Backed by
+    ``fix_dw_device_disabled_diagnostics``.
+    """
+
+    device_id: str
+
+    @property
+    def service_name(self) -> str:
+        return "fix_dw_device_disabled_diagnostics"
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -732,9 +754,82 @@ async def async_unregister(
     await unregister_blueprint_handler(hass, entry, _SPEC)
 
 
+# --------------------------------------------------------
+# Repair fix services
+# --------------------------------------------------------
+
+FIX_SERVICES = ("fix_dw_device_disabled_diagnostics",)
+
+
+def _entity_excluded_by_dw(hass: HomeAssistant, entity_id: str) -> bool:
+    """True when any active DW instance excludes ``entity_id``."""
+    for inst in _instances(hass).values():
+        regex = getattr(inst, "excluded_entity_id_regex", "") or ""
+        if regex and matches_pattern(entity_id, regex):
+            return True
+    return False
+
+
+def _device_entries(hass: HomeAssistant, device_id: str) -> list[Any]:
+    """Entity registry entries attached to ``device_id``.
+
+    Returns an empty list if the device is no longer in
+    the registry (was removed between the scan that
+    created the repair issue and the click on Submit).
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    if dev_reg.async_get(device_id) is None:
+        return []
+    return [
+        entry
+        for entry in list(ent_reg.entities.values())
+        if entry.device_id == device_id
+    ]
+
+
+async def async_register_fix_services(hass: HomeAssistant) -> None:
+    """Register DW's per-device repair fix services.
+
+    Idempotent under config-entry reload --
+    ``hass.services.has_service`` guards re-registration.
+    The handler is wrapped via ``make_fix_service_wrapper``
+    so a crash surfaces as a (service, target) crash PN
+    before re-raising. Per-handler scope on the exclusion
+    check: an entry excluded by a DW instance is left
+    alone here; EDW exclusions don't apply.
+    """
+
+    async def _fix_disabled_diagnostics(call: ServiceCall) -> None:
+        ent_reg = er.async_get(hass)
+        for entry in _device_entries(hass, call.data["device_id"]):
+            if entry.disabled_by is None:
+                continue
+            if _entity_excluded_by_dw(hass, entry.entity_id):
+                continue
+            ent_reg.async_update_entity(entry.entity_id, disabled_by=None)
+
+    if not hass.services.has_service(
+        DOMAIN, "fix_dw_device_disabled_diagnostics"
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            "fix_dw_device_disabled_diagnostics",
+            make_fix_service_wrapper(
+                hass,
+                "fix_dw_device_disabled_diagnostics",
+                _fix_disabled_diagnostics,
+            ),
+            schema=vol.Schema({vol.Required("device_id"): cv.string}),
+        )
+
+
 __all__ = [
     "BLUEPRINT_PATH",
+    "FIX_SERVICES",
     "DwInstanceState",
+    "FixDwDeviceDisabledDiagnostics",
     "async_register",
+    "async_register_fix_services",
     "async_unregister",
 ]
