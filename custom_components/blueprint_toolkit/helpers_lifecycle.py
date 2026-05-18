@@ -474,7 +474,7 @@ async def process_repairs_with_sweep(
     create_repairs: bool,
     repair_cap: int = 0,
     keep_pattern: str | None = None,
-) -> None:
+) -> set[str]:
     """Dispatch a per-instance batch routing repairs vs notifications.
 
     Each spec is one of:
@@ -497,6 +497,14 @@ async def process_repairs_with_sweep(
     single cap-summary notification under the per-instance
     prefix. The cap-summary slot is always dispatched (active
     when over cap, inactive otherwise).
+
+    Returns the set of ``notification_id``\\ s for active repair
+    specs that actually landed in the issue registry (post-cap,
+    post-toggle, dismiss specs excluded). Callers use this to
+    filter any per-repair side data they keep on the instance
+    state -- a payload for a repair that got suppressed by the
+    cap shouldn't be reachable from a service-call dispatch even
+    though the user can't click the (non-existent) issue.
     """
     notif_specs: list[PersistentNotification] = []
     repair_specs: list[PersistentNotification] = []
@@ -573,6 +581,7 @@ async def process_repairs_with_sweep(
         sweep_prefix=sweep_prefix,
         keep_pattern=keep_pattern,
     )
+    return {s.notification_id for s in repair_specs if s.active}
 
 
 async def _dispatch_repairs_with_sweep(

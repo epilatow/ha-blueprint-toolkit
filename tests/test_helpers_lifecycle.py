@@ -2490,7 +2490,7 @@ class TestProcessRepairsWithSweep:
             self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
             for i in (5, 2, 0, 6, 3, 1, 4)
         ]
-        await helpers.process_repairs_with_sweep(
+        published = await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             scrambled,
             sweep_prefix="blueprint_toolkit_x__a__",
@@ -2503,6 +2503,30 @@ class TestProcessRepairsWithSweep:
             "blueprint_toolkit_x__a__repair_e1",
             "blueprint_toolkit_x__a__repair_e2",
         ]
+        # The return value tracks what landed in the issue
+        # registry -- the suppressed-by-cap entries are
+        # excluded so callers can prune any per-repair side
+        # data they keep on the instance state.
+        assert published == {
+            "blueprint_toolkit_x__a__repair_e0",
+            "blueprint_toolkit_x__a__repair_e1",
+            "blueprint_toolkit_x__a__repair_e2",
+        }
+
+    @pytest.mark.asyncio
+    async def test_toggle_off_returns_empty_published_set(self) -> None:
+        # ``create_repairs=False`` drops every repair-marked
+        # spec; the return value must reflect that so callers
+        # don't keep stale payloads on instance state for
+        # repairs that didn't actually go anywhere.
+        hass = self._hass()
+        published = await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair("blueprint_toolkit_x__a__repair_e1")],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=False,
+        )
+        assert published == set()
 
     @pytest.mark.asyncio
     async def test_repair_cap_zero_unlimited(self) -> None:

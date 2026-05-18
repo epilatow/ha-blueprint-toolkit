@@ -514,14 +514,12 @@ async def _async_service_layer(
         unmatched=ev.unmatched_directives,
     )
 
-    # Refresh the per-instance flagged-entity index so the
-    # fix services only mutate entities this scan's full
-    # filter configuration still flags. Without this the
-    # fix services would re-walk every entity on a device
-    # and mutate things the scan didn't flag (e.g.
-    # entities in non-monitored domains / integrations,
-    # entities matching the user's exclude regexes).
-    state.repairs = {}
+    # Build candidate per-repair payloads from the scan's
+    # findings. These get filtered down to the published
+    # set after the dispatcher applies its cap below, so
+    # ``state.repairs`` only contains payloads the user can
+    # actually reach via the Repairs UI.
+    candidate_payloads: dict[str, _EdwRepair] = {}
     for r in ev.results:
         if r.device_excluded or not r.has_issue:
             continue
@@ -539,13 +537,13 @@ async def _async_service_layer(
         device_id = r.device_id
         if id_renames:
             nid = f"{notif_prefix}repair_device_entity_id_drift__{device_id}"
-            state.repairs[nid] = _EdwIdDriftRepair(
+            candidate_payloads[nid] = _EdwIdDriftRepair(
                 device_id=device_id,
                 entity_renames=tuple(id_renames),
             )
         if name_targets:
             nid = f"{notif_prefix}repair_device_entity_name_drift__{device_id}"
-            state.repairs[nid] = _EdwNameDriftRepair(
+            candidate_payloads[nid] = _EdwNameDriftRepair(
                 device_id=device_id,
                 entity_name_targets=tuple(name_targets),
             )
@@ -556,13 +554,23 @@ async def _async_service_layer(
     # directives spec is appended outside the per-device
     # cap so a typo'd exclusion always surfaces.
     repair_specs = _build_repair_specs(ev.results, notif_prefix)
-    await process_repairs_with_sweep(
+    published_repair_ids = await process_repairs_with_sweep(
         hass,
         list(ev.notifications) + repair_specs + [unmatched_spec],
         sweep_prefix=notif_prefix,
         create_repairs=create_repairs,
         repair_cap=max_repairs,
     )
+    # Drop payloads for repairs the dispatcher suppressed
+    # (cap exceeded) or dropped entirely (toggle off). An
+    # external service-call dispatch against a notification_id
+    # the user can't see in the Repairs panel should be a
+    # no-op, not silently apply a hidden fix.
+    state.repairs = {
+        nid: payload
+        for nid, payload in candidate_payloads.items()
+        if nid in published_repair_ids
+    }
 
     # Persist diagnostic state.
     update_instance_state(

@@ -461,14 +461,10 @@ async def _async_service_layer(
         unmatched=ev.unmatched_directives,
     )
 
-    # Group the scan's findings by owning device and stash
-    # the resulting per-repair payloads on the instance
-    # state. The fix service looks up by notification_id
-    # and re-enables exactly the captured set -- no re-
-    # walking of disabled entities, no risk of touching
-    # things the watchdog didn't flag (manually-disabled
-    # non-diagnostic entities, entries from unmonitored
-    # integrations, ...).
+    # Group the scan's findings by owning device, build
+    # candidate per-repair payloads, then prune to the
+    # published set after the dispatcher applies its cap
+    # below.
     ent_reg = er.async_get(hass)
     by_device: dict[str, list[str]] = {}
     for d in ev.disabled_diagnostics:
@@ -476,10 +472,10 @@ async def _async_service_layer(
         if reg_entry is None or reg_entry.device_id is None:
             continue
         by_device.setdefault(reg_entry.device_id, []).append(d.entity_id)
-    state.repairs = {}
+    candidate_payloads: dict[str, _DwDisabledDiagnosticsRepair] = {}
     for device_id, entity_ids in by_device.items():
         nid = f"{notif_prefix}repair_device_disabled_diagnostics__{device_id}"
-        state.repairs[nid] = _DwDisabledDiagnosticsRepair(
+        candidate_payloads[nid] = _DwDisabledDiagnosticsRepair(
             device_id=device_id,
             entity_ids=tuple(entity_ids),
         )
@@ -490,13 +486,24 @@ async def _async_service_layer(
     # directives spec is appended outside the per-device
     # cap so a typo'd exclusion always surfaces.
     repair_specs = _build_repair_specs(by_device, notif_prefix)
-    await process_repairs_with_sweep(
+    published_repair_ids = await process_repairs_with_sweep(
         hass,
         list(ev.notifications) + repair_specs + [unmatched_spec],
         sweep_prefix=notif_prefix,
         create_repairs=create_repairs,
         repair_cap=max_repairs,
     )
+    # Drop payloads for repairs the dispatcher suppressed
+    # (cap exceeded) or dropped entirely (toggle off). An
+    # external service-call dispatch against a
+    # notification_id the user can't see in the Repairs
+    # panel should be a no-op, not silently apply a hidden
+    # fix.
+    state.repairs = {
+        nid: payload
+        for nid, payload in candidate_payloads.items()
+        if nid in published_repair_ids
+    }
 
     # Persist diagnostic state.
     update_instance_state(
