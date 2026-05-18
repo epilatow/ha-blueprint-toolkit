@@ -755,10 +755,13 @@ findings aren't deterministically automatable.
   respective backend.
 - **Cap.** `repair_cap > 0` keeps the visible repair count manageable (HA's
   Repairs UI has no bulk-dismiss). Specs above the cap coalesce into a single
-  per-instance cap-summary repair (`{prefix}repair_cap_summary`). The
-  cap-summary slot is always emitted -- active when over cap, inactive
-  otherwise -- so a previously-active summary auto-dismisses when the next run
-  is back under cap.
+  per-instance cap-summary **notification** -- not a repair issue --
+  (`{prefix}cap_summary`). The cap-summary slot is always dispatched (active
+  when over cap, inactive otherwise) so a previously-active summary
+  auto-dismisses when the next run is back under cap. Routing the summary
+  through the notification dispatcher lets the user bulk-clear it via the
+  notifications panel's "Dismiss all"; only findings backed by a real
+  automatable fix service belong in the issue registry.
 - **Fix services.** Each repairable finding kind backs a per-integration
   service registered from `async_setup_entry`:
   `fix_edw_entity_id_drift(entity_id, new_entity_id)`,

@@ -440,8 +440,7 @@ def make_lifecycle_mutators(
     )
 
 
-_REPAIR_CAP_SUMMARY_SUFFIX = "repair_cap_summary"
-_REPAIR_CAP_SUMMARY_TRANSLATION_KEY = "repair_cap_summary"
+_CAP_SUMMARY_SUFFIX = "cap_summary"
 
 
 def _flatten_repair_data(
@@ -484,8 +483,7 @@ async def dispatch_findings_with_sweep(
       otherwise to the notification dispatcher (so a user with the
       toggle off keeps today's behavior).
     - ``active=True, repair_callback=None`` -- always a
-      notification (cap-summary slots, config-error specs,
-      non-repairable findings).
+      notification (config-error specs, non-repairable findings).
     - ``active=False`` -- dismiss spec for either backend.
 
     Sweep semantics mirror today's
@@ -494,11 +492,16 @@ async def dispatch_findings_with_sweep(
     the current batch is removed from its respective backend.
 
     ``repair_cap`` of 0 disables the cap. Above zero, the first N
-    repair specs surface; the rest are coalesced into a single
-    cap-summary repair under the per-instance prefix. The
-    cap-summary slot is always emitted -- active when over cap,
-    inactive otherwise -- so a previously-active summary
-    auto-dismisses when the next run is back under cap.
+    repair specs surface as issues; the rest are summarised by a
+    single cap-summary notification under the per-instance
+    prefix. The cap-summary slot is always dispatched (active
+    when over cap, inactive otherwise) so a previously-active
+    summary auto-dismisses when the next run is back under cap.
+    The summary routes through the notification dispatcher
+    rather than the issue registry: there is no automatable fix
+    to back it, and the notifications panel has a "Dismiss all"
+    that the Repairs UI lacks -- non-actionable signal belongs
+    on the surface the user can bulk-clear.
     """
     notif_specs: list[PersistentNotification] = []
     repair_specs: list[PersistentNotification] = []
@@ -513,34 +516,47 @@ async def dispatch_findings_with_sweep(
         # repair_callback=None spec), so the user sees the
         # finding once via the original notification surface.
 
-    cap_summary_id = f"{sweep_prefix}{_REPAIR_CAP_SUMMARY_SUFFIX}"
-    if create_repairs and repair_cap > 0 and len(repair_specs) > repair_cap:
-        suppressed = repair_specs[repair_cap:]
-        repair_specs = repair_specs[:repair_cap]
-        repair_specs.append(
-            PersistentNotification(
-                active=True,
-                notification_id=cap_summary_id,
-                title="",
-                message="",
-                translation_key=_REPAIR_CAP_SUMMARY_TRANSLATION_KEY,
-                translation_placeholders={
-                    "count": str(len(suppressed)),
-                    "cap": str(repair_cap),
-                },
-                repair_callback=("noop_cap_summary", {}),
-            ),
+    if create_repairs:
+        # The cap-summary inherits the batch's instance_id so
+        # the notification dispatcher prepends the standard
+        # ``Automation: [name](edit-link)`` header. The batch
+        # is per-instance by construction, so any spec's
+        # instance_id is the right one to use.
+        cap_instance_id = next(
+            (s.instance_id for s in notifications if s.instance_id),
+            None,
         )
-    elif create_repairs:
-        repair_specs.append(
-            PersistentNotification(
-                active=False,
-                notification_id=cap_summary_id,
-                title="",
-                message="",
-                repair_callback=("noop_cap_summary", {}),
-            ),
-        )
+        cap_summary_id = f"{sweep_prefix}{_CAP_SUMMARY_SUFFIX}"
+        if repair_cap > 0 and len(repair_specs) > repair_cap:
+            suppressed = repair_specs[repair_cap:]
+            repair_specs = repair_specs[:repair_cap]
+            count = len(suppressed)
+            notif_specs.append(
+                PersistentNotification(
+                    active=True,
+                    notification_id=cap_summary_id,
+                    title=(
+                        f"{count} additional repairable findings suppressed"
+                    ),
+                    message=(
+                        f"The per-run repair cap is `{repair_cap}`. "
+                        "Raise the `max_repairs` blueprint input or "
+                        "fix the visible repairs first to surface "
+                        "more."
+                    ),
+                    instance_id=cap_instance_id,
+                ),
+            )
+        else:
+            notif_specs.append(
+                PersistentNotification(
+                    active=False,
+                    notification_id=cap_summary_id,
+                    title="",
+                    message="",
+                    instance_id=cap_instance_id,
+                ),
+            )
 
     await _dispatch_repairs_with_sweep(
         hass,
@@ -590,8 +606,11 @@ async def _dispatch_repairs_with_sweep(
         if not spec.active:
             ir.async_delete_issue(hass, DOMAIN, spec.notification_id)
             continue
-        if spec.repair_callback is None:
-            continue
+        # Pre-filtered by ``dispatch_findings_with_sweep`` --
+        # every active spec routed here has a real repair
+        # callback. The assert pins that invariant and lets
+        # mypy narrow the tuple-unpack on the next line.
+        assert spec.repair_callback is not None
         service_name, service_data = spec.repair_callback
         active_ids.add(spec.notification_id)
         ir.async_create_issue(
@@ -600,11 +619,10 @@ async def _dispatch_repairs_with_sweep(
             spec.notification_id,
             is_fixable=True,
             severity=ir.IssueSeverity.WARNING,
-            translation_key=spec.translation_key
-            or _REPAIR_CAP_SUMMARY_TRANSLATION_KEY,
+            translation_key=spec.translation_key,
             translation_placeholders=spec.translation_placeholders or {},
             data=_flatten_repair_data(
-                spec.translation_key or "",
+                spec.translation_key,
                 service_name,
                 service_data,
             ),

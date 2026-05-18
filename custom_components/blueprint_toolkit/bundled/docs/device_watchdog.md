@@ -100,9 +100,10 @@ longer flags it and the dispatcher's sweep removes the stale issue).
 
 **Cap.** Repairs are not bulk-dismissable in HA's UI, so the **Max repairs**
 input limits per-run issue count (default 5; 0 = unlimited). When the cap is
-exceeded, a single cap-summary repair surfaces telling the user how many
-findings were suppressed; raise the cap or fix the visible issues to surface
-more.
+exceeded, a single cap-summary persistent notification surfaces telling the
+user how many findings were suppressed; raise the cap or fix the visible
+issues to surface more. The summary uses a regular notification (not a repair)
+so it can be dismissed in bulk from the notifications panel.
 
 Disable **Create repairs** to keep today's notification-only behavior on this
 instance.

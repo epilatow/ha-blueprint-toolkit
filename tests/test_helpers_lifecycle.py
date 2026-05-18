@@ -2439,20 +2439,26 @@ class TestDispatchFindingsWithSweep:
             create_repairs=True,
             repair_cap=3,
         )
-        # 3 visible findings + 1 cap-summary = 4 active
-        # issues; the rest are suppressed.
-        active_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
-        assert len(active_ids) == 4
-        assert "blueprint_toolkit_x__a__repair_cap_summary" in active_ids
-        cap_call = next(
-            c
-            for c in _CREATE_ISSUE_CALLS
-            if c["issue_id"].endswith("repair_cap_summary")
+        # 3 visible repair findings; the cap-summary lives on
+        # the notification surface, not in the issue registry
+        # (Repairs has no "Dismiss all" and the summary isn't
+        # automatable).
+        repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert len(repair_ids) == 3
+        assert "blueprint_toolkit_x__a__cap_summary" not in repair_ids
+        notif_create_data = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        cap_notif = next(
+            data
+            for data in notif_create_data
+            if data["notification_id"] == "blueprint_toolkit_x__a__cap_summary"
         )
-        assert cap_call["translation_placeholders"] == {
-            "count": "4",
-            "cap": "3",
-        }
+        assert "4 additional repairable findings" in cap_notif["title"]
+        assert "`3`" in cap_notif["message"]
+        assert "`max_repairs`" in cap_notif["message"]
 
     @pytest.mark.asyncio
     async def test_repair_cap_zero_unlimited(self) -> None:
@@ -2468,22 +2474,21 @@ class TestDispatchFindingsWithSweep:
             create_repairs=True,
             repair_cap=0,
         )
-        active_repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
-        # All 20 plus the cap-summary slot (inactive: emitted
-        # as a delete because cap=0 means no cap can ever
-        # apply, but the slot is asserted unconditionally so
-        # the dispatcher's create_repairs=True branch sees
-        # the dismiss).
-        assert (
-            len(
-                [
-                    i
-                    for i in active_repair_ids
-                    if i != "blueprint_toolkit_x__a__repair_cap_summary"
-                ]
-            )
-            == 20
-        )
+        # All 20 reach the issue registry. The cap-summary
+        # never surfaces on either backend: cap=0 means no
+        # cap can apply, the dispatcher emits an inactive
+        # (dismiss) spec for the slot, and
+        # ``process_persistent_notifications`` no-ops a
+        # dismiss against an ID that isn't currently active.
+        repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert len(repair_ids) == 20
+        assert "blueprint_toolkit_x__a__cap_summary" not in repair_ids
+        notif_create_ids = {
+            data["notification_id"]
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        }
+        assert "blueprint_toolkit_x__a__cap_summary" not in notif_create_ids
 
     @pytest.mark.asyncio
     async def test_sweep_deletes_stale_issues(self) -> None:

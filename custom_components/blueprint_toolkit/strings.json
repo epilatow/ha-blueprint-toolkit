@@ -83,18 +83,6 @@
           }
         }
       }
-    },
-    "repair_cap_summary": {
-      "title": "{count} additional repairable findings suppressed",
-      "description": "The per-run repair cap is `{cap}`. Raise the `max_repairs` blueprint input or fix the visible repairs first to surface more.",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Acknowledge",
-            "description": "{count} repairable findings were suppressed by the per-run cap of {cap}. Click Submit to dismiss this notice (it will re-appear next run if findings still exceed the cap)."
-          }
-        }
-      }
     }
   }
 }

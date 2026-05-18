@@ -143,7 +143,7 @@ class WatchdogFixFlow(RepairsFlow):
     ) -> FlowResult:
         if user_input is not None:
             service_name = self._data.get("service_name", "")
-            if service_name and service_name != "noop_cap_summary":
+            if service_name:
                 service_data = {
                     k.removeprefix("service_data_"): v
                     for k, v in self._data.items()
@@ -172,7 +172,7 @@ async def async_create_fix_flow(
         return InstallConflictsFlow(data)
     if issue_id.startswith(ISSUE_INSTALL_FAILURE):
         return InstallFailureFlow(data)
-    if "__repair_" in issue_id or issue_id.endswith("repair_cap_summary"):
+    if "__repair_" in issue_id:
         return WatchdogFixFlow(data)
     msg = f"unknown issue_id: {issue_id!r}"
     raise ValueError(msg)
