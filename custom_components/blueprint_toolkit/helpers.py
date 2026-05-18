@@ -21,10 +21,10 @@ from __future__ import annotations
 from .helpers_lifecycle import (
     all_integration_ids,
     cv_ha_domain_list,
-    dispatch_findings_with_sweep,
     file_editor_addon_ingress_url,
     integration_entity_ids,
     make_lifecycle_mutators,
+    process_repairs_with_sweep,
     register_blueprint_handler,
     schedule_periodic_with_jitter,
 )
@@ -118,7 +118,6 @@ __all__ = [
     "device_link",
     "device_url",
     "deviceless_entity_link",
-    "dispatch_findings_with_sweep",
     "domain_entities_link",
     "domain_entities_url",
     "emit_config_error",
@@ -143,6 +142,7 @@ __all__ = [
     "prepare_notifications",
     "process_persistent_notifications",
     "process_persistent_notifications_with_sweep",
+    "process_repairs_with_sweep",
     "register_blueprint_handler",
     "resolve_target_integrations",
     "schedule_periodic_with_jitter",

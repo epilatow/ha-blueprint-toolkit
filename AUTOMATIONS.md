@@ -317,7 +317,7 @@ Notifications:
 - `process_persistent_notifications_with_sweep(...)` -- sweep variant;
   dismisses any prior-run notifications matching `sweep_prefix` not in the
   current batch.
-- `dispatch_findings_with_sweep(...)` -- routes a per-instance batch by
+- `process_repairs_with_sweep(...)` -- routes a per-instance batch by
   `repair_callback`. Kwargs: `sweep_prefix`, `create_repairs: bool`,
   `repair_cap: int = 0`. With `create_repairs=False` repair-marked specs drop
   entirely so the user's notification stream stays today's; with `True` they
@@ -516,7 +516,7 @@ across the integration is:
 
 1. **Sweep PNs.** Dispatch the per-instance persistent-notification set for
    this run via `process_persistent_notifications_with_sweep` (or
-   `dispatch_findings_with_sweep` when the handler emits a mix of repair +
+   `process_repairs_with_sweep` when the handler emits a mix of repair +
    notification specs -- EDW + DW). Clears stale config-error / per-finding
    entries from prior runs and emits the current findings.
 2. **Update state.** Write the diagnostic state entity via
@@ -724,7 +724,7 @@ against that field).
   notification ID (e.g. `emit_config_error` against a fixed `__config_error`
   slot), so the call doesn't collateral-dismiss findings emitted by other
   categories. Handlers that emit a mix of notification + repair specs use
-  `dispatch_findings_with_sweep` instead -- see "Repairs" below.
+  `process_repairs_with_sweep` instead -- see "Repairs" below.
 
 ## Repairs
 
@@ -744,7 +744,7 @@ findings aren't deterministically automatable.
   `.storage` via JSON round-trip, so nested objects fail silently or corrupt
   at restore.
 - **Dispatcher.**
-  `dispatch_findings_with_sweep(hass, specs, sweep_prefix=, create_repairs=, repair_cap=)`
+  `process_repairs_with_sweep(hass, specs, sweep_prefix=, create_repairs=, repair_cap=)`
   (in `helpers_lifecycle.py`) replaces
   `process_persistent_notifications_with_sweep` for handlers emitting fixable
   findings. With `create_repairs=False` every spec routes to notifications

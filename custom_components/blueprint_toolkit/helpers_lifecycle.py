@@ -465,7 +465,7 @@ def _flatten_repair_data(
     return out
 
 
-async def dispatch_findings_with_sweep(
+async def process_repairs_with_sweep(
     hass: HomeAssistant,
     notifications: list[PersistentNotification],
     *,
@@ -606,7 +606,7 @@ async def _dispatch_repairs_with_sweep(
         if not spec.active:
             ir.async_delete_issue(hass, DOMAIN, spec.notification_id)
             continue
-        # Pre-filtered by ``dispatch_findings_with_sweep`` --
+        # Pre-filtered by ``process_repairs_with_sweep`` --
         # every active spec routed here has a real repair
         # callback. The assert pins that invariant and lets
         # mypy narrow the tuple-unpack on the next line.
@@ -935,10 +935,10 @@ async def register_blueprint_handler(
 __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
-    "dispatch_findings_with_sweep",
     "file_editor_addon_ingress_url",
     "integration_entity_ids",
     "make_lifecycle_mutators",
+    "process_repairs_with_sweep",
     "register_blueprint_handler",
     "schedule_periodic_with_jitter",
 ]

@@ -134,7 +134,7 @@ _ha_helpers_hassio = types.ModuleType("homeassistant.helpers.hassio")
 _ha_helpers_hassio.is_hassio = lambda _hass: False  # type: ignore[attr-defined]
 
 
-# Mock issue_registry so dispatch_findings_with_sweep's
+# Mock issue_registry so process_repairs_with_sweep's
 # late-import succeeds during test runs. Tests use
 # monkeypatch on these stubs to drive routing assertions.
 class _IssueSeverity:  # noqa: D101
@@ -2329,7 +2329,7 @@ class TestFileEditorAddonIngressUrl:
         )
 
 
-class TestDispatchFindingsWithSweep:
+class TestProcessRepairsWithSweep:
     """Routing + cap + sweep behaviour for the repairs dispatcher."""
 
     def setup_method(self) -> None:
@@ -2380,7 +2380,7 @@ class TestDispatchFindingsWithSweep:
         # to the notification backend or the user sees blank
         # notifications.
         hass = self._hass()
-        await helpers.dispatch_findings_with_sweep(
+        await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             [
                 self._repair("blueprint_toolkit_x__a__repair_e1"),
@@ -2405,7 +2405,7 @@ class TestDispatchFindingsWithSweep:
     @pytest.mark.asyncio
     async def test_toggle_on_routes_repair_specs_to_issues(self) -> None:
         hass = self._hass()
-        await helpers.dispatch_findings_with_sweep(
+        await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             [
                 self._repair("blueprint_toolkit_x__a__repair_e1"),
@@ -2432,7 +2432,7 @@ class TestDispatchFindingsWithSweep:
             self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
             for i in range(7)
         ]
-        await helpers.dispatch_findings_with_sweep(
+        await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             specs,
             sweep_prefix="blueprint_toolkit_x__a__",
@@ -2467,7 +2467,7 @@ class TestDispatchFindingsWithSweep:
             self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
             for i in range(20)
         ]
-        await helpers.dispatch_findings_with_sweep(
+        await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             specs,
             sweep_prefix="blueprint_toolkit_x__a__",
@@ -2503,7 +2503,7 @@ class TestDispatchFindingsWithSweep:
             domain=DOMAIN,
             issue_id="blueprint_toolkit_x__a__repair_e_old",
         )
-        await helpers.dispatch_findings_with_sweep(
+        await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             [self._repair("blueprint_toolkit_x__a__repair_e1")],
             sweep_prefix="blueprint_toolkit_x__a__",
@@ -2515,7 +2515,7 @@ class TestDispatchFindingsWithSweep:
     @pytest.mark.asyncio
     async def test_issue_data_is_json_primitive_only(self) -> None:
         hass = self._hass()
-        await helpers.dispatch_findings_with_sweep(
+        await helpers.process_repairs_with_sweep(
             hass,  # type: ignore[arg-type]
             [self._repair("blueprint_toolkit_x__a__repair_e1")],
             sweep_prefix="blueprint_toolkit_x__a__",

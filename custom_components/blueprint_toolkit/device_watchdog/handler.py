@@ -25,7 +25,7 @@ pattern):
   diagnostic notifications (separate stream, separate
   notification IDs). The complete per-instance
   notification + repair-spec set is sweep-dispatched via
-  ``dispatch_findings_with_sweep`` so prior-run findings no
+  ``process_repairs_with_sweep`` so prior-run findings no
   longer present this run get cleaned up from both the
   notification surface and the issue registry.
 """
@@ -53,7 +53,6 @@ from ..helpers import (
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
-    dispatch_findings_with_sweep,
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
@@ -61,6 +60,7 @@ from ..helpers import (
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
     notification_prefix,
+    process_repairs_with_sweep,
     register_blueprint_handler,
     resolve_target_integrations,
     schedule_periodic_with_jitter,
@@ -409,7 +409,7 @@ async def _async_service_layer(
     # directives spec is appended outside the per-device
     # cap so a typo'd exclusion always surfaces.
     repair_specs = _build_repair_specs(ev.disabled_diagnostics, notif_prefix)
-    await dispatch_findings_with_sweep(
+    await process_repairs_with_sweep(
         hass,
         list(ev.notifications) + repair_specs + [unmatched_spec],
         sweep_prefix=notif_prefix,
