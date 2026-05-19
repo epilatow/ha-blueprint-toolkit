@@ -30,7 +30,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -634,7 +633,7 @@ async def _dispatch_repairs_with_sweep(
             data=_flatten_repair_data(
                 spec.translation_key,
                 fix.service_name,
-                asdict(fix),
+                {"notification_id": fix.notification_id},
             ),
         )
 

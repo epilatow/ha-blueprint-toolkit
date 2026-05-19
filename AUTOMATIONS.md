@@ -304,15 +304,16 @@ Notifications:
   dispatcher prepends. Optional `repair_callback` / `translation_key` /
   `translation_placeholders` fields opt the spec into the Repairs surface (see
   "Repairs" below).
-- `FixService` (ABC) + concrete subclasses (`FixEdwDeviceEntityIdDrift`,
-  `FixEdwDeviceEntityNameDrift`, `FixDwDeviceDisabledDiagnostics`, ...) --
-  typed payloads for the per-device repair fix services. Each subclass is a
-  frozen dataclass whose fields are the fix service's signature;
-  `service_name` (property) names the registered HA service. The dispatcher
-  serialises an instance to the wire dict via `dataclasses.asdict` only at the
-  boundary, mirroring the `TypedServiceResponse` pattern. Field types must be
-  JSON primitives because HA's issue registry persists `data` to `.storage`
-  via JSON round-trip.
+- `FixService` (frozen dataclass) -- the wire payload a repair-marked
+  `PersistentNotification` carries: `service_name` (the HA service the fix
+  flow dispatches to) + `notification_id` (the repair-issue id the fix service
+  uses to look up its rich payload). One generic class, not a subclass per fix
+  -- every fix service has the same wire shape. The rich per-repair data
+  (entity lists, rename targets) stays off the wire on the handler's instance
+  state, keyed by `notification_id`; only that id is serialised to the issue
+  registry (which persists `data` as flat JSON primitives). Each handler's
+  `logic.py` defines a `FixServices(StrEnum)` of its service names and builds
+  `FixService` instances directly.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active
@@ -733,18 +734,27 @@ against that field).
 Findings whose fix is deterministic + automatable can route to HA's Repairs UI
 as one-click Fix issues instead of as persistent notifications.
 
-- **Repair spec.** `PersistentNotification` carries an optional
-  `repair_callback` field which, when set, designates the spec as a repair
-  candidate; when `None` the spec is always a notification. `FixService` is
-  the typed-payload base described under "Shared helpers" above.
+- **One surface per finding.** The logic chooses notification-vs-repair at
+  build time from `config.create_repairs`, so a fixable finding is emitted on
+  exactly one surface -- never both. With `create_repairs` on, the finding
+  becomes a repair-carrying `PersistentNotification` (`repair_callback` set +
+  `translation_key` + `translation_placeholders`); with it off, the same
+  finding renders as the per-device notification body. The per-backend sweep
+  clears the other surface when the toggle flips.
+- **Repair spec.** `PersistentNotification.repair_callback` (a `FixService` or
+  `None`) is what marks a spec as a repair. The `FixService` (see "Shared
+  helpers") carries the service name + the repair's `notification_id`; the
+  rich per-repair payload (entity lists, rename targets) lives on the
+  handler's instance state keyed by that id.
 - **Dispatcher.** `process_repairs_with_sweep` replaces
   `process_persistent_notifications_with_sweep` for handlers emitting fixable
-  findings. With `create_repairs=False` every spec routes to notifications
-  (today's behavior). With `True`, specs with `repair_callback` route to the
-  issue registry, others stay on the notification path. Sweep mirrors the
-  notification-side semantics: prior- run issues / notifications under the
-  per-instance prefix not in the current batch get removed from their
-  respective backend.
+  findings. Specs with `repair_callback` route to the issue registry when
+  `create_repairs=True` (else they're dropped -- the logic doesn't build them
+  in that case); plain specs route to notifications. The per-instance sweep
+  removes prior-run issues / notifications under the prefix not in the current
+  batch from their respective backend. Returns the set of published repair
+  `notification_id`s so handlers can prune their per-repair state to what's
+  reachable.
 - **Cap.** `repair_cap > 0` keeps the visible repair count manageable (HA's
   Repairs UI has no bulk-dismiss). Specs above the cap coalesce into a single
   per-instance cap-summary **notification** -- not a repair issue --
@@ -752,19 +762,23 @@ as one-click Fix issues instead of as persistent notifications.
   when over cap, inactive otherwise) so a previously-active summary
   auto-dismisses when the next run is back under cap.
 - **Fix services.** Each repairable finding kind backs a per-device service
-  registered from `async_setup_entry`. The handler-side payload is a typed
-  `FixService` subclass. Per-device grouping mirrors the per-device
-  notification each watchdog already emits.
+  registered from each handler's `async_register_fix_services`. The logic
+  builds the repair specs + the rich payloads; the fix service looks up its
+  payload by `notification_id` and applies it verbatim (no re-scoping -- the
+  scan that built the payload had the user's full filter configuration in
+  scope). Per-device grouping: a device with N drifted entities is one Submit,
+  not N (EDW emits up to two, one per drift kind).
 - **Issue ID format.**
   `blueprint_toolkit_{service}__{instance_id}__repair_<kind>__<device_id>` --
-  the same `__` separator convention as notifications. The `__repair_`
+  the same `__` separator convention as notifications, built via each
+  handler's `logic.repair_notification_id(...)` helper. The `__repair_`
   substring is the routing key for `repairs.async_create_fix_flow` to pick the
   `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
   `InstallFailureFlow`.
-- **Translations.** Each repair-spec builder sets `translation_key=<kind>` on
-  the spec; the entries in `strings.json` / `translations/en.json` carry the
-  user-visible title + description with `{placeholder}` fields the builder
-  fills via `translation_placeholders`.
+- **Translations.** Each repair spec sets `translation_key=<kind>`; the
+  entries in `strings.json` / `translations/en.json` carry the user-visible
+  title + description with `{placeholder}` fields filled via
+  `translation_placeholders`.
 
 ## URL generation
 

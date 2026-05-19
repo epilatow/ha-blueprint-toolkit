@@ -18,15 +18,19 @@ pattern):
   collision-suffix scan, notification body assembly)
   runs in the executor via
   ``hass.async_add_executor_job(logic.run_evaluation, ...)``.
-- Three notification slots: per-device drift findings
-  (capped by ``max_device_notifications`` via
-  ``helpers.prepare_notifications``), the cap-summary slot
-  the helper always emits, and a single deviceless
-  aggregate slot. The complete per-instance notification +
-  repair-spec set is sweep-dispatched via
-  ``process_repairs_with_sweep`` so prior-run findings no
-  longer present this run get cleaned up from both the
-  notification surface and the issue registry.
+- Three finding streams: per-device drift, a single
+  deviceless aggregate, and visible-aliased entities. The
+  logic builds device-attached drift as either repair
+  issues (when ``create_repairs`` is on -- one per drift
+  kind per device) or the aggregate per-device notification
+  (when off, capped by ``max_device_notifications`` via
+  ``helpers.prepare_notifications``) -- never both. The
+  deviceless + visible-aliased streams are notification-only
+  (no automatable fix). The complete per-instance batch is
+  sweep-dispatched via ``process_repairs_with_sweep`` so
+  prior-run findings no longer present this run get cleaned
+  up from both the notification surface and the issue
+  registry.
 """
 
 from __future__ import annotations
@@ -35,7 +39,6 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import StrEnum
 from typing import Any
 
 import voluptuous as vol
@@ -49,9 +52,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
-    FixService,
     JoinedRegexLine,
-    PersistentNotification,
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
@@ -74,95 +75,6 @@ from ..helpers import (
     validate_payload_or_emit_config_error,
 )
 from . import logic
-
-# --------------------------------------------------------
-# Per-device repair-fix payload types
-# --------------------------------------------------------
-
-
-class FixServices(StrEnum):
-    """Enum of EDW's per-device repair fix service names.
-
-    Members' values are the HA service names registered
-    under the ``blueprint_toolkit`` domain; the StrEnum
-    base lets callers pass a member anywhere a ``str`` is
-    expected (e.g. ``hass.services.async_register(DOMAIN,
-    FixServices.DEVICE_ENTITY_ID_DRIFT, ...)``).
-    """
-
-    DEVICE_ENTITY_ID_DRIFT = "fix_edw_device_entity_id_drift"
-    DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
-
-
-@dataclass(frozen=True)
-class FixEdwDeviceEntityIdDrift(FixService):
-    """Wire payload for the entity-id-drift fix.
-
-    Carries only ``notification_id`` -- the rich payload
-    (per-entity rename list) lives on the instance state
-    keyed by the same ``notification_id`` and is built at
-    scan time when the watchdog's full filter
-    configuration is still in scope. The fix service
-    re-applies that pre-computed rename set without
-    re-scoping anything.
-    """
-
-    notification_id: str
-
-    @property
-    def service_name(self) -> str:
-        return FixServices.DEVICE_ENTITY_ID_DRIFT.value
-
-
-@dataclass(frozen=True)
-class FixEdwDeviceEntityNameDrift(FixService):
-    """Wire payload for the entity-name-drift fix.
-
-    Same shape as ``FixEdwDeviceEntityIdDrift`` -- the
-    rich payload (per-entity name-target list) lives on
-    instance state keyed by ``notification_id``.
-    """
-
-    notification_id: str
-
-    @property
-    def service_name(self) -> str:
-        return FixServices.DEVICE_ENTITY_NAME_DRIFT.value
-
-
-@dataclass(frozen=True)
-class _EdwIdDriftRepair:
-    """Per-repair rich payload for an EDW id-drift repair.
-
-    Lives on ``EdwInstanceState.repairs`` keyed by the
-    repair's notification_id. Captures the
-    (entity_id, expected_entity_id) renames the scan
-    flagged under this instance's full filter
-    configuration; the fix service applies them verbatim.
-    """
-
-    device_id: str
-    entity_renames: tuple[tuple[str, str], ...]
-
-
-@dataclass(frozen=True)
-class _EdwNameDriftRepair:
-    """Per-repair rich payload for an EDW name-drift repair.
-
-    Carries the (entity_id, target_name) pairs the scan
-    flagged. ``target_name=None`` means CLEAR the override
-    (the standard stale-override case); a non-None value
-    means SET the override to that string (the legacy
-    ``recommended_override`` case where stripping the
-    device-name prefix gives a stable kept-customisation).
-    """
-
-    device_id: str
-    entity_name_targets: tuple[tuple[str, str | None], ...]
-
-
-_EdwRepair = _EdwIdDriftRepair | _EdwNameDriftRepair
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,7 +114,7 @@ class EdwInstanceState:
     # user's full filter configuration. Empty default
     # keeps the post-restart window safe: a fix click
     # before the next scan finds no payload and no-ops.
-    repairs: dict[str, _EdwRepair] = field(default_factory=dict)
+    repairs: dict[str, logic.EdwRepair] = field(default_factory=dict)
 
 
 # --------------------------------------------------------
@@ -417,6 +329,7 @@ async def _async_service_layer(
         exclude_entity_ids=exclude_entities,
         exclude_entity_id_regex=exclude_entity_id_regex,
         exclude_entity_name_regex=exclude_entity_name_regex,
+        create_repairs=create_repairs,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
     )
@@ -514,61 +427,29 @@ async def _async_service_layer(
         unmatched=ev.unmatched_directives,
     )
 
-    # Build candidate per-repair payloads from the scan's
-    # findings. These get filtered down to the published
-    # set after the dispatcher applies its cap below, so
-    # ``state.repairs`` only contains payloads the user can
-    # actually reach via the Repairs UI.
-    candidate_payloads: dict[str, _EdwRepair] = {}
-    for r in ev.results:
-        if r.device_excluded or not r.has_issue:
-            continue
-        id_renames: list[tuple[str, str]] = []
-        name_targets: list[tuple[str, str | None]] = []
-        for d in r.drifted_entities:
-            if d.id_drifted and d.expected_entity_id:
-                id_renames.append((d.entity_id, d.expected_entity_id))
-            if d.name_drifted:
-                # ``recommended_override`` non-None means
-                # SET the name to the legacy-stripped
-                # value; ``None`` means CLEAR the override
-                # so the integration default takes over.
-                name_targets.append((d.entity_id, d.recommended_override))
-        device_id = r.device_id
-        if id_renames:
-            nid = f"{notif_prefix}repair_device_entity_id_drift__{device_id}"
-            candidate_payloads[nid] = _EdwIdDriftRepair(
-                device_id=device_id,
-                entity_renames=tuple(id_renames),
-            )
-        if name_targets:
-            nid = f"{notif_prefix}repair_device_entity_name_drift__{device_id}"
-            candidate_payloads[nid] = _EdwNameDriftRepair(
-                device_id=device_id,
-                entity_name_targets=tuple(name_targets),
-            )
-
-    # Sweep so prior-run notifications no longer present
-    # this run (e.g. a device whose drift cleared between
-    # runs) get dismissed automatically. The unmatched-
-    # directives spec is appended outside the per-device
-    # cap so a typo'd exclusion always surfaces.
-    repair_specs = _build_repair_specs(ev.results, notif_prefix)
+    # The logic already built the device-attached drift as
+    # either repair-carrying specs (when ``create_repairs``
+    # is on) or the aggregate per-device notification (when
+    # off) -- never both -- inside ``ev.notifications``,
+    # plus the matching per-repair payloads in ``ev.repairs``.
+    # Dispatch the whole batch; the unmatched-directives
+    # spec is appended outside the per-device cap so a
+    # typo'd exclusion always surfaces.
     published_repair_ids = await process_repairs_with_sweep(
         hass,
-        list(ev.notifications) + repair_specs + [unmatched_spec],
+        list(ev.notifications) + [unmatched_spec],
         sweep_prefix=notif_prefix,
         create_repairs=create_repairs,
         repair_cap=max_repairs,
     )
-    # Drop payloads for repairs the dispatcher suppressed
-    # (cap exceeded) or dropped entirely (toggle off). An
-    # external service-call dispatch against a notification_id
-    # the user can't see in the Repairs panel should be a
-    # no-op, not silently apply a hidden fix.
+    # Keep only payloads for repairs that actually landed in
+    # the issue registry (the dispatcher's cap can suppress
+    # some). An external service-call dispatch against a
+    # notification_id the user can't see in the Repairs panel
+    # should be a no-op, not silently apply a hidden fix.
     state.repairs = {
         nid: payload
-        for nid, payload in candidate_payloads.items()
+        for nid, payload in ev.repairs.items()
         if nid in published_repair_ids
     }
 
@@ -961,88 +842,6 @@ def _build_visible_aliased_inputs(
 
 
 # --------------------------------------------------------
-# Repair-spec builder
-# --------------------------------------------------------
-
-
-def _build_repair_specs(
-    results: list[logic.DeviceResult],
-    notif_prefix: str,
-) -> list[PersistentNotification]:
-    """Per-device repair specs, separated by drift kind.
-
-    Entity-id drift and entity-name drift are independent
-    fixes with independent semantics (regenerate the
-    entity_id vs clear a stale friendly-name override), so
-    each gets its own repair issue per device. A device with
-    both kinds surfaces as two repairs the user can apply
-    independently; a device with only one kind surfaces as
-    one repair.
-
-    Per-device grouping mirrors the persistent notification:
-    a device with twenty drifted entity IDs is one Submit,
-    not twenty. The accompanying per-device notification
-    body keeps its full, instruction-rich grouping for the
-    rest of the EDW findings (redundant prefixes, recommended
-    overrides) which don't have a deterministic one-click
-    fix.
-    """
-    specs: list[PersistentNotification] = []
-    for r in results:
-        if r.device_excluded or not r.has_issue:
-            continue
-        id_count = sum(
-            1
-            for d in r.drifted_entities
-            if d.id_drifted and d.expected_entity_id
-        )
-        name_count = sum(
-            1
-            for d in r.drifted_entities
-            if d.name_drifted and d.expected_name is not None
-        )
-        device_id = r.device_id
-        device_name = r.device_name or device_id
-        if id_count > 0:
-            nid = f"{notif_prefix}repair_device_entity_id_drift__{device_id}"
-            specs.append(
-                PersistentNotification(
-                    active=True,
-                    notification_id=nid,
-                    title="",
-                    message="",
-                    translation_key="edw_device_entity_id_drift",
-                    translation_placeholders={
-                        "device_name": device_name,
-                        "count": str(id_count),
-                    },
-                    repair_callback=FixEdwDeviceEntityIdDrift(
-                        notification_id=nid,
-                    ),
-                ),
-            )
-        if name_count > 0:
-            nid = f"{notif_prefix}repair_device_entity_name_drift__{device_id}"
-            specs.append(
-                PersistentNotification(
-                    active=True,
-                    notification_id=nid,
-                    title="",
-                    message="",
-                    translation_key="edw_device_entity_name_drift",
-                    translation_placeholders={
-                        "device_name": device_name,
-                        "count": str(name_count),
-                    },
-                    repair_callback=FixEdwDeviceEntityNameDrift(
-                        notification_id=nid,
-                    ),
-                ),
-            )
-    return specs
-
-
-# --------------------------------------------------------
 # Periodic timer + recovery kick
 # --------------------------------------------------------
 
@@ -1132,13 +931,13 @@ async def async_unregister(
 # Repair fix services
 # --------------------------------------------------------
 
-FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in FixServices)
+FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in logic.FixServices)
 
 
 def _lookup_repair(
     hass: HomeAssistant,
     notification_id: str,
-) -> _EdwRepair | None:
+) -> logic.EdwRepair | None:
     """Find the per-repair payload across all loaded EDW instances."""
     for inst in _instances(hass).values():
         payload = inst.repairs.get(notification_id)
@@ -1170,7 +969,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     async def _fix_id_drift(call: ServiceCall) -> None:
         notification_id = call.data["notification_id"]
         payload = _lookup_repair(hass, notification_id)
-        if not isinstance(payload, _EdwIdDriftRepair):
+        if not isinstance(payload, logic.DeviceEntityIdDriftRepair):
             return
         ent_reg = er.async_get(hass)
         for entity_id, expected_id in payload.entity_renames:
@@ -1182,7 +981,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     async def _fix_name_drift(call: ServiceCall) -> None:
         notification_id = call.data["notification_id"]
         payload = _lookup_repair(hass, notification_id)
-        if not isinstance(payload, _EdwNameDriftRepair):
+        if not isinstance(payload, logic.DeviceEntityNameDriftRepair):
             return
         ent_reg = er.async_get(hass)
         for entity_id, target in payload.entity_name_targets:
@@ -1192,27 +991,27 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
             ent_reg.async_update_entity(entity_id, name=target)
 
     if not hass.services.has_service(
-        DOMAIN, FixServices.DEVICE_ENTITY_ID_DRIFT
+        DOMAIN, logic.FixServices.DEVICE_ENTITY_ID_DRIFT
     ):
         hass.services.async_register(
             DOMAIN,
-            FixServices.DEVICE_ENTITY_ID_DRIFT,
+            logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
             make_fix_service_wrapper(
                 hass,
-                FixServices.DEVICE_ENTITY_ID_DRIFT,
+                logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
                 _fix_id_drift,
             ),
             schema=vol.Schema({vol.Required("notification_id"): cv.string}),
         )
     if not hass.services.has_service(
-        DOMAIN, FixServices.DEVICE_ENTITY_NAME_DRIFT
+        DOMAIN, logic.FixServices.DEVICE_ENTITY_NAME_DRIFT
     ):
         hass.services.async_register(
             DOMAIN,
-            FixServices.DEVICE_ENTITY_NAME_DRIFT,
+            logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
             make_fix_service_wrapper(
                 hass,
-                FixServices.DEVICE_ENTITY_NAME_DRIFT,
+                logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
                 _fix_name_drift,
             ),
             schema=vol.Schema({vol.Required("notification_id"): cv.string}),
@@ -1223,9 +1022,6 @@ __all__ = [
     "BLUEPRINT_PATH",
     "FIX_SERVICES",
     "EdwInstanceState",
-    "FixEdwDeviceEntityIdDrift",
-    "FixEdwDeviceEntityNameDrift",
-    "FixServices",
     "async_register",
     "async_register_fix_services",
     "async_unregister",

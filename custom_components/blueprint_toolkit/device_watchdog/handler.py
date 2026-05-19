@@ -18,16 +18,18 @@ pattern):
   diagnostic scan, notification body assembly) runs in
   the executor via
   ``hass.async_add_executor_job(logic.run_evaluation, ...)``.
-- Three notification slots: per-device health findings
+- Three finding streams: per-device health findings
   (capped by ``max_device_notifications`` via
   ``helpers.prepare_notifications``), the cap-summary slot
-  the helper always emits, and per-device disabled-
-  diagnostic notifications (separate stream, separate
-  notification IDs). The complete per-instance
-  notification + repair-spec set is sweep-dispatched via
-  ``process_repairs_with_sweep`` so prior-run findings no
-  longer present this run get cleaned up from both the
-  notification surface and the issue registry.
+  the helper always emits, and disabled recommended-
+  diagnostic findings. The logic builds the disabled-
+  diagnostic findings as either repair issues (when
+  ``create_repairs`` is on) or per-device notifications
+  (when off) -- never both. The complete per-instance
+  batch is sweep-dispatched via ``process_repairs_with_sweep``
+  so prior-run findings no longer present this run get
+  cleaned up from both the notification surface and the
+  issue registry.
 """
 
 from __future__ import annotations
@@ -36,7 +38,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import StrEnum
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -49,9 +50,7 @@ from homeassistant.util import dt as dt_util
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
-    FixService,
     JoinedRegexLine,
-    PersistentNotification,
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
@@ -74,59 +73,6 @@ from ..helpers import (
     validate_payload_or_emit_config_error,
 )
 from . import logic
-
-# --------------------------------------------------------
-# Per-device repair-fix payload type
-# --------------------------------------------------------
-
-
-class FixServices(StrEnum):
-    """Enum of DW's per-device repair fix service names.
-
-    Members' values are the HA service names registered
-    under the ``blueprint_toolkit`` domain; the StrEnum
-    base lets callers pass a member anywhere a ``str`` is
-    expected.
-    """
-
-    DEVICE_DISABLED_DIAGNOSTICS = "fix_dw_device_disabled_diagnostics"
-
-
-@dataclass(frozen=True)
-class FixDwDeviceDisabledDiagnostics(FixService):
-    """Wire payload for the disabled-diagnostics fix.
-
-    Carries only ``notification_id`` -- the rich payload
-    (the entity_ids the scan flagged) lives on the instance
-    state keyed by the same notification_id and is built at
-    scan time when the watchdog's full filter
-    configuration is still in scope. The fix service
-    re-enables exactly the captured entities without any
-    re-scoping.
-    """
-
-    notification_id: str
-
-    @property
-    def service_name(self) -> str:
-        return FixServices.DEVICE_DISABLED_DIAGNOSTICS.value
-
-
-@dataclass(frozen=True)
-class _DwDisabledDiagnosticsRepair:
-    """Per-repair rich payload for a DW disabled-diagnostics repair.
-
-    Lives on ``DwInstanceState.repairs`` keyed by the
-    repair's notification_id. Captures the entity_ids the
-    scan flagged under this instance's full filter
-    configuration (``RECOMMENDED_DIAGNOSTICS`` membership +
-    monitored integrations); the fix service re-enables
-    exactly that set.
-    """
-
-    device_id: str
-    entity_ids: tuple[str, ...]
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,7 +112,7 @@ class DwInstanceState:
     # entry. Empty default keeps the post-restart window
     # safe: a fix click before the next scan finds no
     # payload and no-ops.
-    repairs: dict[str, _DwDisabledDiagnosticsRepair] = field(
+    repairs: dict[str, logic.DisabledDiagnosticsRepair] = field(
         default_factory=dict,
     )
 
@@ -383,6 +329,7 @@ async def _async_service_layer(
         monitored_entity_domains=monitored_entity_domains,
         dead_threshold_seconds=dead_threshold_seconds,
         enabled_checks=enabled_checks,
+        create_repairs=create_repairs,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
     )
@@ -461,47 +408,29 @@ async def _async_service_layer(
         unmatched=ev.unmatched_directives,
     )
 
-    # Group the scan's findings by owning device, build
-    # candidate per-repair payloads, then prune to the
-    # published set after the dispatcher applies its cap
-    # below.
-    ent_reg = er.async_get(hass)
-    by_device: dict[str, list[str]] = {}
-    for d in ev.disabled_diagnostics:
-        reg_entry = ent_reg.async_get(d.entity_id)
-        if reg_entry is None or reg_entry.device_id is None:
-            continue
-        by_device.setdefault(reg_entry.device_id, []).append(d.entity_id)
-    candidate_payloads: dict[str, _DwDisabledDiagnosticsRepair] = {}
-    for device_id, entity_ids in by_device.items():
-        nid = f"{notif_prefix}repair_device_disabled_diagnostics__{device_id}"
-        candidate_payloads[nid] = _DwDisabledDiagnosticsRepair(
-            device_id=device_id,
-            entity_ids=tuple(entity_ids),
-        )
-
-    # Sweep so prior-run notifications no longer present
-    # this run (e.g. a device whose health cleared between
-    # runs) get dismissed automatically. The unmatched-
-    # directives spec is appended outside the per-device
-    # cap so a typo'd exclusion always surfaces.
-    repair_specs = _build_repair_specs(by_device, notif_prefix)
+    # The logic already built the disabled-diagnostic
+    # findings as either repair-carrying specs (when
+    # ``create_repairs`` is on) or plain notifications
+    # (when off) -- never both -- inside ``ev.notifications``,
+    # plus the matching per-repair payloads in ``ev.repairs``.
+    # Dispatch the whole batch; the unmatched-directives spec
+    # is appended outside the per-device cap so a typo'd
+    # exclusion always surfaces.
     published_repair_ids = await process_repairs_with_sweep(
         hass,
-        list(ev.notifications) + repair_specs + [unmatched_spec],
+        list(ev.notifications) + [unmatched_spec],
         sweep_prefix=notif_prefix,
         create_repairs=create_repairs,
         repair_cap=max_repairs,
     )
-    # Drop payloads for repairs the dispatcher suppressed
-    # (cap exceeded) or dropped entirely (toggle off). An
-    # external service-call dispatch against a
-    # notification_id the user can't see in the Repairs
-    # panel should be a no-op, not silently apply a hidden
-    # fix.
+    # Keep only payloads for repairs that actually landed in
+    # the issue registry (the dispatcher's cap can suppress
+    # some). An external service-call dispatch against a
+    # notification_id the user can't see in the Repairs panel
+    # should be a no-op, not silently apply a hidden fix.
     state.repairs = {
         nid: payload
-        for nid, payload in candidate_payloads.items()
+        for nid, payload in ev.repairs.items()
         if nid in published_repair_ids
     }
 
@@ -680,46 +609,6 @@ def _build_device_inputs(
 
 
 # --------------------------------------------------------
-# Repair-spec builder
-# --------------------------------------------------------
-
-
-def _build_repair_specs(
-    by_device: dict[str, list[str]],
-    notif_prefix: str,
-) -> list[PersistentNotification]:
-    """One per-device repair spec per device with disabled diagnostics.
-
-    Takes the scan's findings pre-grouped by owning device
-    (caller did the entity-registry lookup) so this
-    function stays a pure mapping over the resulting
-    structure. A device with multiple disabled
-    recommended-diagnostic entities surfaces as a single
-    Submit-once repair; the per-device persistent
-    notification keeps its grouped body alongside.
-    """
-    specs: list[PersistentNotification] = []
-    for device_id, entity_ids in by_device.items():
-        nid = f"{notif_prefix}repair_device_disabled_diagnostics__{device_id}"
-        specs.append(
-            PersistentNotification(
-                active=True,
-                notification_id=nid,
-                title="",
-                message="",
-                translation_key="dw_device_disabled_diagnostics",
-                translation_placeholders={
-                    "count": str(len(entity_ids)),
-                },
-                repair_callback=FixDwDeviceDisabledDiagnostics(
-                    notification_id=nid,
-                ),
-            ),
-        )
-    return specs
-
-
-# --------------------------------------------------------
 # Periodic timer + recovery kick
 # --------------------------------------------------------
 
@@ -809,13 +698,13 @@ async def async_unregister(
 # Repair fix services
 # --------------------------------------------------------
 
-FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in FixServices)
+FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in logic.FixServices)
 
 
 def _lookup_repair(
     hass: HomeAssistant,
     notification_id: str,
-) -> _DwDisabledDiagnosticsRepair | None:
+) -> logic.DisabledDiagnosticsRepair | None:
     """Find the per-repair payload across all loaded DW instances."""
     for inst in _instances(hass).values():
         payload = inst.repairs.get(notification_id)
@@ -856,14 +745,14 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
             ent_reg.async_update_entity(entity_id, disabled_by=None)
 
     if not hass.services.has_service(
-        DOMAIN, FixServices.DEVICE_DISABLED_DIAGNOSTICS
+        DOMAIN, logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS
     ):
         hass.services.async_register(
             DOMAIN,
-            FixServices.DEVICE_DISABLED_DIAGNOSTICS,
+            logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS,
             make_fix_service_wrapper(
                 hass,
-                FixServices.DEVICE_DISABLED_DIAGNOSTICS,
+                logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS,
                 _fix_disabled_diagnostics,
             ),
             schema=vol.Schema({vol.Required("notification_id"): cv.string}),
@@ -874,8 +763,6 @@ __all__ = [
     "BLUEPRINT_PATH",
     "FIX_SERVICES",
     "DwInstanceState",
-    "FixDwDeviceDisabledDiagnostics",
-    "FixServices",
     "async_register",
     "async_register_fix_services",
     "async_unregister",

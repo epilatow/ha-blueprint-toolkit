@@ -25,7 +25,6 @@ explicitly.
 from __future__ import annotations
 
 import re
-from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -705,31 +704,27 @@ class TypedServiceResponse:
 
 
 @dataclass(frozen=True)
-class FixService(ABC):
-    """Typed payload for a repair fix service.
+class FixService:
+    """Wire payload for a repair fix service.
 
-    Each subclass lives in the handler module that owns
-    the fix and corresponds to one registered service
-    under the ``blueprint_toolkit`` domain. Subclasses are
-    frozen dataclasses whose fields ARE the service's
-    signature; ``service_name`` names the registered
-    service. The repairs dispatcher converts an instance
-    to the wire payload via ``dataclasses.asdict`` only at
-    the boundary -- handlers and tests work with a
-    strongly-typed object.
+    A repair-marked ``PersistentNotification`` carries one
+    of these. ``service_name`` is the HA service the fix
+    flow dispatches to (each handler registers its names
+    from a per-handler ``FixServices`` enum);
+    ``notification_id`` is the repair-issue id the fix
+    service uses to look up its rich payload (entity lists,
+    rename targets, ...) on the handler's instance state.
 
-    Mirrors the ``TypedServiceResponse`` shape: typed in
-    code, plain dict on the wire. The wire constraint is
-    HA's issue registry: it persists ``data`` to
-    ``.storage`` via JSON round-trip and types it as
-    ``dict[str, str | int | float | None]``, so every
-    field on every subclass must be a JSON primitive.
+    Every fix service has the same wire shape -- a service
+    name plus a notification_id -- so a single generic
+    dataclass replaces the per-fix subclasses. The rich
+    per-repair data stays off the wire (HA's issue registry
+    persists ``data`` as flat JSON primitives only); the
+    notification_id is the key that recovers it.
     """
 
-    @property
-    @abstractmethod
-    def service_name(self) -> str:
-        """The HA service name to dispatch this payload to."""
+    service_name: str
+    notification_id: str
 
 
 @dataclass

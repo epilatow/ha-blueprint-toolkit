@@ -1046,9 +1046,15 @@ class TestEvaluateDiagnostics:
         results, _ = evaluate_diagnostics(_config(), [device])
         assert results[0].title == "Front Door Lock"
 
-    def test_device_all_enabled_dismisses(
+    def test_device_all_enabled_emits_nothing(
         self,
     ) -> None:
+        # A device whose recommended diagnostics are all
+        # enabled produces no spec; the dispatcher's prefix
+        # sweep dismisses any prior-run notification / issue
+        # for it. (Previously this emitted an explicit
+        # inactive dismiss spec; the sweep makes that
+        # redundant.)
         device = self._diag_device(
             registry_entries=[
                 _reg_entry(
@@ -1057,9 +1063,9 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results, _ = evaluate_diagnostics(_config(), [device])
-        assert len(results) == 1
-        assert results[0].active is False
+        results, repairs = evaluate_diagnostics(_config(), [device])
+        assert results == []
+        assert repairs == {}
 
     def test_notification_id_uses_device_id(
         self,
