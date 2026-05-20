@@ -241,13 +241,6 @@ Notification + formatting:
   notification body with a formatted prefix + suffix.
 - `md_escape(s)` -- escape `\\`, `[`, `]` for safe interpolation into
   notification bodies; apply to every user-controlled string.
-- `device_header_line(name, device_id)` -- render the canonical
-  `Device: [<name>](/config/devices/device/<device_id>)` header line used as
-  the first body line of every per-device watchdog notification (DW
-  unavailable / stale, DW disabled-diagnostics, EDW per-device drift).
-  Resolves the URL via `device_link` internally so the line shape stays
-  consistent with the URL-helper convention in the "URL generation" section
-  below.
 - `slugify(text)` -- derive an HA-safe slug from arbitrary text (used to build
   state-entity IDs).
 - `matches_pattern(text, pattern)` -- case-insensitive substring or regex
@@ -300,11 +293,22 @@ flagged as unmatched precisely when it wouldn't filter anything.
 
 Notifications:
 
-- `PersistentNotification` (dataclass) -- spec for create/dismiss;
-  `instance_id` field drives the `Automation: [name](edit-link)\n` prefix the
-  dispatcher prepends. Optional `repair_callback` / `translation_key` /
-  `translation_placeholders` fields opt the spec into the Repairs surface (see
-  "Repairs" below).
+- `PersistentNotification` (dataclass) -- spec for create/dismiss. Set `title`
+  / `message`, `instance_id` (the automation entity_id), and -- for findings
+  about a device or integration -- `integrations` (tuple of integration names)
+  and / or `device` (a `DeviceRef`); the dispatcher renders these into the
+  shared attribution header (see "Notifications"). Set `repair_callback` /
+  `translation_key` / `translation_placeholders` to route the spec to the
+  Repairs surface (see "Repairs").
+- `DeviceRef` (frozen dataclass) -- resolved device context for the
+  attribution header's `Device:` / `Config Entry:` lines: `device_id` +
+  `name`, plus optional `config_entry_title` / `manufacturer` / `model`.
+  Integrations ride on the spec's `integrations` field, not here.
+- `attribution_lines(...)` / `integration_attribution_link(name)` -- the
+  dispatcher-side renderers for the shared header; handlers set the spec
+  fields above rather than calling these. `integration_attribution_link`
+  routes `script` / `template` to better list-all surfaces than their
+  per-integration config page.
 - `FixService` (frozen dataclass) -- the wire payload a repair-marked
   `PersistentNotification` carries: `service_name` (the HA service the fix
   flow dispatches to) + `notification_id` (the repair-issue id the fix service
@@ -696,11 +700,16 @@ against that field).
 - Use friendly names (not raw entity IDs) in all user-facing notification
   messages. Resolve via `helpers.automation_friendly_name(hass, instance_id)`
   for log tags.
-- **Every `PersistentNotification` spec sets
-  `instance_id=<the automation entity_id>`.** The dispatcher uses it to
-  prepend `Automation: [name](edit-link)\n` to every active notification body
-  so users can click through to the automation that emitted the notification;
-  an unset `instance_id` silently skips the prefix.
+- **Attribution header.** Every spec sets `instance_id` (the automation
+  entity_id); findings about a device or integration also set `integrations=`
+  and / or `device=<DeviceRef>`. The dispatcher prepends a shared header --
+  `Automation:` / `Integrations:` / `Device:` / `Config Entry:`, each line
+  present only when its field is set -- to the notification body, and feeds
+  the same header into the repair confirm modal's `{attribution}` placeholder,
+  so the two surfaces stay identical. `integrations` is independent of
+  `device`, so a deviceless finding (RW's unused-deviceless rollup) reports
+  its integration with no device id. The framework owns this header --
+  handlers set fields, not body lines.
 - **Apply `helpers.md_escape(...)` to every user-controlled string going into
   a notification body.** Persistent notifications render through
   `<ha-markdown>`, so stray `[` / `]` / `\` in body text can corrupt the
@@ -785,6 +794,11 @@ as one-click Fix issues instead of as persistent notifications.
   `__repair_` substring that `repairs.async_create_fix_flow` routes on to pick
   the `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
   `InstallFailureFlow`.
+- **Attribution.** A repair spec carries the same `instance_id` /
+  `integrations=` / `device=` as a notification (see "Notifications"); the
+  dispatcher fills the confirm description's `{attribution}` placeholder with
+  that header. Every repair's `confirm` description in `strings.json` /
+  `translations/en.json` must lead with `{attribution}\n\n`.
 - **Translations.** Each repair spec sets `translation_key=<kind>`; the
   entries in `strings.json` / `translations/en.json` carry the user-visible
   title + description with `{placeholder}` fields filled via

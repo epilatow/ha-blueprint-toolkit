@@ -140,6 +140,14 @@ class DeviceResult:
     # the automation entity_id needed for the
     # ``Automation: [name](edit-link)\n`` body prefix.
     instance_id: str | None = None
+    # Device context the dispatcher renders into the shared
+    # attribution header (``Device`` / ``Config Entry``); None
+    # for the excluded / no-issue dismiss spec.
+    device: helpers.DeviceRef | None = None
+    # The device's integration domains, rendered as the
+    # attribution ``Integrations`` line (independent of
+    # ``device`` so the spec can carry them).
+    integrations: tuple[str, ...] = ()
 
     def to_notification(
         self,
@@ -151,6 +159,8 @@ class DeviceResult:
             title=self.notification_title,
             message=self.notification_message,
             instance_id=self.instance_id,
+            device=self.device,
+            integrations=self.integrations,
         )
 
 
@@ -314,6 +324,11 @@ def evaluate_diagnostics(
             f"- `{d.entity_id}` ({helpers.md_escape(d.original_name)})"
             for d in disabled
         )
+        device_ref = helpers.DeviceRef(
+            device_id=device.de.id,
+            name=device.de.name or device.de.id,
+        )
+        device_integrations = tuple(sorted(device.de.integration_entities))
         if config.create_repairs:
             nid = helpers.repair_notification_id(
                 config.notification_prefix,
@@ -339,6 +354,8 @@ def evaluate_diagnostics(
                         "count": str(len(disabled)),
                         "entities": entity_lines,
                     },
+                    device=device_ref,
+                    integrations=device_integrations,
                 ),
             )
             repairs[nid] = DisabledDiagnosticsRepair(
@@ -346,12 +363,7 @@ def evaluate_diagnostics(
                 entity_ids=tuple(d.entity_id for d in disabled),
             )
         else:
-            header = helpers.device_header_line(
-                device.de.name,
-                device.de.id,
-            )
             message = (
-                f"{header}\n\n"
                 f"Recommended diagnostic entities are disabled:"
                 f"\n\n{entity_lines}"
             )
@@ -364,6 +376,8 @@ def evaluate_diagnostics(
                     title=device.de.name,
                     message=message,
                     instance_id=config.instance_id,
+                    device=device_ref,
+                    integrations=device_integrations,
                 ),
             )
     return results, repairs
@@ -439,26 +453,19 @@ def _check_staleness(
 
 
 def _build_notification_message(
-    device: DeviceInfo,
     unavailable: list[EntityInfo],
     is_stale: bool,
     newest_entity: str | None,
     newest_timestamp: datetime | None,
     config: Config,
 ) -> str:
-    """Build the notification body for an unhealthy device."""
-    lines: list[str] = [
-        helpers.device_header_line(device.de.name, device.de.id),
-        "",
-    ]
-    integrations = sorted(
-        device.de.integration_entities.keys(),
-    )
-    if integrations:
-        escaped = ", ".join(helpers.md_escape(i) for i in integrations)
-        lines.append(
-            f"Integrations: {escaped}",
-        )
+    """Build the notification body for an unhealthy device.
+
+    Carries only the unavailable / stale findings. The
+    ``Automation`` / ``Integrations`` / ``Device`` header is
+    rendered by the dispatcher from the spec's ``device`` ref.
+    """
+    lines: list[str] = []
 
     for entity in sorted(unavailable, key=lambda e: e.entity_id):
         lines.append(
@@ -481,11 +488,10 @@ def _build_notification_message(
             )
 
     # Guard the contract: callers must only invoke this when
-    # there's actual content past the always-present
-    # ``[Device: header, blank-line]`` prefix. Explicit
-    # ``ValueError`` (not ``assert``) so the invariant
-    # holds under ``python -O`` too.
-    if len(lines) <= 2:
+    # there's actual unavailable / stale content. Explicit
+    # ``ValueError`` (not ``assert``) so the invariant holds
+    # under ``python -O`` too.
+    if not lines:
         msg = "Expected unavailable or stale content but got none"
         raise ValueError(msg)
 
@@ -551,7 +557,6 @@ def _evaluate_device(
         # dispatcher prepends ``<automation_name>: ``.
         title = device.de.name
         message = _build_notification_message(
-            device,
             unavailable,
             is_stale,
             newest_entity,
@@ -574,6 +579,11 @@ def _evaluate_device(
         entities_evaluated=len(kept),
         entities_filtered=len(filtered_out),
         instance_id=config.instance_id,
+        device=helpers.DeviceRef(
+            device_id=device.de.id,
+            name=device.de.name or device.de.id,
+        ),
+        integrations=tuple(sorted(device.de.integration_entities)),
     )
 
 

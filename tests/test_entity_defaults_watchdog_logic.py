@@ -389,32 +389,30 @@ class TestComputeRecommendedOverride:
 
 
 class TestBuildNotificationMessage:
-    def test_edw_device_emit_uses_shared_helper(self) -> None:
-        # Locks down the lift-not-copy intent: the device
-        # header line at the top of every per-device EDW
-        # body must be byte-identical to the helper's
-        # rendering so the format stays consistent across
-        # DW + EDW handlers.
+    def test_device_result_carries_device_ref(self) -> None:
+        # Locks down the lift-not-copy intent: the per-device
+        # result hands the framework a DeviceRef (resolved name
+        # + the device's integration set) so the shared
+        # attribution header -- not the EDW body -- renders the
+        # Device / Integrations lines, consistently across
+        # DW + EDW + RW.
         device = _device(
             device_id="abc",
             device_name="Kitchen Sensor",
+            integrations=["zwave_js", "enphase_envoy"],
         )
-        drifted = [
-            DriftDetail(
-                entity_id="sensor.kitchen_temp",
-                id_drifted=False,
-                name_drifted=True,
-                current_name="Old Temp",
-                expected_name="Temperature",
-            ),
-        ]
-        msg = _build_device_notification_message(device, drifted)
-        body_lines = msg.split("\n")
-        assert body_lines[0] == helpers.device_header_line(
-            "Kitchen Sensor",
-            "abc",
+        result = _evaluate_device(_config(drift_checks=CHECK_ALL), device)
+        expected_device = helpers.DeviceRef(
+            device_id="abc",
+            name="Kitchen Sensor",
         )
-        assert body_lines[1] == ""
+        expected_integrations = ("enphase_envoy", "zwave_js")
+        assert result.device == expected_device
+        assert result.integrations == expected_integrations
+        # The carry survives the spec the dispatcher consumes.
+        spec = result.to_notification()
+        assert spec.device == expected_device
+        assert spec.integrations == expected_integrations
 
     def test_name_overrides_section(self) -> None:
         device = _device(device_name="Kitchen Sensor")
@@ -506,50 +504,6 @@ class TestBuildNotificationMessage:
         assert "**Non-default entity IDs:**" in msg
         assert "Fix names before recreating IDs" in msg
 
-    def test_device_url_in_message(self) -> None:
-        device = _device(device_id="abc123")
-        drifted = [
-            DriftDetail(
-                entity_id="sensor.x",
-                id_drifted=True,
-                name_drifted=False,
-                current_name="X",
-                expected_name=None,
-            ),
-        ]
-        msg = _build_device_notification_message(device, drifted)
-        assert "/config/devices/device/abc123" in msg
-
-    def test_integrations_in_message(self) -> None:
-        device = _device(
-            integrations=["enphase_envoy", "zwave_js"],
-        )
-        drifted = [
-            DriftDetail(
-                entity_id="sensor.x",
-                id_drifted=True,
-                name_drifted=False,
-                current_name="X",
-                expected_name=None,
-            ),
-        ]
-        msg = _build_device_notification_message(device, drifted)
-        assert "Integrations: enphase_envoy, zwave_js" in msg
-
-    def test_no_integrations_omits_line(self) -> None:
-        device = _device()
-        drifted = [
-            DriftDetail(
-                entity_id="sensor.x",
-                id_drifted=True,
-                name_drifted=False,
-                current_name="X",
-                expected_name=None,
-            ),
-        ]
-        msg = _build_device_notification_message(device, drifted)
-        assert "Integrations:" not in msg
-
     def test_name_overrides_to_set_section(
         self,
     ) -> None:
@@ -598,36 +552,6 @@ class TestBuildNotificationMessage:
         msg = _build_device_notification_message(device, drifted)
         assert "next check" in msg
 
-    def test_device_name_with_brackets_is_escaped(self) -> None:
-        device = _device(device_name="Sensor [foo]")
-        drifted = [
-            DriftDetail(
-                entity_id="sensor.x",
-                id_drifted=True,
-                name_drifted=False,
-                current_name="x",
-                expected_name=None,
-            ),
-        ]
-        msg = _build_device_notification_message(device, drifted)
-        assert "[Sensor \\[foo\\]]" in msg
-        assert "[Sensor [foo]]" not in msg
-
-    def test_integration_names_are_escaped(self) -> None:
-        device = _device()
-        device.de.integration_entities["foo[bar]"] = {"sensor.x"}
-        drifted = [
-            DriftDetail(
-                entity_id="sensor.x",
-                id_drifted=True,
-                name_drifted=False,
-                current_name="x",
-                expected_name=None,
-            ),
-        ]
-        msg = _build_device_notification_message(device, drifted)
-        assert "Integrations: foo\\[bar\\]" in msg
-
     def test_current_name_is_escaped_in_name_clear(self) -> None:
         device = _device()
         drifted = [
@@ -657,10 +581,11 @@ class TestBuildNotificationMessage:
         msg = _build_device_notification_message(device, drifted)
         assert '"bad \\[a\\]"' in msg
         assert '"exp \\[b\\]"' in msg
-        # Device name appears twice -- once in the header
-        # `Device:` link text (already escaped) and once in
-        # the redundant-prefix prose.
-        assert msg.count("Dev \\[x\\]") >= 2
+        # Device name is escaped in the redundant-prefix prose
+        # ("remove ... or clear it"); the device header itself
+        # now renders in the shared attribution block, not the
+        # body, so it appears here exactly once.
+        assert msg.count("Dev \\[x\\]") == 1
 
     def test_recommended_override_is_escaped(self) -> None:
         device = _device()
@@ -1977,6 +1902,8 @@ class TestBuildVisibleAliasedRepairSpecs:
             source_friendly_name="Kitchen Fan",
             source_device_id="dev_kitchen",
             source_config_entry_id="ce_kitchen",
+            source_device_name="Kitchen Switch",
+            source_device_integrations=("zwave_js",),
         )
         specs, repairs = _build_visible_aliased_repair_specs(cfg, [finding])
         assert len(specs) == 1
@@ -1993,6 +1920,15 @@ class TestBuildVisibleAliasedRepairSpecs:
             "source_entity_id": "switch.kitchen",
             "entities": "- `switch.kitchen` (Kitchen Fan)",
         }
+        # Device-attached source: the repair carries a DeviceRef
+        # (built from the handler-resolved name) plus the device's
+        # integrations, so the confirm modal's attribution header
+        # shows the Device / Integrations lines.
+        assert spec.device == helpers.DeviceRef(
+            device_id="dev_kitchen",
+            name="Kitchen Switch",
+        )
+        assert spec.integrations == ("zwave_js",)
         assert spec.repair_callback is not None
         assert spec.repair_callback.service_name == (
             FixServices.VISIBLE_ALIASED_ENTITY.value
@@ -2001,6 +1937,22 @@ class TestBuildVisibleAliasedRepairSpecs:
         payload = repairs[expected_id]
         assert isinstance(payload, VisibleAliasedEntityRepair)
         assert payload.source_entity_id == "switch.kitchen"
+
+    def test_deviceless_source_repair_has_no_device_ref(self) -> None:
+        # A helper / template source with no device leaves
+        # ``spec.device`` None, so the attribution header shows
+        # only the automation line.
+        cfg = _config(create_repairs=True)
+        finding = VisibleAliasedEntityFinding(
+            source_entity_id="switch.template_fan",
+            wrapper_entity_id="template_fan",
+            wrapper_target_domain="fan",
+            source_friendly_name="Template Fan",
+            source_device_id=None,
+            source_config_entry_id=None,
+        )
+        specs, _ = _build_visible_aliased_repair_specs(cfg, [finding])
+        assert specs[0].device is None
 
     def test_each_finding_gets_its_own_spec(self) -> None:
         cfg = _config(create_repairs=True)

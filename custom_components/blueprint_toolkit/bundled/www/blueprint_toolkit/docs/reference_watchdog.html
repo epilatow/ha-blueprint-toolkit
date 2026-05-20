@@ -119,7 +119,7 @@ add-on the same bodies show the filename as a plain <code>code-spanned</code> pa
 <tbody>
 <tr>
 <td>Exclude integrations</td>
-<td>Integrations to skip. Matches the <code>Integration:</code> line shown at the top of each notification -- anything rendered there can be silenced here. Built-in adapters (<code>automation</code>, <code>script</code>, <code>template</code>, <code>customize</code>, <code>lovelace</code>) are listed as quick-picks in the blueprint UI; config-entry integration domains (e.g. <code>group</code>, <code>homekit</code>, or whatever is installed in HA) can be added as custom values. Also silences unused-devices and unused-deviceless-entities for the named integrations.</td>
+<td>Integrations to skip. Matches the integration shown in each notification's header. Built-in adapters (<code>automation</code>, <code>script</code>, <code>template</code>, <code>customize</code>, <code>lovelace</code>) are listed as quick-picks in the blueprint UI; config-entry integration domains (e.g. <code>group</code>, <code>homekit</code>, or whatever is installed in HA) can be added as custom values. Also silences unused-devices and unused-deviceless-entities for the named integrations.</td>
 </tr>
 <tr>
 <td>Exclude entities</td>
@@ -370,11 +370,13 @@ purposes.</li>
 <li>Cycle protection on <code>via_device_id</code> walks. Real registries have been seen
 containing self-referencing or A-B-C-A cycles; the walk stops on a repeat.</li>
 </ul>
-<p>Per-device notification body lists the device's name (linked to the device
-settings page), integration + config-entry title (disambiguates multi-
-instance integrations), manufacturer / model, and every <strong>visible</strong> enabled
-entity on the device. A partially-excluded device's body lists only the
-entities the user hasn't already silenced.</p>
+<p>Each per-device notification leads with the shared attribution header --
+automation name, the device's integration(s), the device (linked to its
+settings page), and a config-entry line carrying the config-entry title
+(disambiguates multi-instance integrations) plus manufacturer / model. The
+body below lists every <strong>visible</strong> enabled entity on the device. A
+partially-excluded device's body lists only the entities the user hasn't
+already silenced.</p>
 <p>To silence false positives:</p>
 <ul>
 <li><strong>Exclude devices by name (regex)</strong> -- per-line regex matched against the
@@ -395,14 +397,14 @@ accidentally promote a referenced device to &quot;unused&quot;.</li>
 flags entity-registry rows with <code>device_id is None</code> that aren't referenced
 anywhere. Output is a <strong>per-integration rollup</strong> notification (one
 notification per entity-registry platform: <code>utility_meter</code>, <code>template</code>,
-<code>script</code>, <code>automation</code>, <code>input_boolean</code>, etc.); each rollup carries an
-<code>Integration:</code> header line linking to a useful list-all surface for that
-integration, then lists every flagged entity plus its source. Grouping by
-integration (rather than by entity domain) makes the next action obvious -- if
-an entire rollup is noise for you, add the integration name to <strong>Exclude
-integrations</strong>.</p>
-<p>The header links to HA's per-integration config page by default (e.g.
-<code>/config/integrations/integration/utility_meter</code>). Two built-in domains
+<code>script</code>, <code>automation</code>, <code>input_boolean</code>, etc.). Each rollup's attribution
+header carries the automation name plus a clickable <code>Integrations:</code> link to a
+useful list-all surface for that integration; the body lists every flagged
+entity plus its source. Grouping by integration (rather than by entity domain)
+makes the next action obvious -- if an entire rollup is noise for you, add the
+integration name to <strong>Exclude integrations</strong>.</p>
+<p>The <code>Integrations:</code> link points to HA's per-integration config page by default
+(e.g. <code>/config/integrations/integration/utility_meter</code>). Two built-in domains
 override this because the per-integration page isn't a useful target for them:</p>
 <ul>
 <li><code>script</code> -- the per-integration page is empty (script is a built-in domain,

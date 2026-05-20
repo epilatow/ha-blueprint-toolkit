@@ -37,10 +37,13 @@ from .helpers_logic import (
     _UNSUBS_KEY,
     BlueprintHandlerSpec,
     CappableResult,
+    DeviceRef,
     PersistentNotification,
     automation_edit_link,
+    device_attribution_lines,
     instance_id_for_config_error,
     instance_state_entity_id,
+    integration_attribution_link,
     make_config_error_notification,
     md_escape,
     notification_prefix,
@@ -105,6 +108,61 @@ def _automation_link_prefix(
     if name is None or yaml_id is None:
         return ""
     return f"Automation: {automation_edit_link(name, yaml_id)}\n"
+
+
+def attribution_lines(
+    hass: HomeAssistant,
+    instance_id: str | None,
+    device: DeviceRef | None,
+    integrations: tuple[str, ...] = (),
+) -> list[str]:
+    """The shared attribution header lines for a finding.
+
+    In order: ``Automation: [name](edit-link)`` (when the
+    instance is a registered automation), ``Integrations:
+    [name](link), ...`` (from ``integrations``, each routed
+    through ``integration_attribution_link``), then the device
+    block (``Device`` / ``Config Entry``) from ``device``. Every
+    part is independently optional, so the list is empty for a
+    finding with none. Used by the notification dispatcher
+    (rendered as a body prefix) and the repair dispatcher (joined
+    into the issue's ``attribution`` translation placeholder), so
+    both surfaces show the same header.
+    """
+    lines: list[str] = []
+    auto = _automation_link_prefix(hass, instance_id).rstrip("\n")
+    if auto:
+        lines.append(auto)
+    if integrations:
+        joined = ", ".join(
+            integration_attribution_link(i) for i in integrations
+        )
+        lines.append(f"Integrations: {joined}")
+    if device is not None:
+        lines.extend(device_attribution_lines(device))
+    return lines
+
+
+def _attribution_body_prefix(
+    hass: HomeAssistant,
+    instance_id: str | None,
+    device: DeviceRef | None,
+    integrations: tuple[str, ...] = (),
+) -> str:
+    """Render the attribution header as a notification-body prefix.
+
+    A single ``Automation: ...\\n`` line when the automation is
+    the only attribution (no integrations, no device), ``""`` when
+    there's nothing to show, otherwise the whole block joined and
+    ending in a blank line so the per-handler body that follows is
+    visually separated.
+    """
+    lines = attribution_lines(hass, instance_id, device, integrations)
+    if not lines:
+        return ""
+    if device is None and not integrations:
+        return lines[0] + "\n"
+    return "\n".join(lines) + "\n\n"
 
 
 def _automation_title_prefix(
@@ -182,9 +240,11 @@ async def process_persistent_notifications(
     for n in notifications:
         if n.active:
             title_prefix = _automation_title_prefix(hass, n.instance_id)
-            link_prefix = _automation_link_prefix(hass, n.instance_id)
+            body_prefix = _attribution_body_prefix(
+                hass, n.instance_id, n.device, n.integrations
+            )
             new_title = f"{title_prefix}{n.title}"
-            new_message = f"{link_prefix}{n.message}"
+            new_message = f"{body_prefix}{n.message}"
             current = existing.get(n.notification_id)
             if current is not None and current == (new_title, new_message):
                 continue
@@ -996,6 +1056,7 @@ async def unregister_blueprint_handler(
 
 
 __all__ = [
+    "attribution_lines",
     "automation_friendly_name",
     "dismiss_fix_service_crash_notification",
     "emit_config_error",

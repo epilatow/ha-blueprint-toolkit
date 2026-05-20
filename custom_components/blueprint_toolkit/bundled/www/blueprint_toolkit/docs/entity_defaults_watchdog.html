@@ -223,9 +223,11 @@ are not flagged. When you use <strong>Recreate entity IDs</strong> on a device p
 will also rename disabled entities, so the number of renames shown may be
 higher than what the watchdog reported.</p>
 <h3>Notification format</h3>
-<p>Device-attached drift creates one persistent notification per device. The
-notification body contains up to three sections depending on what kind of
-drift was found:</p>
+<p>Device-attached drift creates one persistent notification per device. Every
+notification leads with an attribution header -- the automation that emitted
+it, the device's integration(s), and a link to the device -- so you can click
+straight through to the source. The body below contains up to three sections
+depending on what kind of drift was found:</p>
 <p><strong>Name overrides to clear</strong> -- entities where the name override should be
 removed:</p>
 <pre><code class="language-text">- `sensor.kitchen_temp`: &quot;Old Temp&quot;
@@ -341,6 +343,10 @@ flagged <code>switch_as_x</code> source whose row is still visible; Submit sets
 behaviour. With the toggle off, these instead surface as the single
 aggregate visible-aliased notification.</li>
 </ul>
+<p>Each Fix dialog leads with the same attribution header the notifications carry
+-- the automation that emitted it, plus the device's integration(s) and a link
+to the device for device-attached findings (the visible-aliased fix shows just
+the automation when its source has no device).</p>
 <p>Other drift categories (unmatched include / exclude directives, etc.) continue
 to surface as notifications regardless of the toggle. The per-device summary
 notification keeps its grouped body so users who want the full list still get

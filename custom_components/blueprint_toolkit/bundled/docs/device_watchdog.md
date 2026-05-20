@@ -59,8 +59,11 @@ See the blueprint UI for default values.
 
 ### Notifications
 
-Each device with health issues gets its own persistent notification.
-Notifications are automatically dismissed when devices recover.
+Each device with health issues gets its own persistent notification. Every
+notification leads with an attribution header -- the automation that emitted
+it, the device's integration(s), and a link to the device -- so you can click
+straight through to the source. Notifications are automatically dismissed when
+devices recover.
 
 ### Notification panel ordering
 
@@ -91,7 +94,9 @@ When **Create repairs for fixable findings** is enabled (default), each
 disabled-recommended-diagnostic-entity finding surfaces as an HA Repair with a
 one-click Fix button instead of (or alongside) the per-device summary
 notification. Submit clears `disabled_by` on the named entity so it goes back
-to monitoring.
+to monitoring. The Fix dialog leads with the same attribution header the
+notifications carry -- the automation, the device's integration(s), and a link
+to the device.
 
 Other finding categories (unavailable / stale devices) keep using
 notifications regardless of the toggle -- those don't have a deterministic

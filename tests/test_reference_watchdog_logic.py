@@ -24,6 +24,9 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
+from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
+    DeviceRef,
+)
 from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # noqa: E402, E501
     _UNUSED_DEVICE_SKIP_INTEGRATIONS,
     _UNUSED_DEVICELESS_SKIP_DOMAINS,
@@ -3997,19 +4000,23 @@ class TestUnusedDeviceNotificationFormat:
             ),
         )
         notif = _build_unused_device_notification(cfg, dev)
+        # Device identity, config-entry title, and manufacturer /
+        # model ride on the spec's DeviceRef; the integration rides
+        # on the spec's ``integrations`` field. The dispatcher
+        # renders them into the shared attribution header rather
+        # than the body.
+        assert notif.device == DeviceRef(
+            device_id="abc",
+            name="Hot Tub",
+            config_entry_title="Hottub Pro",
+            manufacturer="Acme",
+            model="Spa3000",
+        )
+        assert notif.integrations == ("shelly",)
         body = notif.message
-        # Device link.
-        assert "[Hot Tub](/config/devices/device/abc)" in body
-        # Integration link + config-entry title.
-        assert "[shelly]" in body
-        assert "Hottub Pro" in body
-        # Manufacturer / model line.
-        assert "Acme" in body
-        assert "Spa3000" in body
-        # Enabled entities.
+        # Body carries the enabled entities + the silence-it hint.
         assert "sensor.hot_tub_temp" in body
         assert "sensor.hot_tub_pump" in body
-        # Hint text.
         assert "exclude_device_name_regex" in body
         assert "exclude_integrations" in body
 
@@ -4088,64 +4095,12 @@ class TestUnusedDevicelessNotificationFormat:
         assert "sensor.a" in utility_notif.message
         assert "binary_sensor.b" in utility_notif.message
         assert "input_boolean.c" not in utility_notif.message
-        # Rollup body header carries the integration link.
-        assert (
-            "/config/integrations/integration/utility_meter"
-            in utility_notif.message
-        )
-
-    def test_script_rollup_header_links_to_dashboard(self) -> None:
-        # ``script`` is a built-in domain rather than a
-        # config-flow integration, so the per-integration
-        # page is empty. Override to the script-list
-        # dashboard.
-        cfg = _config(notification_prefix="rw__inst__")
-        entities = [
-            UnusedDevicelessEntity(
-                entity_id="script.foo",
-                domain="script",
-                platform="script",
-                unique_id="foo",
-                config_entry_id=None,
-                config_entry_title=None,
-                disabled=False,
-            ),
-        ]
-        notifs = _build_unused_deviceless_notifications(
-            cfg,
-            entities,
-            platforms_seen_active=frozenset(),
-        )
-        body = notifs[0].message
-        assert "/config/script/dashboard" in body
-        assert "/config/integrations/integration/script" not in body
-
-    def test_template_rollup_header_links_to_domain_filter(self) -> None:
-        # ``template`` per-integration page only lists UI-
-        # managed template helpers, missing the larger set
-        # of YAML-defined templates the rollup covers.
-        # Override to the entities-page filtered to the
-        # ``template`` domain.
-        cfg = _config(notification_prefix="rw__inst__")
-        entities = [
-            UnusedDevicelessEntity(
-                entity_id="sensor.template_thing",
-                domain="sensor",
-                platform="template",
-                unique_id=None,
-                config_entry_id=None,
-                config_entry_title=None,
-                disabled=False,
-            ),
-        ]
-        notifs = _build_unused_deviceless_notifications(
-            cfg,
-            entities,
-            platforms_seen_active=frozenset(),
-        )
-        body = notifs[0].message
-        assert "/config/entities/?domain=template" in body
-        assert "/config/integrations/integration/template" not in body
+        # The rollup's integration rides on the spec's
+        # ``integrations`` field; the dispatcher renders it into
+        # the attribution ``Integrations:`` header (link routing,
+        # incl. the script / template special cases, is owned by
+        # ``integration_attribution_link`` and tested with it).
+        assert utility_notif.integrations == ("utility_meter",)
 
     def test_source_label_yaml_default(self) -> None:
         cfg = _config(notification_prefix="rw__inst__")

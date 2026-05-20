@@ -55,7 +55,7 @@
         "step": {
           "confirm": {
             "title": "Regenerate entity IDs?",
-            "description": "Regenerate drifted entity IDs on `{device_name}` ({count} entities):\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+            "description": "{attribution}\n\nRegenerate drifted entity IDs on `{device_name}` ({count} entities):\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }
@@ -67,7 +67,7 @@
         "step": {
           "confirm": {
             "title": "Update entity names?",
-            "description": "Update {count} drifted entity name(s) on `{device_name}`:\n\n{entities}\n\nA cleared override reverts to the integration default name. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+            "description": "{attribution}\n\nUpdate {count} drifted entity name(s) on `{device_name}`:\n\n{entities}\n\nA cleared override reverts to the integration default name. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }
@@ -79,7 +79,7 @@
         "step": {
           "confirm": {
             "title": "Re-enable diagnostic entities?",
-            "description": "Re-enable the {count} disabled recommended-diagnostic entities on `{device_name}`:\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+            "description": "{attribution}\n\nRe-enable the {count} disabled recommended-diagnostic entities on `{device_name}`:\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }
@@ -91,7 +91,7 @@
         "step": {
           "confirm": {
             "title": "Re-hide {source_entity_id}?",
-            "description": "Re-hide the source entity (sets hidden_by=integration), restoring the original switch_as_x behaviour:\n\n{entities}\n\nClick Submit to apply."
+            "description": "{attribution}\n\nRe-hide the source entity (sets hidden_by=integration), restoring the original switch_as_x behaviour:\n\n{entities}\n\nClick Submit to apply."
           }
         }
       }

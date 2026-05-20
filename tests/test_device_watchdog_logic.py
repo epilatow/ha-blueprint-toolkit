@@ -46,6 +46,7 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     run_evaluation,
 )
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
+    DeviceRef,
     FixService,
     PersistentNotification,
     repair_notification_id,
@@ -90,12 +91,15 @@ def _device(
     device_id: str = "dev1",
     device_name: str = "Test Device",
     entities: list[EntityInfo] | None = None,
+    integrations: list[str] | None = None,
 ) -> DeviceInfo:
+    ie: dict[str, set[str]] = {i: set() for i in integrations or []}
     return DeviceInfo(
         de=DeviceEntry(
             id=device_id,
             name=device_name,
             default_name=device_name,
+            integration_entities=ie,
         ),
         entities=entities or [],
     )
@@ -315,6 +319,28 @@ class TestEvaluateDevice:
         assert "sensor.temp" in result.unavailable_entities
         assert "Unavailable" in result.notification_message
 
+    def test_device_result_carries_device_ref(self) -> None:
+        # The unavailable / stale path hands the framework a
+        # DeviceRef (resolved name) plus the device's integration
+        # set so the shared attribution header renders the
+        # Device / Integrations lines, mirroring the
+        # disabled-diagnostics path.
+        cfg = _config()
+        device = _device(
+            device_id="abc",
+            device_name="Kitchen Sensor",
+            integrations=["zwave_js", "enphase_envoy"],
+            entities=[_entity("sensor.temp", state="unavailable")],
+        )
+        result = _evaluate_device(cfg, device, T0)
+        expected_device = DeviceRef(device_id="abc", name="Kitchen Sensor")
+        expected_integrations = ("enphase_envoy", "zwave_js")
+        assert result.device == expected_device
+        assert result.integrations == expected_integrations
+        spec = result.to_notification()
+        assert spec.device == expected_device
+        assert spec.integrations == expected_integrations
+
     def test_unknown_entity(self) -> None:
         cfg = _config()
         device = _device(
@@ -523,13 +549,11 @@ class TestRunEvaluationDiagnosticsGate:
 
 class TestBuildNotificationMessage:
     def test_unavailable_entities_listed(self) -> None:
-        device = _device(device_name="My Device")
         unavailable = [
             _entity("sensor.temp", state="unavailable"),
             _entity("sensor.humid", state="unavailable"),
         ]
         msg = _build_notification_message(
-            device,
             unavailable,
             False,
             None,
@@ -541,10 +565,8 @@ class TestBuildNotificationMessage:
         assert "Unavailable entity" in msg
 
     def test_stale_with_newest(self) -> None:
-        device = _device()
         ts = T0 - timedelta(hours=25)
         msg = _build_notification_message(
-            device,
             [],
             True,
             "sensor.old",
@@ -556,9 +578,7 @@ class TestBuildNotificationMessage:
         assert ts.isoformat() in msg
 
     def test_stale_no_prior_updates(self) -> None:
-        device = _device()
         msg = _build_notification_message(
-            device,
             [],
             True,
             None,
@@ -567,24 +587,10 @@ class TestBuildNotificationMessage:
         )
         assert "No prior updates detected" in msg
 
-    def test_device_url_in_message(self) -> None:
-        device = _device(device_id="abc")
-        msg = _build_notification_message(
-            device,
-            [_entity(state="unavailable")],
-            False,
-            None,
-            None,
-            _config(),
-        )
-        assert "/config/devices/device/abc" in msg
-
     def test_raises_on_no_issues(self) -> None:
         """Calling with no unavailable and not stale is a bug."""
-        device = _device()
         with pytest.raises(ValueError, match="unavailable or stale"):
             _build_notification_message(
-                device,
                 [],
                 False,
                 None,
@@ -592,69 +598,24 @@ class TestBuildNotificationMessage:
                 _config(),
             )
 
-    def test_unavailable_body_keeps_device_header_with_blank_line(
-        self,
-    ) -> None:
-        device = _device(device_id="abc", device_name="My Device")
+    def test_body_leads_with_content_no_device_header(self) -> None:
+        # The device header now renders in the shared
+        # attribution block (prepended by the dispatcher), so
+        # the DW body must lead straight with its finding
+        # content -- no leading ``Device:`` line.
         msg = _build_notification_message(
-            device,
             [_entity("sensor.temp", state="unavailable")],
             False,
             None,
             None,
             _config(),
         )
-        body_lines = msg.split("\n")
-        assert body_lines[0] == (
-            "Device: [My Device](/config/devices/device/abc)"
-        )
-        assert body_lines[1] == ""
-        # Body content (Integrations: ..., Unavailable
-        # entity: ...) follows after the blank-line.
-        assert any(
-            line.startswith("Unavailable entity") for line in body_lines[2:]
-        )
-
-    def test_device_name_with_brackets_is_escaped(self) -> None:
-        # A literal "[" in a device name would otherwise
-        # form a bogus markdown link with a later "](" in
-        # the same body line.
-        device = _device(device_name="Sensor [foo]")
-        msg = _build_notification_message(
-            device,
-            [_entity(state="unavailable")],
-            False,
-            None,
-            None,
-            _config(),
-        )
-        assert "[Sensor \\[foo\\]]" in msg
-        assert "[Sensor [foo]]" not in msg
-
-    def test_integration_names_are_escaped(self) -> None:
-        # Defense-in-depth: integration IDs are slug-style
-        # under HA's current charset, but the notification
-        # body interpolates them as bare prose -- escape so
-        # a future HA release loosening the charset (or a
-        # third-party integration smuggling in markdown
-        # specials) can't corrupt the rendered body.
-        device = _device()
-        device.de.integration_entities["foo[bar]"] = {"sensor.x"}
-        msg = _build_notification_message(
-            device,
-            [_entity(state="unavailable")],
-            False,
-            None,
-            None,
-            _config(),
-        )
-        assert "Integrations: foo\\[bar\\]" in msg
+        assert not msg.startswith("Device:")
+        assert msg.split("\n")[0].startswith("Unavailable entity")
 
     def test_unavailable_entity_id_is_escaped(self) -> None:
-        device = _device()
         unavailable = [_entity("sensor.[foo]", state="unavailable")]
         msg = _build_notification_message(
-            device,
             unavailable,
             False,
             None,
@@ -664,10 +625,8 @@ class TestBuildNotificationMessage:
         assert "Unavailable entity: sensor.\\[foo\\]" in msg
 
     def test_newest_entity_is_escaped_in_stale_message(self) -> None:
-        device = _device()
         ts = T0 - timedelta(hours=25)
         msg = _build_notification_message(
-            device,
             [],
             True,
             "sensor.[old]",
@@ -1041,9 +1000,14 @@ class TestEvaluateDiagnostics:
         assert "Signal strength" in results[0].message
         assert "Front Door Lock" in results[0].title
 
-    def test_disabled_diagnostics_body_includes_device_header(
+    def test_disabled_diagnostics_spec_carries_device_ref(
         self,
     ) -> None:
+        # The device header now renders in the shared
+        # attribution block, so the disabled-diagnostics spec
+        # hands the framework a DeviceRef (resolved name + the
+        # device's integration set) rather than baking the
+        # header into the body.
         device = self._diag_device(
             device_id="abc",
             device_name="Front Door Lock",
@@ -1055,11 +1019,12 @@ class TestEvaluateDiagnostics:
             ],
         )
         results, _ = evaluate_diagnostics(_config(), [device])
-        body_lines = results[0].message.split("\n")
-        assert body_lines[0] == (
-            "Device: [Front Door Lock](/config/devices/device/abc)"
+        assert results[0].device == DeviceRef(
+            device_id="abc",
+            name="Front Door Lock",
         )
-        assert body_lines[1] == ""
+        assert results[0].integrations == ("zwave_js",)
+        assert not results[0].message.startswith("Device:")
 
     def test_disabled_diagnostics_body_drops_settings_link(
         self,

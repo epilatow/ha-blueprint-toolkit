@@ -408,6 +408,31 @@ def script_dashboard_link(name: str) -> str:
     return f"[{md_escape(name)}](/config/script/dashboard)"
 
 
+def integration_attribution_link(name: str) -> str:
+    """Markdown link for one integration in the attribution header.
+
+    Most integrations link to their per-integration config page.
+    Two built-in domains route there but the page is empty or
+    misleading, so they get a more useful list-all surface:
+
+    - ``script`` -- the per-integration page is empty (no config
+      flow); link to the script-list dashboard.
+    - ``template`` -- the per-integration page only lists
+      UI-managed template helpers, not YAML-defined templates;
+      link to the entities table filtered to the ``template``
+      domain so every template entity shows in one place.
+
+    Routing is purely a function of the integration name, so
+    every attribution caller (device or deviceless) gets the
+    right target without knowing the special cases.
+    """
+    if name == "script":
+        return script_dashboard_link(name)
+    if name == "template":
+        return domain_entities_link(name, "template")
+    return integration_link(name, name)
+
+
 def dashboard_link(name: str, slug: str) -> str:
     """Markdown link to a Lovelace dashboard view by slug."""
     return f"[{md_escape(name)}]({dashboard_url(slug)})"
@@ -513,18 +538,6 @@ def deviceless_entity_link(name: str, entity_id: str) -> str:
         f"[{md_escape(name)}]({entities_dashboard_url()})"
         f" (search for `{entity_id}` in the list)"
     )
-
-
-def device_header_line(name: str, device_id: str) -> str:
-    """Render the canonical ``Device: [<name>](<url>)`` header line.
-
-    Used as the first body line in every per-device watchdog
-    notification (DW unavailable / stale, DW disabled-
-    diagnostics, EDW per-device drift). Centralised so the
-    line shape stays consistent across handlers; tests pin
-    the format.
-    """
-    return f"Device: {device_link(name, device_id)}"
 
 
 def slugify(text: str) -> str:
@@ -750,6 +763,58 @@ def repair_notification_id(
     return f"{notification_prefix}repair_{service_name}__{device_id}"
 
 
+@dataclass(frozen=True)
+class DeviceRef:
+    """Device context for a notification / repair attribution block.
+
+    Carries the already-resolved device identity so the
+    framework renders the shared ``Device`` / ``Config Entry``
+    header lines centrally instead of each handler
+    hand-formatting them. RW additionally sets
+    ``config_entry_title`` / ``manufacturer`` / ``model`` from
+    the device's primary config entry. All but ``device_id`` +
+    ``name`` are optional; absent config-entry / mfr / model
+    omit the ``Config Entry`` line.
+
+    Integrations are NOT carried here -- they ride on the
+    notification spec's ``integrations`` field so a deviceless
+    finding can report integrations without a device.
+    """
+
+    device_id: str
+    name: str
+    config_entry_title: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
+
+
+def device_attribution_lines(device: DeviceRef) -> list[str]:
+    """Render the device header lines for the attribution block.
+
+    Order: ``Device: [name](link)``, then ``Config Entry:
+    <title> -- <mfr> / <model>`` (omitted unless a config-entry
+    title and / or manufacturer / model are known). The
+    ``Integrations`` line is rendered separately by
+    ``attribution_lines`` from the spec's integrations, since it
+    isn't tied to a device. User-controlled strings are
+    ``md_escape``d; the device name goes through the link
+    helper.
+    """
+    lines: list[str] = []
+    lines.append(f"Device: {device_link(device.name, device.device_id)}")
+    ce_parts: list[str] = []
+    if device.config_entry_title:
+        ce_parts.append(md_escape(device.config_entry_title))
+    mm = " / ".join(
+        md_escape(x) for x in (device.manufacturer, device.model) if x
+    )
+    if mm:
+        ce_parts.append(mm)
+    if ce_parts:
+        lines.append(f"Config Entry: {' -- '.join(ce_parts)}")
+    return lines
+
+
 @dataclass
 class PersistentNotification:
     """A persistent notification or repair-issue spec.
@@ -813,6 +878,13 @@ class PersistentNotification:
     repair_callback: FixService | None = None
     translation_key: str = ""
     translation_placeholders: dict[str, str] | None = None
+    device: DeviceRef | None = None
+    # Integration names this finding relates to, rendered as the
+    # attribution header's ``Integrations:`` line (each routed
+    # through ``integration_attribution_link``). Independent of
+    # ``device`` so a deviceless finding can report integrations
+    # without a device id.
+    integrations: tuple[str, ...] = ()
 
 
 def _config_error_notification_id(service: str, instance_id: str) -> str:
@@ -1359,6 +1431,7 @@ __all__ = [
     "BlueprintHandlerSpec",
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
+    "DeviceRef",
     "FixService",
     "IssueNotification",
     "JoinedRegexLine",
@@ -1373,9 +1446,9 @@ __all__ = [
     "config_entry_url",
     "dashboard_link",
     "dashboard_url",
+    "device_attribution_lines",
     "device_entity_link",
     "device_entity_url",
-    "device_header_line",
     "device_link",
     "device_url",
     "deviceless_entity_link",
@@ -1386,6 +1459,7 @@ __all__ = [
     "format_notification",
     "format_timestamp",
     "instance_state_entity_id",
+    "integration_attribution_link",
     "integration_link",
     "integration_url",
     "make_config_error_notification",

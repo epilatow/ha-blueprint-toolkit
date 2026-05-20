@@ -674,27 +674,170 @@ class TestValidateControlledEntityDomains:
         )
 
 
-class TestDeviceHeaderLine:
-    def test_renders_canonical_shape(self) -> None:
-        line = helpers.device_header_line(
-            "Front Door Lock",
-            "abc123",
-        )
-        assert line == (
-            "Device: [Front Door Lock](/config/devices/device/abc123)"
+# --------------------------------------------------------
+# Shared attribution header
+# --------------------------------------------------------
+
+
+class TestIntegrationAttributionLink:
+    """The shared name->link router for the Integrations header.
+
+    Routing is purely a function of the integration name, so
+    every attribution caller (device or deviceless) gets the
+    right target. ``script`` / ``template`` are built-in domains
+    whose per-integration config page is empty / misleading and
+    route to a more useful list-all surface instead."""
+
+    def test_default_links_to_integration_page(self) -> None:
+        assert helpers.integration_attribution_link("zwave_js") == (
+            "[zwave_js](/config/integrations/integration/zwave_js)"
         )
 
-    def test_md_escapes_brackets_in_name(self) -> None:
-        # A literal ``[`` in a device name would otherwise
-        # form a bogus markdown link with the trailing
-        # ``](`` of the URL portion. Escape so the rendered
-        # markdown stays safe.
-        line = helpers.device_header_line(
-            "Sensor [foo]",
-            "x",
+    def test_script_links_to_dashboard(self) -> None:
+        assert helpers.integration_attribution_link("script") == (
+            "[script](/config/script/dashboard)"
         )
-        assert "[Sensor \\[foo\\]]" in line
-        assert "[Sensor [foo]]" not in line
+
+    def test_template_links_to_domain_filter(self) -> None:
+        assert helpers.integration_attribution_link("template") == (
+            "[template](/config/entities/?domain=template)"
+        )
+
+    def test_name_is_escaped(self) -> None:
+        assert "[foo\\[bar\\]]" in helpers.integration_attribution_link(
+            "foo[bar]",
+        )
+
+
+class TestDeviceAttributionLines:
+    """The shared device block (Device / Config Entry) rendered
+    into the attribution header. Integrations are NOT here -- they
+    ride on the spec and render via ``attribution_lines``."""
+
+    def test_device_line_only_when_no_extras(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(device_id="abc", name="Kitchen Sensor"),
+        )
+        assert lines == [
+            "Device: [Kitchen Sensor](/config/devices/device/abc)",
+        ]
+
+    def test_config_entry_line_for_rw_shape(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(
+                device_id="abc",
+                name="Dev",
+                config_entry_title="Z-Wave JS",
+                manufacturer="Aeotec",
+                model="ZW100",
+            ),
+        )
+        assert lines[-1] == "Config Entry: Z-Wave JS -- Aeotec / ZW100"
+
+    def test_config_entry_line_omitted_when_absent(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(device_id="abc", name="Dev"),
+        )
+        assert not any(line.startswith("Config Entry:") for line in lines)
+
+    def test_device_name_brackets_escaped(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(device_id="x", name="Sensor [foo]"),
+        )
+        assert "[Sensor \\[foo\\]]" in lines[0]
+        assert "[Sensor [foo]]" not in lines[0]
+
+    def test_config_entry_title_escaped(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(
+                device_id="x",
+                name="Dev",
+                config_entry_title="Acme [Hub]",
+            ),
+        )
+        assert "Config Entry: Acme \\[Hub\\]" in lines[-1]
+
+
+class TestAttributionLines:
+    """The full header (automation + integrations + device block)
+    shared by the notification body prefix and the repair confirm
+    placeholder."""
+
+    @staticmethod
+    def _hass_with_automation() -> _MockHass:
+        hass = _MockHass()
+        hass.states.stub_state(
+            "automation.foo",
+            "on",
+            friendly_name="My Auto",
+            id="1234",
+        )
+        return hass
+
+    def test_automation_integrations_and_device(self) -> None:
+        hass = self._hass_with_automation()
+        lines = helpers.attribution_lines(
+            hass,  # type: ignore[arg-type]
+            "automation.foo",
+            helpers.DeviceRef(device_id="dev1", name="Kitchen Sensor"),
+            ("enphase_envoy", "zwave_js"),
+        )
+        assert lines == [
+            "Automation: [My Auto](/config/automation/edit/1234)",
+            "Integrations: "
+            "[enphase_envoy](/config/integrations/integration/enphase_envoy), "
+            "[zwave_js](/config/integrations/integration/zwave_js)",
+            "Device: [Kitchen Sensor](/config/devices/device/dev1)",
+        ]
+
+    def test_integrations_without_device(self) -> None:
+        # The deviceless case the generalization unlocks: a finding
+        # reports integrations with no device id at all.
+        hass = self._hass_with_automation()
+        lines = helpers.attribution_lines(
+            hass,  # type: ignore[arg-type]
+            "automation.foo",
+            None,
+            ("template",),
+        )
+        assert lines == [
+            "Automation: [My Auto](/config/automation/edit/1234)",
+            "Integrations: [template](/config/entities/?domain=template)",
+        ]
+
+    def test_automation_only_when_no_device_no_integrations(self) -> None:
+        hass = self._hass_with_automation()
+        lines = helpers.attribution_lines(
+            hass,  # type: ignore[arg-type]
+            "automation.foo",
+            None,
+        )
+        assert lines == [
+            "Automation: [My Auto](/config/automation/edit/1234)",
+        ]
+
+    def test_empty_when_nothing_to_attribute(self) -> None:
+        hass = _MockHass()
+        lines = helpers.attribution_lines(
+            hass,  # type: ignore[arg-type]
+            None,
+            None,
+        )
+        assert lines == []
+
+    def test_device_only_when_automation_unregistered(self) -> None:
+        # instance_id set but no matching state entity (the
+        # service was invoked from Developer Tools): the
+        # automation line drops, the device block survives.
+        hass = _MockHass()
+        lines = helpers.attribution_lines(
+            hass,  # type: ignore[arg-type]
+            "automation.unknown",
+            helpers.DeviceRef(device_id="dev1", name="Kitchen Sensor"),
+        )
+        assert lines == [
+            "Device: [Kitchen Sensor](/config/devices/device/dev1)",
+        ]
 
 
 # --------------------------------------------------------
@@ -970,6 +1113,45 @@ class TestProcessPersistentNotifications:
             "Automation: [My Auto](/config/automation/edit/1234)\n",
         )
         assert sent.endswith("- bad")
+
+    @pytest.mark.asyncio
+    async def test_prepends_full_attribution_block_with_device(self) -> None:
+        # When the spec carries a DeviceRef, the body prefix is
+        # the whole attribution header (Automation / Integrations
+        # / Device) joined and separated from the body by a blank
+        # line, so the per-handler message follows on its own.
+        hass = _MockHass()
+        hass.states.stub_state(
+            "automation.foo",
+            "on",
+            friendly_name="My Auto",
+            id="1234",
+        )
+        await helpers.process_persistent_notifications(
+            hass,  # type: ignore[arg-type]
+            [
+                helpers.PersistentNotification(
+                    active=True,
+                    notification_id="x",
+                    title="t",
+                    message="- bad",
+                    instance_id="automation.foo",
+                    device=helpers.DeviceRef(
+                        device_id="dev1",
+                        name="Kitchen Sensor",
+                    ),
+                    integrations=("zwave_js",),
+                ),
+            ],
+        )
+        sent = hass.services.calls[0][2]["message"]
+        assert sent == (
+            "Automation: [My Auto](/config/automation/edit/1234)\n"
+            "Integrations: [zwave_js](/config/integrations/integration/"
+            "zwave_js)\n"
+            "Device: [Kitchen Sensor](/config/devices/device/dev1)\n\n"
+            "- bad"
+        )
 
     @pytest.mark.asyncio
     async def test_no_prefix_when_instance_id_absent(self) -> None:
@@ -2424,6 +2606,45 @@ class TestProcessRepairsWithSweep:
         ]
         ids = {data["notification_id"] for data in notif_create_data}
         assert "blueprint_toolkit_x__a__device_d1" in ids
+
+    @pytest.mark.asyncio
+    async def test_injects_attribution_placeholder(self) -> None:
+        # The confirm modal renders {attribution}; the
+        # dispatcher fills it with the same header the
+        # notification body carries (automation + device block).
+        hass = self._hass()
+        hass.states.stub_state(
+            "automation.foo",
+            "on",
+            friendly_name="My Auto",
+            id="1234",
+        )
+        spec = self._repair("blueprint_toolkit_x__a__repair_e1")
+        spec.instance_id = "automation.foo"
+        spec.device = helpers.DeviceRef(
+            device_id="dev1",
+            name="Kitchen Sensor",
+        )
+        spec.integrations = ("zwave_js",)
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [spec],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        created = next(
+            c
+            for c in _CREATE_ISSUE_CALLS
+            if c["issue_id"] == "blueprint_toolkit_x__a__repair_e1"
+        )
+        assert created["translation_placeholders"]["attribution"] == (
+            "Automation: [My Auto](/config/automation/edit/1234)\n"
+            "Integrations: [zwave_js](/config/integrations/integration/"
+            "zwave_js)\n"
+            "Device: [Kitchen Sensor](/config/devices/device/dev1)"
+        )
+        # Pre-existing placeholders are preserved alongside it.
+        assert created["translation_placeholders"]["device_name"] == "Foo"
 
     @pytest.mark.asyncio
     async def test_repair_cap_emits_cap_summary(self) -> None:

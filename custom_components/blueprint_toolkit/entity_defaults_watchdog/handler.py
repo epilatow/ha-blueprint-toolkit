@@ -826,6 +826,21 @@ def _build_visible_aliased_inputs(
         friendly = str(
             source.name or source.original_name or source_eid_raw,
         )
+        device_name: str | None = None
+        device_integrations: tuple[str, ...] = ()
+        if source.device_id is not None:
+            device = dr.async_get(hass).async_get(source.device_id)
+            if device is not None:
+                device_name = device.name_by_user or device.name
+            device_integrations = tuple(
+                sorted(
+                    {
+                        e.platform
+                        for e in ent_reg.entities.values()
+                        if e.device_id == source.device_id
+                    },
+                ),
+            )
         infos.append(
             logic.VisibleAliasedEntityInfo(
                 source_entity_id=source_eid_raw,
@@ -835,6 +850,8 @@ def _build_visible_aliased_inputs(
                 source_friendly_name=friendly,
                 source_device_id=source.device_id,
                 source_config_entry_id=source.config_entry_id,
+                source_device_name=device_name,
+                source_device_integrations=device_integrations,
             ),
         )
 

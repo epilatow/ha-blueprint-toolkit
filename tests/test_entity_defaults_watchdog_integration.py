@@ -1005,7 +1005,16 @@ class TestVisibleAliasedScan:
             wrapper_target_domain="fan",
             source_friendly_name="Den Fan",
             source_hidden_by=None,
+            source_device_id="dev-den",
         )
+        # The source is device-attached, so the handler resolves
+        # the device's id off the registry; capture HA's generated
+        # device.id for the attribution assertion below.
+        ent_reg = er.async_get(hass)
+        den_source = ent_reg.async_get("switch.den")
+        assert den_source is not None
+        assert den_source.device_id is not None
+        den_device_id = den_source.device_id
 
         await hass.services.async_call(
             DOMAIN,
@@ -1020,14 +1029,24 @@ class TestVisibleAliasedScan:
         await hass.async_block_till_done()
 
         reg = ir.async_get(hass)
-        repair_ids = [
-            i.issue_id
+        repair_issues = [
+            i
             for i in reg.issues.values()
             if i.domain == DOMAIN
             and "__repair_fix_edw_visible_aliased_entity__" in i.issue_id
         ]
-        assert len(repair_ids) == 1, sorted(reg.issues)
-        nid = repair_ids[0]
+        assert len(repair_issues) == 1, sorted(reg.issues)
+        nid = repair_issues[0].issue_id
+        # The handler threaded the device-attached source's
+        # integration + device through to the repair's DeviceRef,
+        # so the confirm modal's attribution header carries the
+        # Device + Integrations lines.
+        attribution = (repair_issues[0].translation_placeholders or {}).get(
+            "attribution",
+            "",
+        )
+        assert f"/config/devices/device/{den_device_id}" in attribution
+        assert "fake_source_integration" in attribution
 
         # Repairs on -> the aggregate bucket notification is not
         # emitted; the finding lives only on the Repairs surface.

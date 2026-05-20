@@ -136,6 +136,7 @@ import jinja2.nodes
 
 from ..helpers import (
     CappableResult,
+    DeviceRef,
     IssueNotification,
     JoinedRegexLine,
     PersistentNotification,
@@ -145,8 +146,6 @@ from ..helpers import (
     config_entry_link,
     config_entry_url,
     dashboard_url,
-    device_header_line,
-    domain_entities_link,
     domain_entities_url,
     entities_dashboard_url,
     file_editor_link,
@@ -154,7 +153,6 @@ from ..helpers import (
     matches_pattern,
     md_escape,
     prepare_notifications,
-    script_dashboard_link,
     script_edit_link,
     script_edit_url,
     validate_directives_item,
@@ -3043,33 +3041,20 @@ def _build_unused_device_notification(
 ) -> PersistentNotification:
     """One persistent notification per unused device.
 
-    Body lays out the device identity (clickable link to
-    the device panel via ``device_header_line``), the
-    integration + config-entry title (disambiguates multi-
-    instance integrations like several Apple TVs), the
-    manufacturer / model, and the enabled entities -- plus a
-    hint listing the two ways to silence false positives
-    (regex against device name, or integration name in the
-    dropdown).
+    The device identity, integration + config-entry title
+    (disambiguates multi-instance integrations like several
+    Apple TVs), and manufacturer / model ride on the spec's
+    ``device`` ref, which the dispatcher renders into the
+    shared attribution header. The body lays out the enabled
+    entities plus a hint listing the ways to silence false
+    positives (regex against device name, or integration name
+    in the dropdown).
     """
+    # The Automation / Integrations / Device / Config Entry
+    # header is rendered by the dispatcher from the spec's
+    # ``device`` ref; this body carries only the enabled-entity
+    # list + the silence-it hint.
     lines: list[str] = []
-    lines.append(
-        device_header_line(dev.name or "(unnamed device)", dev.device_id),
-    )
-    integration_link_md = integration_link(dev.integration, dev.integration)
-    if dev.config_entry_title:
-        title_part = md_escape(dev.config_entry_title)
-        lines.append(f"Integration: {integration_link_md} -- {title_part}")
-    else:
-        lines.append(f"Integration: {integration_link_md}")
-    if dev.manufacturer or dev.model:
-        mm_parts: list[str] = []
-        if dev.manufacturer:
-            mm_parts.append(md_escape(dev.manufacturer))
-        if dev.model:
-            mm_parts.append(md_escape(dev.model))
-        lines.append("Manufacturer / model: " + " / ".join(mm_parts))
-    lines.append("")
     lines.append(
         f"Enabled entities ({len(dev.enabled_entity_ids)}):",
     )
@@ -3092,6 +3077,14 @@ def _build_unused_device_notification(
         title=f"Unused device: {dev.name}",
         message="\n".join(lines),
         instance_id=config.instance_id,
+        device=DeviceRef(
+            device_id=dev.device_id,
+            name=dev.name or "(unnamed device)",
+            config_entry_title=dev.config_entry_title,
+            manufacturer=dev.manufacturer,
+            model=dev.model,
+        ),
+        integrations=(dev.integration,) if dev.integration else (),
     )
 
 
@@ -3208,33 +3201,6 @@ def _deviceless_entity_label(entity: UnusedDevicelessEntity) -> str:
     return label
 
 
-def _unused_deviceless_integration_header(platform: str) -> str:
-    """Per-rollup ``Integration:`` header line.
-
-    The default link target for a rollup is HA's per-integration
-    page (``/config/integrations/integration/<platform>``),
-    which works fine for config-flow integrations like
-    ``utility_meter`` (lists every config entry of that
-    integration). Two built-in domains route there but the
-    page is empty or misleading; redirect to a more useful
-    list-all surface instead:
-
-    - ``script`` -- the per-integration page is empty (no
-      config flow). Link to the script-list dashboard
-      (``/config/script/dashboard``).
-    - ``template`` -- the per-integration page only lists
-      UI-managed template helpers, not the larger set of
-      YAML-defined templates the rollup covers. Link to the
-      entities table filtered to the ``template`` domain
-      so the user sees every template entity in one place.
-    """
-    if platform == "script":
-        return f"Integration: {script_dashboard_link(platform)}"
-    if platform == "template":
-        return f"Integration: {domain_entities_link(platform, 'template')}"
-    return f"Integration: {integration_link(platform, platform)}"
-
-
 def _build_unused_deviceless_notifications(
     config: Config,
     entities: list[UnusedDevicelessEntity],
@@ -3267,8 +3233,6 @@ def _build_unused_deviceless_notifications(
     for platform, items in sorted(by_platform.items()):
         items_sorted = sorted(items, key=lambda e: e.entity_id)
         lines: list[str] = []
-        lines.append(_unused_deviceless_integration_header(platform))
-        lines.append("")
         lines.append(
             f"{len(items_sorted)} entities from this integration are not"
             " referenced anywhere in your configuration. Add"
@@ -3296,6 +3260,7 @@ def _build_unused_deviceless_notifications(
                 title=(f"Unused {platform} entities ({len(items_sorted)})"),
                 message="\n".join(lines),
                 instance_id=config.instance_id,
+                integrations=(platform,),
             ),
         )
 

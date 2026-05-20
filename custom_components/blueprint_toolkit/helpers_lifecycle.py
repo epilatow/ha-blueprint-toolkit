@@ -43,6 +43,7 @@ from .helpers_logic import (
     spec_bucket,
 )
 from .helpers_runtime import (
+    attribution_lines,
     dismiss_handler_crash_notification,
     emit_handler_crash_notification,
     kick_via_automation_trigger,
@@ -620,6 +621,18 @@ async def _dispatch_repairs_with_sweep(
         assert spec.repair_callback is not None
         fix = spec.repair_callback
         active_ids.add(spec.notification_id)
+        # Inject the shared attribution header (automation +
+        # device + integration) as a placeholder so the confirm
+        # description renders the same context the notification
+        # body carries. Empty string when there's nothing to
+        # attribute, so the template's surrounding blank lines
+        # collapse cleanly.
+        placeholders = dict(spec.translation_placeholders or {})
+        placeholders["attribution"] = "\n".join(
+            attribution_lines(
+                hass, spec.instance_id, spec.device, spec.integrations
+            )
+        )
         ir.async_create_issue(
             hass,
             DOMAIN,
@@ -627,7 +640,7 @@ async def _dispatch_repairs_with_sweep(
             is_fixable=True,
             severity=ir.IssueSeverity.WARNING,
             translation_key=spec.translation_key,
-            translation_placeholders=spec.translation_placeholders or {},
+            translation_placeholders=placeholders,
             data=_flatten_repair_data(
                 fix.service_name,
                 {"notification_id": fix.notification_id},

@@ -321,6 +321,15 @@ class VisibleAliasedEntityInfo:
     # sources without a device.
     source_device_id: str | None = None
     source_config_entry_id: str | None = None
+    # Source device's display name + the integrations whose
+    # entities are attached to it, resolved by the handler
+    # when ``source_device_id`` is set. Threaded into the
+    # repair spec's ``DeviceRef`` so the confirm modal's
+    # attribution header carries the same Device / Integrations
+    # lines as the device-drift repairs. Empty for deviceless
+    # (template / helper) sources.
+    source_device_name: str | None = None
+    source_device_integrations: tuple[str, ...] = ()
 
 
 @dataclass
@@ -348,6 +357,8 @@ class VisibleAliasedEntityFinding:
     source_friendly_name: str
     source_device_id: str | None
     source_config_entry_id: str | None
+    source_device_name: str | None = None
+    source_device_integrations: tuple[str, ...] = ()
 
 
 @dataclass
@@ -398,6 +409,15 @@ class DeviceResult:
     # the automation entity_id needed for the
     # ``Automation: [name](edit-link)\n`` body prefix.
     instance_id: str | None = None
+    # Device context the dispatcher renders into the shared
+    # attribution header; also consumed by
+    # ``_build_device_repair_specs`` so the repair issues
+    # carry the same header.
+    device: helpers.DeviceRef | None = None
+    # The device's integration domains, rendered as the
+    # attribution ``Integrations`` line on both the
+    # notification and the per-device repair specs.
+    integrations: tuple[str, ...] = ()
 
     def to_notification(
         self,
@@ -409,6 +429,8 @@ class DeviceResult:
             title=self.notification_title,
             message=self.notification_message,
             instance_id=self.instance_id,
+            device=self.device,
+            integrations=self.integrations,
         )
 
 
@@ -664,18 +686,10 @@ def _build_device_notification_message(
     name section -- the ID will be addressed after the name
     is fixed.
     """
-    lines: list[str] = [
-        helpers.device_header_line(device.de.name, device.de.id),
-        "",
-    ]
-    integrations = sorted(
-        device.de.integration_entities.keys(),
-    )
-    if integrations:
-        escaped = ", ".join(helpers.md_escape(i) for i in integrations)
-        lines.append(
-            f"Integrations: {escaped}",
-        )
+    # The Automation / Integrations / Device header is rendered
+    # by the dispatcher from the spec's ``device`` ref; this
+    # body carries only the per-section drift detail.
+    lines: list[str] = []
 
     # Group entities by notification section
     name_clear: list[DriftDetail] = []
@@ -814,6 +828,11 @@ def _build_device_notification_message(
             " device page to fix non-default IDs.",
         )
 
+    # Drop the leading section-separator blank: the dispatcher's
+    # attribution header already ends with the blank line that
+    # separates it from this body.
+    while lines and lines[0] == "":
+        lines.pop(0)
     return "\n".join(lines)
 
 
@@ -881,6 +900,11 @@ def _evaluate_device(
         entities_checked=len(device.entities) - excluded,
         entities_excluded=excluded,
         instance_id=config.instance_id,
+        device=helpers.DeviceRef(
+            device_id=device.de.id,
+            name=device.de.name or device.de.id,
+        ),
+        integrations=tuple(sorted(device.de.integration_entities)),
     )
 
 
@@ -1175,6 +1199,8 @@ def _evaluate_visible_aliased_entities(
                 source_friendly_name=info.source_friendly_name,
                 source_device_id=info.source_device_id,
                 source_config_entry_id=info.source_config_entry_id,
+                source_device_name=info.source_device_name,
+                source_device_integrations=info.source_device_integrations,
             ),
         )
 
@@ -1392,6 +1418,8 @@ def _build_device_repair_specs(
                             f"- `{old}` -> `{new}`" for old, new in id_renames
                         ),
                     },
+                    device=r.device,
+                    integrations=r.integrations,
                 ),
             )
             repairs[nid] = DeviceEntityIdDriftRepair(
@@ -1428,6 +1456,8 @@ def _build_device_repair_specs(
                             _name_drift_line(d) for d in name_drifted
                         ),
                     },
+                    device=r.device,
+                    integrations=r.integrations,
                 ),
             )
             repairs[nid] = DeviceEntityNameDriftRepair(
@@ -1465,6 +1495,12 @@ def _build_visible_aliased_repair_specs(
             FixServices.VISIBLE_ALIASED_ENTITY,
             f.source_entity_id,
         )
+        device_ref: helpers.DeviceRef | None = None
+        if f.source_device_id:
+            device_ref = helpers.DeviceRef(
+                device_id=f.source_device_id,
+                name=f.source_device_name or f.source_device_id,
+            )
         specs.append(
             helpers.PersistentNotification(
                 active=True,
@@ -1483,6 +1519,8 @@ def _build_visible_aliased_repair_specs(
                         f"- `{f.source_entity_id}` ({f.source_friendly_name})"
                     ),
                 },
+                device=device_ref,
+                integrations=f.source_device_integrations,
             ),
         )
         repairs[nid] = VisibleAliasedEntityRepair(

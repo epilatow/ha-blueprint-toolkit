@@ -148,8 +148,11 @@ the blueprint once per check)</li>
 <p>See the blueprint UI for default values.</p>
 <h2>Usage notes</h2>
 <h3>Notifications</h3>
-<p>Each device with health issues gets its own persistent notification.
-Notifications are automatically dismissed when devices recover.</p>
+<p>Each device with health issues gets its own persistent notification. Every
+notification leads with an attribution header -- the automation that emitted
+it, the device's integration(s), and a link to the device -- so you can click
+straight through to the source. Notifications are automatically dismissed when
+devices recover.</p>
 <h3>Notification panel ordering</h3>
 <p>The order of notifications in the HA notification panel may change between
 evaluation runs. This is because each run re-creates all active notifications
@@ -174,7 +177,9 @@ scan.</p>
 disabled-recommended-diagnostic-entity finding surfaces as an HA Repair with a
 one-click Fix button instead of (or alongside) the per-device summary
 notification. Submit clears <code>disabled_by</code> on the named entity so it goes back
-to monitoring.</p>
+to monitoring. The Fix dialog leads with the same attribution header the
+notifications carry -- the automation, the device's integration(s), and a link
+to the device.</p>
 <p>Other finding categories (unavailable / stale devices) keep using
 notifications regardless of the toggle -- those don't have a deterministic
 single-click fix.</p>

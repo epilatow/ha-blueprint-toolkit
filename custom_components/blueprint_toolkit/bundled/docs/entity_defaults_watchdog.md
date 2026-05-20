@@ -140,9 +140,11 @@ higher than what the watchdog reported.
 
 ### Notification format
 
-Device-attached drift creates one persistent notification per device. The
-notification body contains up to three sections depending on what kind of
-drift was found:
+Device-attached drift creates one persistent notification per device. Every
+notification leads with an attribution header -- the automation that emitted
+it, the device's integration(s), and a link to the device -- so you can click
+straight through to the source. The body below contains up to three sections
+depending on what kind of drift was found:
 
 **Name overrides to clear** -- entities where the name override should be
 removed:
@@ -287,6 +289,11 @@ convert:
   `hidden_by=integration` on the source, restoring the original wrapper
   behaviour. With the toggle off, these instead surface as the single
   aggregate visible-aliased notification.
+
+Each Fix dialog leads with the same attribution header the notifications carry
+-- the automation that emitted it, plus the device's integration(s) and a link
+to the device for device-attached findings (the visible-aliased fix shows just
+the automation when its source has no device).
 
 Other drift categories (unmatched include / exclude directives, etc.) continue
 to surface as notifications regardless of the toggle. The per-device summary
