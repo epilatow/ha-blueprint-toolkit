@@ -294,6 +294,15 @@ def evaluate_diagnostics(
             )
         if not disabled:
             continue
+        # Shared affected-entity list -- identical text on both
+        # the repair-issue body and the persistent-notification
+        # body so the two surfaces stay consistent. entity_id in
+        # a code span (constrained charset, markdown-safe);
+        # original_name md_escaped (user-controllable).
+        entity_lines = "\n".join(
+            f"- `{d.entity_id}` ({helpers.md_escape(d.original_name)})"
+            for d in disabled
+        )
         if config.create_repairs:
             nid = helpers.repair_notification_id(
                 config.notification_prefix,
@@ -317,6 +326,7 @@ def evaluate_diagnostics(
                     translation_placeholders={
                         "device_name": device.de.name or device.de.id,
                         "count": str(len(disabled)),
+                        "entities": entity_lines,
                     },
                 ),
             )
@@ -325,9 +335,6 @@ def evaluate_diagnostics(
                 entity_ids=tuple(d.entity_id for d in disabled),
             )
         else:
-            entity_list = "\n- ".join(
-                helpers.md_escape(d.original_name) for d in disabled
-            )
             header = helpers.device_header_line(
                 device.de.name,
                 device.de.id,
@@ -335,7 +342,7 @@ def evaluate_diagnostics(
             message = (
                 f"{header}\n\n"
                 f"Recommended diagnostic entities are disabled:"
-                f"\n\n- {entity_list}"
+                f"\n\n{entity_lines}"
             )
             results.append(
                 helpers.PersistentNotification(

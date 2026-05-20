@@ -787,7 +787,12 @@ as one-click Fix issues instead of as persistent notifications.
 - **Translations.** Each repair spec sets `translation_key=<kind>`; the
   entries in `strings.json` / `translations/en.json` carry the user-visible
   title + description with `{placeholder}` fields filled via
-  `translation_placeholders`.
+  `translation_placeholders`. Every fixable finding passes an `{entities}`
+  placeholder -- a markdown list of the affected entities the confirm modal
+  renders, mirroring the per-device notification body. The list shows
+  `old -> new` for renames (EDW id-drift entity IDs, EDW name-drift names) and
+  `` `<entity_id>` (<name>) `` for DW disabled diagnostics; the DW
+  notification body and repair use identical entity-line text.
 
 ## URL generation
 

@@ -1292,6 +1292,26 @@ class EvaluationResult:
     )
 
 
+def _name_drift_line(d: DriftDetail) -> str:
+    """Render one ``old -> new`` name-drift bullet.
+
+    New value is the recommended override (set case) or the
+    expected default name (clear case); falls back to a
+    prose phrase when the default name isn't known. The
+    current name + the override are user-controllable, so
+    both are ``md_escape``d; the entity_id is a code span.
+    """
+    new = (
+        d.recommended_override
+        if d.recommended_override is not None
+        else d.expected_name
+    )
+    current = helpers.md_escape(d.current_name)
+    if new:
+        return f'- `{d.entity_id}`: "{current}" -> "{helpers.md_escape(new)}"'
+    return f'- `{d.entity_id}`: "{current}" -> the integration default name'
+
+
 def _build_device_repair_specs(
     config: Config,
     results: list[DeviceResult],
@@ -1308,6 +1328,12 @@ def _build_device_repair_specs(
     per-device notification when ``create_repairs`` is on,
     so a device's drift surfaces as one-click Repairs
     rather than a notification (never both).
+
+    Each spec carries an ``entities`` translation placeholder
+    -- a markdown list of the affected entities (``old ->
+    new`` for both id-drift and name-drift) -- so the confirm
+    modal lists exactly what will change, mirroring the
+    per-device notification body.
     """
     specs: list[helpers.PersistentNotification] = []
     repairs: dict[str, EdwRepair] = {}
@@ -1319,11 +1345,7 @@ def _build_device_repair_specs(
             for d in r.drifted_entities
             if d.id_drifted and d.expected_entity_id is not None
         ]
-        name_targets: list[tuple[str, str | None]] = [
-            (d.entity_id, d.recommended_override)
-            for d in r.drifted_entities
-            if d.name_drifted
-        ]
+        name_drifted = [d for d in r.drifted_entities if d.name_drifted]
         device_name = r.device_name or r.device_id
         if id_renames:
             nid = helpers.repair_notification_id(
@@ -1346,6 +1368,9 @@ def _build_device_repair_specs(
                     translation_placeholders={
                         "device_name": device_name,
                         "count": str(len(id_renames)),
+                        "entities": "\n".join(
+                            f"- `{old}` -> `{new}`" for old, new in id_renames
+                        ),
                     },
                 ),
             )
@@ -1353,12 +1378,15 @@ def _build_device_repair_specs(
                 device_id=r.device_id,
                 entity_renames=tuple(id_renames),
             )
-        if name_targets:
+        if name_drifted:
             nid = helpers.repair_notification_id(
                 config.notification_prefix,
                 FixServices.DEVICE_ENTITY_NAME_DRIFT,
                 r.device_id,
             )
+            name_targets: list[tuple[str, str | None]] = [
+                (d.entity_id, d.recommended_override) for d in name_drifted
+            ]
             specs.append(
                 helpers.PersistentNotification(
                     active=True,
@@ -1375,7 +1403,10 @@ def _build_device_repair_specs(
                     translation_key="edw_device_entity_name_drift",
                     translation_placeholders={
                         "device_name": device_name,
-                        "count": str(len(name_targets)),
+                        "count": str(len(name_drifted)),
+                        "entities": "\n".join(
+                            _name_drift_line(d) for d in name_drifted
+                        ),
                     },
                 ),
             )

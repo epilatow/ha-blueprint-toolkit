@@ -1771,6 +1771,7 @@ class TestBuildDeviceRepairSpecs:
         assert spec.translation_placeholders == {
             "device_name": "Test Device",
             "count": "1",
+            "entities": "- `sensor.old` -> `sensor.new`",
         }
         assert spec.repair_callback is not None
         assert spec.repair_callback.service_name == (
@@ -1803,6 +1804,14 @@ class TestBuildDeviceRepairSpecs:
         )
         assert spec.notification_id == expected_id
         assert spec.translation_key == "edw_device_entity_name_drift"
+        ph = spec.translation_placeholders
+        assert ph is not None
+        # Clear case (no recommended override, no expected
+        # name): the entities line renders the default-name
+        # prose on the right-hand side.
+        assert ph["entities"] == (
+            '- `sensor.x`: "Current" -> the integration default name'
+        )
         payload = repairs[expected_id]
         assert isinstance(payload, DeviceEntityNameDriftRepair)
         # None target clears the override (revert to default).
@@ -1839,6 +1848,18 @@ class TestBuildDeviceRepairSpecs:
         )
         # Non-None target SETS the override.
         assert name_repair.entity_name_targets == (("sensor.c", "Custom"),)
+        specs_by_kind = {s.translation_key: s for s in specs}
+        id_ph = specs_by_kind["edw_device_entity_id_drift"]
+        name_ph = specs_by_kind["edw_device_entity_name_drift"]
+        assert id_ph.translation_placeholders is not None
+        assert name_ph.translation_placeholders is not None
+        assert id_ph.translation_placeholders["entities"] == (
+            "- `sensor.a` -> `sensor.b`"
+        )
+        # Set case (recommended override) renders old -> new.
+        assert name_ph.translation_placeholders["entities"] == (
+            '- `sensor.c`: "Current" -> "Custom"'
+        )
 
     def test_excluded_device_skipped(self) -> None:
         result = _device_result(

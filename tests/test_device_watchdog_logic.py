@@ -977,7 +977,10 @@ class TestEvaluateDiagnostics:
         results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
-        assert "Last seen" in results[0].message
+        # Notification lists each entity as
+        # ``- `<entity_id>` (<original_name>)`` -- same text
+        # as the repair's entities placeholder.
+        assert "- `sensor.test` (Last seen)" in results[0].message
         assert "Front Door Lock" in results[0].title
 
     def test_zwave_js_signal_strength_end_to_end(
@@ -1213,10 +1216,15 @@ class TestEvaluateDiagnosticsRepairs:
         )
         spec = results[0]
         assert spec.translation_key == "dw_device_disabled_diagnostics"
-        assert spec.translation_placeholders == {
-            "device_name": "Front Door Lock",
-            "count": "2",
-        }
+        ph = spec.translation_placeholders
+        assert ph is not None
+        assert ph["device_name"] == "Front Door Lock"
+        assert ph["count"] == "2"
+        # entities placeholder lists each affected entity as
+        # ``- `<entity_id>` (<original_name>)`` -- the same
+        # text the notification body uses.
+        assert "- `sensor.last_seen` (Last seen)" in ph["entities"]
+        assert "- `sensor.signal_strength` (Signal strength)" in ph["entities"]
 
     def test_payload_captures_flagged_entity_set(self) -> None:
         cfg = _config(create_repairs=True)
