@@ -742,6 +742,13 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
             entry = ent_reg.async_get(entity_id)
             if entry is None or entry.disabled_by is None:
                 continue
+            # Re-enable regardless of which disabler set
+            # disabled_by: this mirrors the manual UI
+            # re-enable the user would otherwise perform on
+            # a flagged entity. HA remains free to re-disable
+            # an entity it owns (INTEGRATION / DEVICE), in
+            # which case the next scan re-flags it -- the fix
+            # is idempotent and never destructive.
             ent_reg.async_update_entity(entity_id, disabled_by=None)
 
     if not hass.services.has_service(

@@ -2704,6 +2704,112 @@ class TestFixServiceCrashNotification:
         assert dismisses[0]["notification_id"] == slot
 
 
+class TestMakeFixServiceWrapper:
+    """The drop-in crash guard around a fix-service handler.
+
+    Mirrors the dispatcher's per-instance crash wrap, but
+    for the fix services registered directly via
+    ``hass.services.async_register``. On failure: emit a
+    per-(service, target) crash PN, then re-raise so HA's
+    own error surfaces still fire. On success: dismiss the
+    same slot so a recovered run clears its breadcrumb.
+    """
+
+    def _hass(self) -> _MockHass:
+        return _MockHass()
+
+    def _call(self, **data: Any) -> Any:
+        class _Call:
+            pass
+
+        c = _Call()
+        c.data = data  # type: ignore[attr-defined]
+        return c
+
+    @pytest.mark.asyncio
+    async def test_failure_emits_crash_pn_and_reraises(self) -> None:
+        hass = self._hass()
+
+        class _Boom(RuntimeError):
+            pass
+
+        async def _handler(_call: Any) -> None:
+            raise _Boom("bad [stuff]")
+
+        wrapper = helpers.make_fix_service_wrapper(
+            hass,  # type: ignore[arg-type]
+            "fix_dw_device_disabled_diagnostics",
+            _handler,
+        )
+        with pytest.raises(_Boom):
+            await wrapper(self._call(notification_id="nid_abc"))
+
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert len(creates) == 1
+        # Slot keys on the call's notification_id target.
+        assert creates[0]["notification_id"] == (
+            "blueprint_toolkit__fix_dw_device_disabled_diagnostics__"
+            "crash__nid_abc"
+        )
+        assert "_Boom" in creates[0]["message"]
+        assert "\\[stuff\\]" in creates[0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_success_dismisses_prior_crash_pn(self) -> None:
+        hass = self._hass()
+        slot = (
+            "blueprint_toolkit__fix_dw_device_disabled_diagnostics__"
+            "crash__nid_abc"
+        )
+        # Seed the store so the dispatcher's
+        # skip-dismiss-when-inactive guard doesn't elide it.
+        hass.data["persistent_notification"] = {
+            slot: _stub_existing_pn(slot, title="stale", message="stale"),
+        }
+
+        async def _handler(_call: Any) -> None:
+            return
+
+        wrapper = helpers.make_fix_service_wrapper(
+            hass,  # type: ignore[arg-type]
+            "fix_dw_device_disabled_diagnostics",
+            _handler,
+        )
+        await wrapper(self._call(notification_id="nid_abc"))
+
+        dismisses = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "dismiss"
+        ]
+        assert len(dismisses) == 1
+        assert dismisses[0]["notification_id"] == slot
+
+    @pytest.mark.asyncio
+    async def test_success_emits_no_crash_pn(self) -> None:
+        hass = self._hass()
+
+        async def _handler(_call: Any) -> None:
+            return
+
+        wrapper = helpers.make_fix_service_wrapper(
+            hass,  # type: ignore[arg-type]
+            "fix_xyz",
+            _handler,
+        )
+        await wrapper(self._call(notification_id="nid"))
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert creates == []
+
+
 class TestStaleInputKeyReferences:
     """Repo-wide grep test pinning the renamed-input
     convention.

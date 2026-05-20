@@ -55,7 +55,7 @@
         "step": {
           "confirm": {
             "title": "Regenerate entity IDs?",
-            "description": "Regenerate drifted entity IDs on `{device_name}` ({count} entities).\n\nEntities currently excluded by an active Entity Defaults Watchdog instance are left alone.\n\nClick Submit to apply."
+            "description": "Regenerate drifted entity IDs on `{device_name}` ({count} entities). Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }
@@ -67,19 +67,19 @@
         "step": {
           "confirm": {
             "title": "Clear name overrides?",
-            "description": "Clear stale name overrides on `{device_name}` ({count} entities). The integration-provided default name takes over.\n\nEntities currently excluded by an active Entity Defaults Watchdog instance are left alone.\n\nClick Submit to apply."
+            "description": "Clear stale name overrides on `{device_name}` ({count} entities). The integration-provided default name takes over. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }
     },
     "dw_device_disabled_diagnostics": {
-      "title": "Disabled diagnostic entities on device",
-      "description": "This device has {count} recommended diagnostic entities that are currently disabled. Click Submit to re-enable all of them.",
+      "title": "Disabled diagnostic entities on device: {device_name}",
+      "description": "Device `{device_name}` has {count} recommended diagnostic entities that are currently disabled. Click Submit to re-enable all of them.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Re-enable diagnostic entities?",
-            "description": "Set `disabled_by=None` on each of the {count} disabled recommended-diagnostic entities on this device.\n\nEntities currently excluded by an active Device Watchdog instance are left alone.\n\nClick Submit to apply."
+            "description": "Re-enable the {count} disabled recommended-diagnostic entities on `{device_name}`. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }

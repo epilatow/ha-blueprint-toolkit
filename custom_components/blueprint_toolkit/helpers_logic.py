@@ -717,9 +717,9 @@ class FixService:
 
     Every fix service has the same wire shape -- a service
     name plus a notification_id -- so a single generic
-    dataclass replaces the per-fix subclasses. The rich
-    per-repair data stays off the wire (HA's issue registry
-    persists ``data`` as flat JSON primitives only); the
+    dataclass covers them all. The rich per-repair data
+    stays off the wire (HA's issue registry persists
+    ``data`` as flat JSON primitives only); the
     notification_id is the key that recovers it.
     """
 
@@ -751,14 +751,14 @@ class PersistentNotification:
     surface. When set to a ``FixService`` instance AND the
     dispatcher is told ``create_repairs=True``, the spec
     routes to the issue registry instead of persistent
-    notifications -- the issue's fix flow invokes
+    notifications -- the issue's fix flow dispatches
     ``hass.services.async_call(DOMAIN, fix.service_name,
-    asdict(fix))`` when the user clicks Submit. The
-    ``FixService`` subclass hierarchy pins each fix
-    service's typed signature in one place; ``asdict`` at
-    the boundary keeps the on-wire payload a flat dict of
-    JSON primitives, which is what HA's issue registry can
-    persist to ``.storage``.
+    {"notification_id": fix.notification_id})`` when the
+    user clicks Submit. Only the ``notification_id`` goes on
+    the wire (HA's issue registry persists ``data`` as flat
+    JSON primitives); the fix service uses it to look up the
+    rich payload (entity lists, rename targets) it stashed
+    on the handler's instance state at scan time.
 
     Other ``PersistentNotification`` fields remain
     meaningful for the issue: ``title`` / ``message`` feed

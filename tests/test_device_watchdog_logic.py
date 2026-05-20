@@ -30,7 +30,9 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     DeviceEntry,
     DeviceInfo,
     DirectiveInputs,
+    DisabledDiagnosticsRepair,
     EntityInfo,
+    FixServices,
     RegistryEntry,
     _build_notification_message,
     _check_staleness,
@@ -40,9 +42,11 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     check_disabled_diagnostics,
     evaluate_devices,
     evaluate_diagnostics,
+    repair_notification_id,
     run_evaluation,
 )
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
+    FixService,
     PersistentNotification,
     validate_and_join_regex_patterns,
 )
@@ -1128,6 +1132,142 @@ class TestEvaluateDiagnostics:
         results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
+
+
+class TestEvaluateDiagnosticsRepairs:
+    """evaluate_diagnostics with create_repairs=True.
+
+    Asserts the repair surface: a single per-device repair-
+    carrying spec, the matching off-wire payload keyed by
+    notification_id, and the issue-ID format.
+    """
+
+    def _diag_device(
+        self,
+        device_id: str = "dev1",
+        device_name: str = "Lock",
+        registry_entries: list[RegistryEntry] | None = None,
+    ) -> DeviceInfo:
+        return DeviceInfo(
+            de=DeviceEntry(
+                id=device_id,
+                name=device_name,
+                default_name=device_name,
+                integration_entities={"zwave_js": set()},
+            ),
+            registry_entries=registry_entries or [],
+        )
+
+    def _device_two_disabled(self) -> DeviceInfo:
+        return self._diag_device(
+            device_id="abc",
+            device_name="Front Door Lock",
+            registry_entries=[
+                _reg_entry(
+                    entity_id="sensor.last_seen",
+                    original_name="Last seen",
+                    disabled=True,
+                ),
+                _reg_entry(
+                    entity_id="sensor.signal_strength",
+                    original_name="Signal strength",
+                    disabled=True,
+                ),
+            ],
+        )
+
+    def test_emits_single_repair_spec_per_device(self) -> None:
+        results, _ = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [self._device_two_disabled()],
+        )
+        assert len(results) == 1
+        spec = results[0]
+        assert isinstance(spec.repair_callback, FixService)
+        assert spec.active is True
+
+    def test_repair_spec_id_and_callback_match(self) -> None:
+        cfg = _config(create_repairs=True)
+        results, _ = evaluate_diagnostics(cfg, [self._device_two_disabled()])
+        spec = results[0]
+        expected_id = repair_notification_id(
+            cfg.notification_prefix,
+            FixServices.DEVICE_DISABLED_DIAGNOSTICS,
+            "abc",
+        )
+        assert spec.notification_id == expected_id
+        assert "__repair_" in spec.notification_id
+        assert spec.notification_id.endswith("__abc")
+        assert spec.repair_callback is not None
+        assert spec.repair_callback.notification_id == expected_id
+        assert spec.repair_callback.service_name == (
+            FixServices.DEVICE_DISABLED_DIAGNOSTICS.value
+        )
+
+    def test_translation_placeholders_name_device_and_count(
+        self,
+    ) -> None:
+        results, _ = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [self._device_two_disabled()],
+        )
+        spec = results[0]
+        assert spec.translation_key == "dw_device_disabled_diagnostics"
+        assert spec.translation_placeholders == {
+            "device_name": "Front Door Lock",
+            "count": "2",
+        }
+
+    def test_payload_captures_flagged_entity_set(self) -> None:
+        cfg = _config(create_repairs=True)
+        results, repairs = evaluate_diagnostics(
+            cfg,
+            [self._device_two_disabled()],
+        )
+        nid = results[0].notification_id
+        assert set(repairs) == {nid}
+        payload = repairs[nid]
+        assert isinstance(payload, DisabledDiagnosticsRepair)
+        assert payload.device_id == "abc"
+        assert set(payload.entity_ids) == {
+            "sensor.last_seen",
+            "sensor.signal_strength",
+        }
+
+    def test_device_name_falls_back_to_id(self) -> None:
+        device = self._diag_device(
+            device_id="abc",
+            device_name="",
+            registry_entries=[
+                _reg_entry(
+                    original_name="Last seen",
+                    disabled=True,
+                ),
+            ],
+        )
+        results, _ = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [device],
+        )
+        placeholders = results[0].translation_placeholders
+        assert placeholders is not None
+        assert placeholders["device_name"] == "abc"
+
+    def test_no_disabled_emits_no_repair(self) -> None:
+        device = self._diag_device(
+            registry_entries=[
+                _reg_entry(
+                    original_name="Last seen",
+                    disabled=False,
+                ),
+            ],
+        )
+        results, repairs = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [device],
+        )
+        assert results == []
+        assert repairs == {}
 
 
 class TestNotificationPrefixIsolation:

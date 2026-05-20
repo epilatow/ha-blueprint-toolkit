@@ -339,7 +339,10 @@ def evaluate_diagnostics(
                         notification_id=nid,
                     ),
                     translation_key="dw_device_disabled_diagnostics",
-                    translation_placeholders={"count": str(len(disabled))},
+                    translation_placeholders={
+                        "device_name": device.de.name or device.de.id,
+                        "count": str(len(disabled)),
+                    },
                 ),
             )
             repairs[nid] = DisabledDiagnosticsRepair(

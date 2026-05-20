@@ -303,10 +303,9 @@ async def async_setup_entry(
     await stsc_handler.async_register(hass, entry)
 
     # Per-handler repair fix services. Each watchdog owns
-    # its own ``FixService`` subclasses and registers the
-    # backing ``hass.services.async_register`` calls; this
-    # module just orchestrates the per-handler registration
-    # pass.
+    # its own ``FixServices`` enum + the backing
+    # ``hass.services.async_register`` calls; this module
+    # just orchestrates the per-handler registration pass.
     await edw_handler.async_register_fix_services(hass)
     await dw_handler.async_register_fix_services(hass)
 

@@ -144,8 +144,8 @@ blueprint:
       description: >
         Cap on per-run repair issues. Set to 0 for
         unlimited. Repairs are not bulk-dismissable in
-        HA's UI, so a cap is recommended; the cap-summary
-        repair indicates how many additional findings
+        HA's UI, so a cap is recommended; a cap-summary
+        notification indicates how many additional findings
         were suppressed.
       default: 5
       selector:

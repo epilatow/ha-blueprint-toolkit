@@ -689,6 +689,105 @@ class TestUnmatchedDirectives:
         assert "xyz_no_entity_matches" in body
 
 
+class TestFixServiceDisabledDiagnostics:
+    """End-to-end DW disabled-diagnostics repair fix.
+
+    A create_repairs scan over a device with a disabled
+    recommended-diagnostic entity stashes a per-repair
+    payload on instance state and publishes a repair issue.
+    Calling the fix service with that issue's notification_id
+    re-enables exactly the captured entity in the registry.
+    """
+
+    async def test_submit_reenables_captured_entity(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.dw_fix",
+            "on",
+            {"friendly_name": "DW Fix", "id": "7"},
+        )
+
+        zwave_entry = _mock_config_entry(domain="zwave_js", title="zwave_js")
+        zwave_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=zwave_entry.entry_id,
+            identifiers={("zwave_js", "node-7")},
+            name="Front Door Lock",
+        )
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="zwave_js",
+            unique_id="last-seen-7",
+            device_id=device.id,
+            config_entry=zwave_entry,
+            original_name="Last seen",
+            entity_category=EntityCategory.DIAGNOSTIC,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+        assert entry.disabled_by is not None
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_fix",
+                include_integrations=["zwave_js"],
+                enabled_checks=["disabled-diagnostics"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        # The scan published exactly one repair issue.
+        reg = ir.async_get(hass)
+        repair_ids = [
+            i.issue_id
+            for i in reg.issues.values()
+            if i.domain == DOMAIN and "__repair_" in i.issue_id
+        ]
+        assert len(repair_ids) == 1
+        nid = repair_ids[0]
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_dw_device_disabled_diagnostics",
+            {"notification_id": nid},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        updated = ent_reg.async_get(entry.entity_id)
+        assert updated is not None
+        assert updated.disabled_by is None
+
+    async def test_unknown_notification_id_is_noop(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        # A click after restart (instance state lost) or after
+        # the finding cleared finds no payload and must no-op
+        # without raising.
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_dw_device_disabled_diagnostics",
+            {"notification_id": "blueprint_toolkit_dw__x__repair_x__none"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "DW"
     setup_integration = staticmethod(_setup_integration)
