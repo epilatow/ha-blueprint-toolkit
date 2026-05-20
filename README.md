@@ -45,11 +45,12 @@ are standalone -- self-contained YAML blueprints with no service handler.
   clear-unmanaged mode makes the config file the single source of truth.
   Requires the `core_zwave_js` addon.
 
-- [Water Leak Alert](docs/water_leak_alert.md) - Responds when any of a set of
-  water leak sensors detects water: a one-time initial notification, then a
-  siren and/or repeated notifications on an interval until every sensor is
-  dry. Optional presence gating keeps an empty house quiet. A standalone
-  YAML-only blueprint with no service handler.
+- [Trigger Alert Controller](docs/trigger_alert_controller.md) - Responds when
+  any of a set of binary sensors turns on (water leak, smoke, an open door,
+  etc.): a one-time initial notification, then a siren and/or repeated
+  notifications on an interval until every sensor is off. A configurable alert
+  name labels the notification body, and optional presence gating keeps an
+  empty house quiet. A standalone YAML-only blueprint with no service handler.
 
 ## Scripts
 

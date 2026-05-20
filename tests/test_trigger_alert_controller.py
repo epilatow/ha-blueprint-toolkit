@@ -7,12 +7,12 @@
 # ]
 # ///
 # This is AI generated code
-"""Structure checks for the standalone ``water_leak_alert`` blueprint.
+"""Structure checks for the standalone ``trigger_alert_controller`` blueprint.
 
-``water_leak_alert`` is a standalone blueprint: its action chain is plain
-Home Assistant YAML with no ``blueprint_toolkit.<service>`` dispatch, so it
-has no handler, no ``_SCHEMA``, and no ``BlueprintSchemaDriftBase`` subclass.
-This file is the standalone-blueprint equivalent of the per-handler
+``trigger_alert_controller`` is a standalone blueprint: its action chain is
+plain Home Assistant YAML with no ``blueprint_toolkit.<service>`` dispatch, so
+it has no handler, no ``_SCHEMA``, and no ``BlueprintSchemaDriftBase``
+subclass. This file is the standalone-blueprint equivalent of the per-handler
 schema-drift test -- it pins the marker, the input surface, the ``mode``, and
 the no-service-dispatch contract so a future edit can't quietly turn it into
 a handler-backed blueprint or break the marker the category convention keys
@@ -38,12 +38,13 @@ BLUEPRINT_PATH = (
     / "blueprints"
     / "automation"
     / "blueprint_toolkit"
-    / "water_leak_alert.yaml"
+    / "trigger_alert_controller.yaml"
 )
 STANDALONE_MARKER = "# blueprint-kind: standalone"
 EXPECTED_INPUT_KEYS = {
-    "leak_sensors",
-    "leak_detection_delay",
+    "alert_name",
+    "trigger_sensors",
+    "detection_delay",
     "initial_notification_action",
     "repeat_interval",
     "siren_entity",
@@ -110,9 +111,10 @@ class TestStandaloneMarker:
     def test_marker_is_first_line(self) -> None:
         first = _raw_text().splitlines()[0]
         assert first == STANDALONE_MARKER, (
-            "water_leak_alert.yaml must start with the standalone marker "
-            f"{STANDALONE_MARKER!r}; got {first!r}. The marker identifies "
-            "the standalone-blueprint category -- see AUTOMATIONS.md."
+            "trigger_alert_controller.yaml must start with the standalone "
+            f"marker {STANDALONE_MARKER!r}; got {first!r}. The marker "
+            "identifies the standalone-blueprint category -- see "
+            "AUTOMATIONS.md."
         )
 
 
@@ -134,7 +136,7 @@ class TestBlueprintStructure:
         refs = _iter_service_refs(_load().get("actions"))
         offenders = [r for r in refs if r.startswith("blueprint_toolkit.")]
         assert not offenders, (
-            "water_leak_alert.yaml is a standalone blueprint but its "
+            "trigger_alert_controller.yaml is a standalone blueprint but its "
             f"actions dispatch to a service handler: {offenders}"
         )
 
@@ -144,19 +146,19 @@ class TestBlueprintStructure:
         that a missing ``triggers:`` key renders automations from the
         blueprint as ``unavailable``; the action chain also depends on
         automation-level ``variables:`` being populated for the templates
-        that reference ``leak_sensors`` / ``siren_entity`` / etc.
+        that reference ``trigger_sensors`` / ``siren_entity`` / etc.
         """
         bp = _load()
         for key in ("triggers", "actions", "variables"):
             assert bp.get(key), (
-                f"water_leak_alert.yaml is missing or has empty {key!r}; "
-                "the blueprint will not function without it."
+                f"trigger_alert_controller.yaml is missing or has empty "
+                f"{key!r}; the blueprint will not function without it."
             )
 
     def test_ha_start_path_debounces_on_detection_delay(self) -> None:
-        """The ``ha_start`` re-entry branch must wait ``leak_detection_delay``
+        """The ``ha_start`` re-entry branch must wait ``detection_delay``
         before continuing, mirroring the ``for:`` debounce on the state
-        trigger. Without it, a transient wet reading at HA startup would
+        trigger. Without it, a transient on reading at HA startup would
         fire the full siren / notification response immediately.
         """
         actions = _load().get("actions")
@@ -173,7 +175,7 @@ class TestBlueprintStructure:
             )
         ]
         assert debounce_branches, (
-            "water_leak_alert.yaml actions must contain a top-level "
+            "trigger_alert_controller.yaml actions must contain a top-level "
             "branch gated on `trigger.id == 'ha_start'`."
         )
         for branch in debounce_branches:
@@ -181,8 +183,8 @@ class TestBlueprintStructure:
             assert any(
                 isinstance(s, dict) and "delay" in s for s in then_steps
             ), (
-                "ha_start re-entry branch must wait leak_detection_delay "
-                "before continuing -- see water_leak_alert.md "
+                "ha_start re-entry branch must wait detection_delay before "
+                "continuing -- see trigger_alert_controller.md "
                 "'Restart recovery'."
             )
 

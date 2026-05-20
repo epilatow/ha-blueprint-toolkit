@@ -5,38 +5,51 @@
 # no handler/logic subpackage and no schema-drift test. See AUTOMATIONS.md
 # ("Standalone blueprints") for the category contract.
 blueprint:
-  name: Water Leak Alert
+  name: Trigger Alert Controller
   description: >
-    Watches a set of water leak sensors and responds when any of them
-    detects water. Fires a one-time initial notification, then repeats a
-    configurable response -- a siren and/or repeated notification actions
-    -- on an interval for as long as the leak persists. The repeated
-    response can be gated on presence so an empty house stays quiet.
-    [Full documentation](/local/blueprint_toolkit/docs/water_leak_alert.html).
+    Watches a set of binary sensors and responds when any of them turns
+    on. Fires a one-time initial notification, then repeats a configurable
+    response -- a siren and/or repeated notification actions -- on an
+    interval for as long as the condition persists. The repeated response
+    can be gated on presence so an empty house stays quiet. Works with any
+    binary sensor: a water leak, smoke, an open door, motion, anything that
+    reports "on" for the condition you want to be alerted about.
+    [Full documentation](/local/blueprint_toolkit/docs/trigger_alert_controller.html).
   domain: automation
   author: epilatow
 
   input:
-    leak_detection:
-      name: Leak detection
-      icon: mdi:water-alert
+    trigger_detection:
+      name: Trigger detection
+      icon: mdi:alarm-light
       input:
-        leak_sensors:
-          name: Leak sensors
+        alert_name:
+          name: Alert name
           description: >
-            One or more water leak sensors. The automation triggers when
-            any of them reports water ("on") and keeps responding until
-            all of them are dry again.
+            A short label for what this alert is about (e.g. "Water leak",
+            "Smoke", "Door left open"). It is interpolated into the
+            notification body the automation builds: "<alert name> detected
+            by <sensor>." for the initial notification and "<alert name>
+            still detected (<sensors>)." for each repeat.
+          default: Alert
+          selector:
+            text:
+
+        trigger_sensors:
+          name: Trigger sensors
+          description: >
+            One or more binary sensors. The automation triggers when any of
+            them turns "on" and keeps responding until all of them are
+            "off" again.
           selector:
             entity:
               domain: binary_sensor
-              device_class: moisture
               multiple: true
 
-        leak_detection_delay:
+        detection_delay:
           name: Detection delay
           description: >
-            How long a sensor must continuously report water before the
+            How long a sensor must continuously report "on" before the
             automation fires. Filters out momentary blips. Set to zero to
             react immediately.
           default:
@@ -53,7 +66,7 @@ blueprint:
         initial_notification_action:
           name: Initial notification action
           description: >
-            Action(s) to run once, the moment a leak is first detected.
+            Action(s) to run once, the moment a sensor first turns on.
             Typically one or more "Call service" steps (e.g.
             notify.mobile_app_phone, a notify group). Each step can
             reference the pre-built body via {{ message }}. This always
@@ -71,7 +84,7 @@ blueprint:
           name: Repeat interval
           description: >
             How long to wait between each repeated response while the
-            leak persists.
+            condition persists.
           default:
             hours: 0
             minutes: 0
@@ -91,13 +104,13 @@ blueprint:
               domain: siren
 
         siren_tone:
-          name: Siren tone
+          name: Siren tone (optional)
           description: >
             Tone to play on the siren. Accepts the tone's numeric ID or
             its full name as listed in the siren entity's available_tones
-            attribute (Developer Tools > States). On a Zooz ZSE50, ID 7
-            is the "Leak detected" sound.
-          default: "7"
+            attribute (Developer Tools > States). Leave empty to let the
+            siren play its default tone.
+          default: ""
           selector:
             text:
 
@@ -130,63 +143,63 @@ blueprint:
             action:
 
 variables:
-  leak_sensors: !input leak_sensors
+  trigger_sensors: !input trigger_sensors
+  alert_name: !input alert_name
   siren_entity: !input siren_entity
   siren_tone: !input siren_tone
   presence_entities: !input presence_entities
 
 triggers:
-  - id: leak_detected
+  - id: sensor_triggered
     trigger: state
-    entity_id: !input leak_sensors
+    entity_id: !input trigger_sensors
     to: "on"
-    for: !input leak_detection_delay
-  # Re-entry trigger so an HA restart (or automation reload) while a leak
-  # is active does not silently stop alerting. The ``conditions:`` block
-  # below filters out the no-leak case, so this only fires the response
-  # when a sensor is currently wet at startup; the actions then debounce
-  # for ``leak_detection_delay`` before re-entering the loop so a
-  # transient wet reading right as HA comes up cannot fire a false alarm.
-  # Standalone blueprints do not get the handler-backed
-  # ``recover_at_startup``, so ``homeassistant: start`` is the right
-  # recovery hook here -- see AUTOMATIONS.md "Standalone blueprints".
+    for: !input detection_delay
+  # Re-entry trigger so an HA restart (or automation reload) while a sensor
+  # is still on does not silently stop alerting. The ``conditions:`` block
+  # below filters out the all-off case, so this only fires the response
+  # when a sensor is currently on at startup; the actions then debounce
+  # for ``detection_delay`` before re-entering the loop so a transient on
+  # reading right as HA comes up cannot fire a false alarm. Standalone
+  # blueprints do not get the handler-backed ``recover_at_startup``, so
+  # ``homeassistant: start`` is the right recovery hook here -- see
+  # AUTOMATIONS.md "Standalone blueprints".
   - id: ha_start
     trigger: homeassistant
     event: start
 
 conditions:
   # Filters the ``ha_start`` re-entry path: only proceed if a sensor is
-  # currently wet. Redundant for ``leak_detected`` (the state trigger
+  # currently on. Redundant for ``sensor_triggered`` (the state trigger
   # already held for the detection delay) but unifies the two paths.
   - condition: template
     value_template: >-
-      {{ expand(leak_sensors)
+      {{ expand(trigger_sensors)
          | selectattr('state', 'eq', 'on')
          | list | count > 0 }}
 
 actions:
-  # On the ``ha_start`` re-entry path, wait ``leak_detection_delay`` and
-  # bail if every sensor has gone dry during the wait. Mirrors the
-  # ``for:`` debounce on the ``leak_detected`` state trigger so a
-  # transient wet reading right as HA comes back up cannot fire a false
-  # alarm. The trigger's own ``conditions:`` block already guarantees a
-  # sensor was wet at the firing instant; this re-checks after the
-  # detection delay.
+  # On the ``ha_start`` re-entry path, wait ``detection_delay`` and bail if
+  # every sensor has turned off during the wait. Mirrors the ``for:``
+  # debounce on the ``sensor_triggered`` state trigger so a transient on
+  # reading right as HA comes back up cannot fire a false alarm. The
+  # trigger's own ``conditions:`` block already guarantees a sensor was on
+  # at the firing instant; this re-checks after the detection delay.
   - if:
       - condition: template
         value_template: "{{ trigger.id == 'ha_start' }}"
     then:
-      - delay: !input leak_detection_delay
+      - delay: !input detection_delay
       - if:
           - condition: template
             value_template: >-
-              {{ expand(leak_sensors)
+              {{ expand(trigger_sensors)
                  | selectattr('state', 'eq', 'on')
                  | list | count == 0 }}
         then:
-          - stop: "Leak cleared during ha_start debounce."
+          - stop: "Sensors cleared during ha_start debounce."
 
-  # One-time initial notification, only on the real leak trigger. On the
+  # One-time initial notification, only on the real sensor trigger. On the
   # ``ha_start`` re-entry path the user has already been notified before
   # the restart; the first iteration of the repeat loop below fires the
   # repeated notification anyway. ``message`` is exposed as a top-level
@@ -194,22 +207,22 @@ actions:
   # ``{{ message }}``. Runs regardless of the presence gate.
   - if:
       - condition: template
-        value_template: "{{ trigger.id == 'leak_detected' }}"
+        value_template: "{{ trigger.id == 'sensor_triggered' }}"
     then:
       - variables:
-          message: "Water leak detected by {{ trigger.to_state.name }}."
+          message: "{{ alert_name }} detected by {{ trigger.to_state.name }}."
       - sequence: !input initial_notification_action
 
   # Repeat the response on the configured interval for as long as any
-  # sensor still reports water. The presence gate is checked inside the
-  # loop body (not in the ``while``) so presence coming and going is
-  # handled cleanly while the leak persists -- the loop only exits when
-  # every sensor is dry.
+  # sensor is still on. The presence gate is checked inside the loop body
+  # (not in the ``while``) so presence coming and going is handled cleanly
+  # while the condition persists -- the loop only exits when every sensor
+  # is off.
   - repeat:
       while:
         - condition: template
           value_template: >-
-            {{ expand(leak_sensors)
+            {{ expand(trigger_sensors)
                | selectattr('state', 'eq', 'on')
                | list | count > 0 }}
       sequence:
@@ -225,22 +238,26 @@ actions:
                 - condition: template
                   value_template: "{{ siren_entity not in [none, ''] }}"
               then:
+                # Build the service data inline so the optional tone is
+                # only sent when set; an empty tone lets the siren play
+                # its own default rather than erroring on a blank value.
                 - action: siren.turn_on
                   target:
                     entity_id: !input siren_entity
-                  data:
-                    tone: !input siren_tone
-                    volume_level: 1
+                  data: >-
+                    {{ {'volume_level': 1}
+                       | combine({'tone': siren_tone}
+                                 if siren_tone not in [none, ''] else {}) }}
             - variables:
                 message: >-
-                  Water leak still detected ({{ expand(leak_sensors)
+                  {{ alert_name }} still detected ({{ expand(trigger_sensors)
                   | selectattr('state', 'eq', 'on')
                   | map(attribute='name') | list | join(', ') }}).
             - sequence: !input repeated_notification_action
         - delay: !input repeat_interval
 
-  # Leak cleared (the loop exited): silence the siren in case a tone is
-  # still playing.
+  # Condition cleared (the loop exited): silence the siren in case a tone
+  # is still playing.
   - if:
       - condition: template
         value_template: "{{ siren_entity not in [none, ''] }}"
@@ -249,7 +266,7 @@ actions:
         target:
           entity_id: !input siren_entity
 
-# ``single`` so a second sensor tripping while the loop runs does not
-# stack a second loop -- the running loop already covers every sensor in
-# ``leak_sensors`` via its ``while`` check.
+# ``single`` so a second sensor tripping while the loop runs does not stack
+# a second loop -- the running loop already covers every sensor in
+# ``trigger_sensors`` via its ``while`` check.
 mode: single

@@ -158,13 +158,14 @@ The category contract:
   blueprints do not. When a standalone blueprint has state that should survive
   an HA restart (an in-flight `repeat` loop, an active timer, etc.), add a
   `homeassistant: start` trigger and gate the actions so the recovery path
-  only runs when appropriate. `water_leak_alert` uses this pattern to re-enter
-  its repeat loop after a restart if a leak is still active.
+  only runs when appropriate. `trigger_alert_controller` uses this pattern to
+  re-enter its repeat loop after a restart if a sensor is still on.
 
-`water_leak_alert` is the reference example. Reach for a standalone blueprint
-only when there is genuinely no business logic worth unit-testing in isolation
--- anything with a non-trivial decision tree, cross-field validation, or state
-that must survive a restart belongs in the handler-backed shape.
+`trigger_alert_controller` is the reference example. Reach for a standalone
+blueprint only when there is genuinely no business logic worth unit-testing in
+isolation -- anything with a non-trivial decision tree, cross-field
+validation, or state that must survive a restart belongs in the handler-backed
+shape.
 
 ## Shared helpers (`helpers.py`)
 
