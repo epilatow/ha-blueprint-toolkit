@@ -328,19 +328,23 @@ scan.</p>
 <h3>Repairs</h3>
 <p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each drift
 finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
-button instead of as a persistent notification. Two finding categories
+button instead of as a persistent notification. Three finding categories
 convert:</p>
 <ul>
 <li><strong>Entity-ID drift</strong> -- &quot;rename <code>&lt;entity_id&gt;</code> to <code>&lt;default_entity_id&gt;</code>&quot;.
 Submit calls the entity registry's rename API.</li>
 <li><strong>Entity-name drift</strong> -- &quot;reset friendly name on <code>&lt;entity_id&gt;</code> from
 <code>&lt;current&gt;</code> to <code>&lt;default&gt;</code>&quot;. Submit clears the user-set name override.</li>
+<li><strong>Visible aliased entity</strong> -- &quot;re-hide <code>&lt;source_entity_id&gt;</code>&quot;. One repair per
+flagged <code>switch_as_x</code> source whose row is still visible; Submit sets
+<code>hidden_by=integration</code> on the source, restoring the original wrapper
+behaviour. With the toggle off, these instead surface as the single
+aggregate visible-aliased notification.</li>
 </ul>
-<p>Other drift categories (unmatched include / exclude directives, visible
-aliased entities, etc.) continue to surface as notifications regardless of the
-toggle. The per-device summary notification keeps its grouped body so users
-who want the full list still get it; the per-entity repair issues run
-alongside.</p>
+<p>Other drift categories (unmatched include / exclude directives, etc.) continue
+to surface as notifications regardless of the toggle. The per-device summary
+notification keeps its grouped body so users who want the full list still get
+it; the per-entity repair issues run alongside.</p>
 <p>The repair issue auto-clears once the underlying drift is resolved (next scan
 sees the entity at its default ID / name and the dispatcher's sweep removes
 the stale issue).</p>

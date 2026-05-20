@@ -172,6 +172,7 @@ class FixServices(StrEnum):
 
     DEVICE_ENTITY_ID_DRIFT = "fix_edw_device_entity_id_drift"
     DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
+    VISIBLE_ALIASED_ENTITY = "fix_edw_visible_aliased_entity"
 
 
 @dataclass(frozen=True)
@@ -203,7 +204,26 @@ class DeviceEntityNameDriftRepair:
     entity_name_targets: tuple[tuple[str, str | None], ...]
 
 
-EdwRepair = DeviceEntityIdDriftRepair | DeviceEntityNameDriftRepair
+@dataclass(frozen=True)
+class VisibleAliasedEntityRepair:
+    """Rich per-repair payload for an EDW visible-aliased fix.
+
+    Carries the single ``switch_as_x`` source entity to
+    re-hide. Built by the logic, stored on the handler's
+    instance state keyed by notification_id, read back by the
+    fix service to re-apply ``hidden_by=integration``. Stays
+    off the wire (the issue-registry payload is just the
+    notification_id).
+    """
+
+    source_entity_id: str
+
+
+EdwRepair = (
+    DeviceEntityIdDriftRepair
+    | DeviceEntityNameDriftRepair
+    | VisibleAliasedEntityRepair
+)
 
 
 @dataclass
@@ -309,11 +329,11 @@ class VisibleAliasedEntityFinding:
     check.
 
     The per-entity shape is deliberately distinct from
-    ``DevicelessDriftDetail`` -- a future repair surface
-    will want to stamp one repair per finding, and packing
-    visible-aliased findings into the deviceless dataclass
-    would either lose fields or pollute the deviceless
-    schema with optional aliased-only fields.
+    ``DevicelessDriftDetail`` -- ``_build_visible_aliased_repair_specs``
+    stamps one repair per finding, and packing visible-aliased
+    findings into the deviceless dataclass would either lose
+    fields or pollute the deviceless schema with optional
+    aliased-only fields.
 
     ``source_device_id`` / ``source_config_entry_id`` are
     threaded from ``VisibleAliasedEntityInfo`` so the body
@@ -1417,6 +1437,60 @@ def _build_device_repair_specs(
     return specs, repairs
 
 
+def _build_visible_aliased_repair_specs(
+    config: Config,
+    findings: list[VisibleAliasedEntityFinding],
+) -> tuple[
+    list[helpers.PersistentNotification],
+    dict[str, EdwRepair],
+]:
+    """Build one re-hide repair per visible-aliased finding.
+
+    Used in place of the aggregate ``{prefix}visible_aliased``
+    notification when ``create_repairs`` is on, so each
+    flagged source surfaces as a one-click Repair rather than
+    a line in a bucket notification (never both). The rich
+    payload (the source entity to re-hide) is stored keyed by
+    notification_id; the issue carries only the id.
+
+    Each spec carries an ``entities`` translation placeholder
+    -- a one-item markdown list naming the source -- so the
+    confirm modal shows exactly what will change.
+    """
+    specs: list[helpers.PersistentNotification] = []
+    repairs: dict[str, EdwRepair] = {}
+    for f in findings:
+        nid = helpers.repair_notification_id(
+            config.notification_prefix,
+            FixServices.VISIBLE_ALIASED_ENTITY,
+            f.source_entity_id,
+        )
+        specs.append(
+            helpers.PersistentNotification(
+                active=True,
+                notification_id=nid,
+                title="",
+                message="",
+                instance_id=config.instance_id,
+                repair_callback=helpers.FixService(
+                    service_name=FixServices.VISIBLE_ALIASED_ENTITY.value,
+                    notification_id=nid,
+                ),
+                translation_key="edw_visible_aliased_entity",
+                translation_placeholders={
+                    "source_entity_id": f.source_entity_id,
+                    "entities": (
+                        f"- `{f.source_entity_id}` ({f.source_friendly_name})"
+                    ),
+                },
+            ),
+        )
+        repairs[nid] = VisibleAliasedEntityRepair(
+            source_entity_id=f.source_entity_id,
+        )
+    return specs, repairs
+
+
 def _validate_edw_directives(
     inputs: DirectiveInputs,
     all_integrations: list[str],
@@ -1586,15 +1660,29 @@ def run_evaluation(
             entries_kept=0,
             entries_excluded=0,
         )
-    notifications.append(
-        helpers.PersistentNotification(
-            active=visible_aliased.has_issue,
-            notification_id=visible_aliased.notification_id,
-            title=visible_aliased.notification_title,
-            message=visible_aliased.notification_message,
-            instance_id=config.instance_id,
-        ),
-    )
+
+    # Same one-surface-per-finding split as device drift above.
+    # Repairs on -> one re-hide repair per flagged source; the
+    # aggregate notification is suppressed (the per-backend
+    # sweep clears any prior one). Repairs off -> the aggregate
+    # bucket notification.
+    if config.create_repairs:
+        va_specs, va_repairs = _build_visible_aliased_repair_specs(
+            config,
+            visible_aliased.findings,
+        )
+        notifications.extend(va_specs)
+        repairs.update(va_repairs)
+    else:
+        notifications.append(
+            helpers.PersistentNotification(
+                active=visible_aliased.has_issue,
+                notification_id=visible_aliased.notification_id,
+                title=visible_aliased.notification_title,
+                message=visible_aliased.notification_message,
+                instance_id=config.instance_id,
+            ),
+        )
 
     issues = [r for r in results if r.has_issue]
     stat_deviceless_stale = sum(

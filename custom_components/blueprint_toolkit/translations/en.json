@@ -83,6 +83,18 @@
           }
         }
       }
+    },
+    "edw_visible_aliased_entity": {
+      "title": "Visible aliased entity: {source_entity_id}",
+      "description": "`{source_entity_id}` is wrapped by switch_as_x but its source entity is still visible, so both rows show up in dashboards, voice assistants, and entity pickers. Click Submit to re-hide the source.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Re-hide {source_entity_id}?",
+            "description": "Re-hide the source entity (sets hidden_by=integration), restoring the original switch_as_x behaviour:\n\n{entities}\n\nClick Submit to apply."
+          }
+        }
+      }
     }
   }
 }

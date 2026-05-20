@@ -987,6 +987,20 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
                 continue
             ent_reg.async_update_entity(entity_id, name=target)
 
+    async def _fix_visible_aliased(notification_id: str) -> None:
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, logic.VisibleAliasedEntityRepair):
+            return
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get(payload.source_entity_id)
+        hidden = er.RegistryEntryHider.INTEGRATION
+        if entry is None or entry.hidden_by is hidden:
+            return
+        ent_reg.async_update_entity(
+            payload.source_entity_id,
+            hidden_by=hidden,
+        )
+
     register_fix_service(
         hass,
         logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
@@ -996,6 +1010,11 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
         hass,
         logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
         _fix_name_drift,
+    )
+    register_fix_service(
+        hass,
+        logic.FixServices.VISIBLE_ALIASED_ENTITY,
+        _fix_visible_aliased,
     )
 
 

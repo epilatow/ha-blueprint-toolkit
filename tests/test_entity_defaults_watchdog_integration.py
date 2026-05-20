@@ -983,6 +983,149 @@ class TestVisibleAliasedScan:
         assert f"device={device_id}" in body
         assert f"config_entry={config_entry_id}" in body
 
+    async def test_create_repairs_true_publishes_repair_and_fix_rehides(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """With ``create_repairs=true`` a visible source surfaces
+        as one re-hide repair (not the aggregate notification);
+        calling the fix service sets ``hidden_by=integration``.
+        """
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.den",
+            wrapper_entity_id="den",
+            wrapper_target_domain="fan",
+            source_friendly_name="Den Fan",
+            source_hidden_by=None,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_va_repair",
+                drift_checks=["visible-aliased-entity"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        reg = ir.async_get(hass)
+        repair_ids = [
+            i.issue_id
+            for i in reg.issues.values()
+            if i.domain == DOMAIN
+            and "__repair_fix_edw_visible_aliased_entity__" in i.issue_id
+        ]
+        assert len(repair_ids) == 1, sorted(reg.issues)
+        nid = repair_ids[0]
+
+        # Repairs on -> the aggregate bucket notification is not
+        # emitted; the finding lives only on the Repairs surface.
+        agg_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_va_repair__visible_aliased"
+        )
+        assert agg_id not in _async_get_or_create_notifications(hass)
+
+        ent_reg = er.async_get(hass)
+        before = ent_reg.async_get("switch.den")
+        assert before is not None
+        assert before.hidden_by is None
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_visible_aliased_entity",
+            {"notification_id": nid},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        after = ent_reg.async_get("switch.den")
+        assert after is not None
+        assert after.hidden_by is er.RegistryEntryHider.INTEGRATION
+
+    async def test_create_repairs_false_emits_aggregate_no_issues(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """With ``create_repairs=false`` the visible source stays
+        on the aggregate notification surface; no repair issues.
+        """
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.loft",
+            wrapper_entity_id="loft",
+            wrapper_target_domain="fan",
+            source_friendly_name="Loft Fan",
+            source_hidden_by=None,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_va_notif",
+                drift_checks=["visible-aliased-entity"],
+                create_repairs=False,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        agg_id = (
+            "blueprint_toolkit_entity_defaults_watchdog"
+            "__automation.edw_va_notif__visible_aliased"
+        )
+        assert agg_id in _async_get_or_create_notifications(hass)
+
+        reg = ir.async_get(hass)
+        assert not [
+            i
+            for i in reg.issues.values()
+            if i.domain == DOMAIN
+            and "__repair_fix_edw_visible_aliased_entity__" in i.issue_id
+        ]
+
+    async def test_fix_unknown_notification_id_is_noop(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """The re-hide fix no-ops (no raise) when the
+        notification_id maps to no stored payload -- e.g. a
+        click after a restart cleared instance state, or after
+        the next scan cleared the finding.
+        """
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_visible_aliased_entity",
+            {
+                "notification_id": (
+                    "blueprint_toolkit_entity_defaults_watchdog"
+                    "__automation.x__repair_fix_edw_visible_aliased_entity"
+                    "__switch.gone"
+                ),
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
     async def test_hidden_source_no_notification(
         self,
         hass: HomeAssistant,

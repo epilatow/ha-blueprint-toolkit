@@ -255,6 +255,7 @@ class TestSetupEntry:
             # would silently pass).
             "fix_edw_device_entity_id_drift",
             "fix_edw_device_entity_name_drift",
+            "fix_edw_visible_aliased_entity",
             "fix_dw_device_disabled_diagnostics",
         }
         registered = set(hass.services.async_services().get(DOMAIN, {}))

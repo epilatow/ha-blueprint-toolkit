@@ -36,13 +36,16 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     DeviceResult,
     DirectiveInputs,
     DriftDetail,
+    EdwRepair,
     EntityDriftInfo,
     FixServices,
     VisibleAliasedEntityFinding,
     VisibleAliasedEntityInfo,
+    VisibleAliasedEntityRepair,
     _build_device_notification_message,
     _build_device_repair_specs,
     _build_visible_aliased_notification_message,
+    _build_visible_aliased_repair_specs,
     _check_entity_drift,
     _check_id_enabled,
     _check_name_enabled,
@@ -54,6 +57,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     _matches_with_collision_suffix,
     _validate_edw_directives,
     evaluate_devices,
+    run_evaluation,
 )
 
 # -- Helpers -----------------------------------------
@@ -1944,6 +1948,176 @@ class TestBuildDeviceRepairSpecs:
         assert len(specs) == 2
         assert len(repairs) == 2
         assert all(s.notification_id.endswith(("__d1", "__d2")) for s in specs)
+
+
+class TestBuildVisibleAliasedRepairSpecs:
+    """_build_visible_aliased_repair_specs: one re-hide repair
+    per flagged source.
+
+    The logic-layer producer of the visible-aliased repair
+    specs + off-wire payloads. Asserts the per-finding shape,
+    the issue-ID format, the placeholders, and the payload
+    contents.
+    """
+
+    def test_no_findings_no_specs(self) -> None:
+        specs, repairs = _build_visible_aliased_repair_specs(
+            _config(create_repairs=True),
+            [],
+        )
+        assert specs == []
+        assert repairs == {}
+
+    def test_one_finding_one_spec(self) -> None:
+        cfg = _config(create_repairs=True)
+        finding = VisibleAliasedEntityFinding(
+            source_entity_id="switch.kitchen",
+            wrapper_entity_id="kitchen",
+            wrapper_target_domain="fan",
+            source_friendly_name="Kitchen Fan",
+            source_device_id="dev_kitchen",
+            source_config_entry_id="ce_kitchen",
+        )
+        specs, repairs = _build_visible_aliased_repair_specs(cfg, [finding])
+        assert len(specs) == 1
+        spec = specs[0]
+        expected_id = helpers.repair_notification_id(
+            cfg.notification_prefix,
+            FixServices.VISIBLE_ALIASED_ENTITY,
+            "switch.kitchen",
+        )
+        assert spec.notification_id == expected_id
+        assert "__repair_" in spec.notification_id
+        assert spec.translation_key == "edw_visible_aliased_entity"
+        assert spec.translation_placeholders == {
+            "source_entity_id": "switch.kitchen",
+            "entities": "- `switch.kitchen` (Kitchen Fan)",
+        }
+        assert spec.repair_callback is not None
+        assert spec.repair_callback.service_name == (
+            FixServices.VISIBLE_ALIASED_ENTITY.value
+        )
+        assert spec.repair_callback.notification_id == expected_id
+        payload = repairs[expected_id]
+        assert isinstance(payload, VisibleAliasedEntityRepair)
+        assert payload.source_entity_id == "switch.kitchen"
+
+    def test_each_finding_gets_its_own_spec(self) -> None:
+        cfg = _config(create_repairs=True)
+        findings = [
+            VisibleAliasedEntityFinding(
+                source_entity_id="switch.foo",
+                wrapper_entity_id="foo",
+                wrapper_target_domain="fan",
+                source_friendly_name="Foo",
+                source_device_id=None,
+                source_config_entry_id=None,
+            ),
+            VisibleAliasedEntityFinding(
+                source_entity_id="switch.bar",
+                wrapper_entity_id="bar",
+                wrapper_target_domain="light",
+                source_friendly_name="Bar",
+                source_device_id=None,
+                source_config_entry_id=None,
+            ),
+        ]
+        specs, repairs = _build_visible_aliased_repair_specs(cfg, findings)
+        assert len(specs) == 2
+        assert len(repairs) == 2
+        sources = {
+            p.source_entity_id
+            for p in repairs.values()
+            if isinstance(p, VisibleAliasedEntityRepair)
+        }
+        assert sources == {"switch.foo", "switch.bar"}
+
+
+class TestVisibleAliasedRepairBranch:
+    """run_evaluation routes visible-aliased findings to exactly
+    one surface, chosen by ``create_repairs``.
+
+    Mirrors the device-drift one-surface-per-finding split: the
+    aggregate ``{prefix}visible_aliased`` notification and the
+    per-finding repairs are mutually exclusive.
+    """
+
+    _AGG_ID = "entity_defaults_watchdog_test__visible_aliased"
+
+    def _run(
+        self,
+        cfg: Config,
+    ) -> tuple[list[helpers.PersistentNotification], dict[str, EdwRepair]]:
+        ev = run_evaluation(
+            cfg,
+            devices=[],
+            deviceless_entities=[],
+            peers_by_domain={},
+            all_integrations=[],
+            max_notifications=100,
+            visible_aliased_infos=[_vinfo(source_entity_id="switch.foo")],
+        )
+        return ev.notifications, ev.repairs
+
+    def _repair_specs(
+        self,
+        notifications: list[helpers.PersistentNotification],
+    ) -> list[helpers.PersistentNotification]:
+        out: list[helpers.PersistentNotification] = []
+        for n in notifications:
+            cb = n.repair_callback
+            if cb is not None and cb.service_name == (
+                FixServices.VISIBLE_ALIASED_ENTITY.value
+            ):
+                out.append(n)
+        return out
+
+    def test_repairs_on_emits_repair_not_aggregate(self) -> None:
+        notifications, repairs = self._run(_config(create_repairs=True))
+        repair_specs = self._repair_specs(notifications)
+        assert len(repair_specs) == 1
+        # The aggregate bucket notification is suppressed --
+        # not even an inactive slot; the sweep clears any prior.
+        assert not [
+            n for n in notifications if n.notification_id == self._AGG_ID
+        ]
+        assert any(
+            isinstance(p, VisibleAliasedEntityRepair) for p in repairs.values()
+        )
+
+    def test_repairs_off_emits_aggregate_not_repair(self) -> None:
+        notifications, repairs = self._run(_config(create_repairs=False))
+        assert self._repair_specs(notifications) == []
+        agg = [n for n in notifications if n.notification_id == self._AGG_ID]
+        assert len(agg) == 1
+        assert agg[0].active is True
+        assert not any(
+            isinstance(p, VisibleAliasedEntityRepair) for p in repairs.values()
+        )
+
+    def test_check_disabled_emits_neither(self) -> None:
+        cfg = _config(
+            create_repairs=True,
+            drift_checks=frozenset(
+                {DRIFT_CHECK_DEVICE_ENTITY_ID},
+            ),
+        )
+        notifications, repairs = self._run(cfg)
+        assert self._repair_specs(notifications) == []
+        assert not any(
+            isinstance(p, VisibleAliasedEntityRepair) for p in repairs.values()
+        )
+
+    def test_excluded_source_yields_no_repair(self) -> None:
+        cfg = _config(
+            create_repairs=True,
+            exclude_entity_ids=["switch.foo"],
+        )
+        notifications, repairs = self._run(cfg)
+        assert self._repair_specs(notifications) == []
+        assert not any(
+            isinstance(p, VisibleAliasedEntityRepair) for p in repairs.values()
+        )
 
 
 if __name__ == "__main__":

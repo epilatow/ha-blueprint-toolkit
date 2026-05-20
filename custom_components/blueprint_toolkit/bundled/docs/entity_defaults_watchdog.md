@@ -275,19 +275,23 @@ scan.
 
 When **Create repairs for fixable findings** is enabled (default), each drift
 finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
-button instead of as a persistent notification. Two finding categories
+button instead of as a persistent notification. Three finding categories
 convert:
 
 - **Entity-ID drift** -- "rename `<entity_id>` to `<default_entity_id>`".
   Submit calls the entity registry's rename API.
 - **Entity-name drift** -- "reset friendly name on `<entity_id>` from
   `<current>` to `<default>`". Submit clears the user-set name override.
+- **Visible aliased entity** -- "re-hide `<source_entity_id>`". One repair per
+  flagged `switch_as_x` source whose row is still visible; Submit sets
+  `hidden_by=integration` on the source, restoring the original wrapper
+  behaviour. With the toggle off, these instead surface as the single
+  aggregate visible-aliased notification.
 
-Other drift categories (unmatched include / exclude directives, visible
-aliased entities, etc.) continue to surface as notifications regardless of the
-toggle. The per-device summary notification keeps its grouped body so users
-who want the full list still get it; the per-entity repair issues run
-alongside.
+Other drift categories (unmatched include / exclude directives, etc.) continue
+to surface as notifications regardless of the toggle. The per-device summary
+notification keeps its grouped body so users who want the full list still get
+it; the per-entity repair issues run alongside.
 
 The repair issue auto-clears once the underlying drift is resolved (next scan
 sees the entity at its default ID / name and the dispatcher's sweep removes
