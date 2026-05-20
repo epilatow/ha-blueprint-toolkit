@@ -136,6 +136,14 @@ device name + ID drift)</li>
 <td>Cap on per-device notifications. Default 10. 0 = unlimited.</td>
 </tr>
 <tr>
+<td>Create repairs for fixable findings</td>
+<td>Default on. Routes entity-ID drift and entity-name drift findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Other findings keep using notifications. See <strong>Repairs</strong> below.</td>
+</tr>
+<tr>
+<td>Max repairs</td>
+<td>Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when <strong>Create repairs</strong> is on.</td>
+</tr>
+<tr>
 <td>Validate include / exclude directives</td>
 <td>Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See <strong>Unmatched include / exclude directives</strong> below.</td>
 </tr>
@@ -317,6 +325,33 @@ or remove the stale entry and the notification clears on the next scan. The
 notification is informational, not a config error. Disable the toggle to skip
 the check; any prior unmatched-directives notification dismisses on the next
 scan.</p>
+<h3>Repairs</h3>
+<p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each drift
+finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
+button instead of as a persistent notification. Two finding categories
+convert:</p>
+<ul>
+<li><strong>Entity-ID drift</strong> -- &quot;rename <code>&lt;entity_id&gt;</code> to <code>&lt;default_entity_id&gt;</code>&quot;.
+Submit calls the entity registry's rename API.</li>
+<li><strong>Entity-name drift</strong> -- &quot;reset friendly name on <code>&lt;entity_id&gt;</code> from
+<code>&lt;current&gt;</code> to <code>&lt;default&gt;</code>&quot;. Submit clears the user-set name override.</li>
+</ul>
+<p>Other drift categories (unmatched include / exclude directives, visible
+aliased entities, etc.) continue to surface as notifications regardless of the
+toggle. The per-device summary notification keeps its grouped body so users
+who want the full list still get it; the per-entity repair issues run
+alongside.</p>
+<p>The repair issue auto-clears once the underlying drift is resolved (next scan
+sees the entity at its default ID / name and the dispatcher's sweep removes
+the stale issue).</p>
+<p><strong>Cap.</strong> Repairs are not bulk-dismissable in HA's UI, so the <strong>Max repairs</strong>
+input limits per-run issue count (default 5; 0 = unlimited). When the cap is
+exceeded, a single cap-summary persistent notification surfaces telling the
+user how many findings were suppressed; raise the cap or fix the visible
+issues to surface more. The summary uses a regular notification (not a repair)
+so it can be dismissed in bulk from the notifications panel.</p>
+<p>Disable <strong>Create repairs</strong> to keep notification-only behavior on this
+instance.</p>
 <h2>Developer notes</h2>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to

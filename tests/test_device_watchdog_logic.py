@@ -30,7 +30,9 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     DeviceEntry,
     DeviceInfo,
     DirectiveInputs,
+    DisabledDiagnosticsRepair,
     EntityInfo,
+    FixServices,
     RegistryEntry,
     _build_notification_message,
     _check_staleness,
@@ -43,7 +45,9 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     run_evaluation,
 )
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
+    FixService,
     PersistentNotification,
+    repair_notification_id,
     validate_and_join_regex_patterns,
 )
 
@@ -765,7 +769,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Last seen"]
+        assert [d.original_name for d in result] == ["Last seen"]
 
     def test_enabled_entity_not_flagged(self) -> None:
         entries = [
@@ -846,7 +850,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Last seen", "Node status"]
+        assert [d.original_name for d in result] == ["Last seen", "Node status"]
 
     def test_partial_disabled(self) -> None:
         entries = [
@@ -863,7 +867,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Node status"]
+        assert [d.original_name for d in result] == ["Node status"]
 
     def test_unifiprotect_disabled_flagged(self) -> None:
         entries = [
@@ -882,7 +886,7 @@ class TestCheckDisabledDiagnostics:
             "unifiprotect",
             entries,
         )
-        assert result == ["Wi-Fi signal strength"]
+        assert [d.original_name for d in result] == ["Wi-Fi signal strength"]
 
     def test_zwave_js_signal_strength_flagged(self) -> None:
         entries = [
@@ -896,7 +900,7 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert result == ["Signal strength"]
+        assert [d.original_name for d in result] == ["Signal strength"]
 
     def test_zwave_js_signal_strength_clean(self) -> None:
         entries = [
@@ -920,9 +924,10 @@ class TestCheckDisabledDiagnostics:
             platform="bthome",
             disabled=True,
         )
-        assert check_disabled_diagnostics("bthome", [bthome]) == [
-            "Signal strength",
-        ]
+        assert [
+            d.original_name
+            for d in check_disabled_diagnostics("bthome", [bthome])
+        ] == ["Signal strength"]
 
         # shelly: "Signal strength" is NOT in shelly's list
         # ("RSSI" is). Disabled match must NOT flag, even
@@ -969,10 +974,13 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
-        assert "Last seen" in results[0].message
+        # Notification lists each entity as
+        # ``- `<entity_id>` (<original_name>)`` -- same text
+        # as the repair's entities placeholder.
+        assert "- `sensor.test` (Last seen)" in results[0].message
         assert "Front Door Lock" in results[0].title
 
     def test_zwave_js_signal_strength_end_to_end(
@@ -988,7 +996,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
         assert "Signal strength" in results[0].message
@@ -1007,7 +1015,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         body_lines = results[0].message.split("\n")
         assert body_lines[0] == (
             "Device: [Front Door Lock](/config/devices/device/abc)"
@@ -1025,7 +1033,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         body = results[0].message
         assert "Enable in [Settings > Devices]" not in body
         assert "for better health monitoring" not in body
@@ -1042,12 +1050,18 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert results[0].title == "Front Door Lock"
 
-    def test_device_all_enabled_dismisses(
+    def test_device_all_enabled_emits_nothing(
         self,
     ) -> None:
+        # A device whose recommended diagnostics are all
+        # enabled produces no spec; the dispatcher's prefix
+        # sweep dismisses any prior-run notification / issue
+        # for it. (Previously this emitted an explicit
+        # inactive dismiss spec; the sweep makes that
+        # redundant.)
         device = self._diag_device(
             registry_entries=[
                 _reg_entry(
@@ -1056,9 +1070,9 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
-        assert len(results) == 1
-        assert results[0].active is False
+        results, repairs = evaluate_diagnostics(_config(), [device])
+        assert results == []
+        assert repairs == {}
 
     def test_notification_id_uses_device_id(
         self,
@@ -1072,7 +1086,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert results[0].notification_id == (
             "device_watchdog_test__diag_abc123"
         )
@@ -1088,7 +1102,7 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert isinstance(
             results[0],
             PersistentNotification,
@@ -1100,7 +1114,7 @@ class TestEvaluateDiagnostics:
         device = self._diag_device(
             integrations=["unknown_integration"],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert results == []
 
     def test_mixed_known_and_unknown_integrations(
@@ -1118,9 +1132,150 @@ class TestEvaluateDiagnostics:
                 ),
             ],
         )
-        results = evaluate_diagnostics(_config(), [device])
+        results, _ = evaluate_diagnostics(_config(), [device])
         assert len(results) == 1
         assert results[0].active is True
+
+
+class TestEvaluateDiagnosticsRepairs:
+    """evaluate_diagnostics with create_repairs=True.
+
+    Asserts the repair surface: a single per-device repair-
+    carrying spec, the matching off-wire payload keyed by
+    notification_id, and the issue-ID format.
+    """
+
+    def _diag_device(
+        self,
+        device_id: str = "dev1",
+        device_name: str = "Lock",
+        registry_entries: list[RegistryEntry] | None = None,
+    ) -> DeviceInfo:
+        return DeviceInfo(
+            de=DeviceEntry(
+                id=device_id,
+                name=device_name,
+                default_name=device_name,
+                integration_entities={"zwave_js": set()},
+            ),
+            registry_entries=registry_entries or [],
+        )
+
+    def _device_two_disabled(self) -> DeviceInfo:
+        return self._diag_device(
+            device_id="abc",
+            device_name="Front Door Lock",
+            registry_entries=[
+                _reg_entry(
+                    entity_id="sensor.last_seen",
+                    original_name="Last seen",
+                    disabled=True,
+                ),
+                _reg_entry(
+                    entity_id="sensor.signal_strength",
+                    original_name="Signal strength",
+                    disabled=True,
+                ),
+            ],
+        )
+
+    def test_emits_single_repair_spec_per_device(self) -> None:
+        results, _ = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [self._device_two_disabled()],
+        )
+        assert len(results) == 1
+        spec = results[0]
+        assert isinstance(spec.repair_callback, FixService)
+        assert spec.active is True
+
+    def test_repair_spec_id_and_callback_match(self) -> None:
+        cfg = _config(create_repairs=True)
+        results, _ = evaluate_diagnostics(cfg, [self._device_two_disabled()])
+        spec = results[0]
+        expected_id = repair_notification_id(
+            cfg.notification_prefix,
+            FixServices.DEVICE_DISABLED_DIAGNOSTICS,
+            "abc",
+        )
+        assert spec.notification_id == expected_id
+        assert "__repair_" in spec.notification_id
+        assert spec.notification_id.endswith("__abc")
+        assert spec.repair_callback is not None
+        assert spec.repair_callback.notification_id == expected_id
+        assert spec.repair_callback.service_name == (
+            FixServices.DEVICE_DISABLED_DIAGNOSTICS.value
+        )
+
+    def test_translation_placeholders_name_device_and_count(
+        self,
+    ) -> None:
+        results, _ = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [self._device_two_disabled()],
+        )
+        spec = results[0]
+        assert spec.translation_key == "dw_device_disabled_diagnostics"
+        ph = spec.translation_placeholders
+        assert ph is not None
+        assert ph["device_name"] == "Front Door Lock"
+        assert ph["count"] == "2"
+        # entities placeholder lists each affected entity as
+        # ``- `<entity_id>` (<original_name>)`` -- the same
+        # text the notification body uses.
+        assert "- `sensor.last_seen` (Last seen)" in ph["entities"]
+        assert "- `sensor.signal_strength` (Signal strength)" in ph["entities"]
+
+    def test_payload_captures_flagged_entity_set(self) -> None:
+        cfg = _config(create_repairs=True)
+        results, repairs = evaluate_diagnostics(
+            cfg,
+            [self._device_two_disabled()],
+        )
+        nid = results[0].notification_id
+        assert set(repairs) == {nid}
+        payload = repairs[nid]
+        assert isinstance(payload, DisabledDiagnosticsRepair)
+        assert payload.device_id == "abc"
+        assert set(payload.entity_ids) == {
+            "sensor.last_seen",
+            "sensor.signal_strength",
+        }
+
+    def test_device_name_falls_back_to_id(self) -> None:
+        device = self._diag_device(
+            device_id="abc",
+            device_name="",
+            registry_entries=[
+                _reg_entry(
+                    original_name="Last seen",
+                    disabled=True,
+                ),
+            ],
+        )
+        results, _ = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [device],
+        )
+        placeholders = results[0].translation_placeholders
+        assert placeholders is not None
+        assert placeholders["device_name"] == "abc"
+
+    def test_no_disabled_emits_no_repair(self) -> None:
+        device = self._diag_device(
+            registry_entries=[
+                _reg_entry(
+                    original_name="Last seen",
+                    disabled=False,
+                ),
+            ],
+        )
+        results, repairs = evaluate_diagnostics(
+            _config(create_repairs=True),
+            [device],
+        )
+        assert results == []
+        assert repairs == {}
 
 
 class TestNotificationPrefixIsolation:
@@ -1176,8 +1331,12 @@ class TestNotificationPrefixIsolation:
             notification_prefix="device_watchdog_automation_b__",
         )
         dev = self._dev("shared_device")
-        ids_a = {n.notification_id for n in evaluate_diagnostics(cfg_a, [dev])}
-        ids_b = {n.notification_id for n in evaluate_diagnostics(cfg_b, [dev])}
+        ids_a = {
+            n.notification_id for n in evaluate_diagnostics(cfg_a, [dev])[0]
+        }
+        ids_b = {
+            n.notification_id for n in evaluate_diagnostics(cfg_b, [dev])[0]
+        }
         assert ids_a.isdisjoint(ids_b)
 
 

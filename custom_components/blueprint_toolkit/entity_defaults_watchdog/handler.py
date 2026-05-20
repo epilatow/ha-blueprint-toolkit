@@ -18,15 +18,19 @@ pattern):
   collision-suffix scan, notification body assembly)
   runs in the executor via
   ``hass.async_add_executor_job(logic.run_evaluation, ...)``.
-- Three notification slots: per-device drift findings
-  (capped by ``max_device_notifications`` via
-  ``helpers.prepare_notifications``), the cap-summary slot
-  the helper always emits, and a single deviceless
-  aggregate slot. The complete per-instance notification
-  set is sweep-dispatched via
-  ``process_persistent_notifications_with_sweep`` so
-  prior-run notifications no longer present this run get
-  cleaned up.
+- Three finding streams: per-device drift, a single
+  deviceless aggregate, and visible-aliased entities. The
+  logic builds device-attached drift as either repair
+  issues (when ``create_repairs`` is on -- one per drift
+  kind per device) or the aggregate per-device notification
+  (when off, capped by ``max_device_notifications`` via
+  ``helpers.prepare_notifications``) -- never both. The
+  deviceless + visible-aliased streams are notification-only
+  (no automatable fix). The complete per-instance batch is
+  sweep-dispatched via ``process_repairs_with_sweep`` so
+  prior-run findings no longer present this run get cleaned
+  up from both the notification surface and the issue
+  registry.
 """
 
 from __future__ import annotations
@@ -59,8 +63,9 @@ from ..helpers import (
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
     notification_prefix,
-    process_persistent_notifications_with_sweep,
+    process_repairs_with_sweep,
     register_blueprint_handler,
+    register_fix_service,
     resolve_target_integrations,
     schedule_periodic_with_jitter,
     spec_bucket,
@@ -98,6 +103,18 @@ class EdwInstanceState:
     # we can detect blueprint-input changes and re-arm.
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
+    # Per-repair rich payloads, populated by the service
+    # layer on every scan. Keyed by the repair's
+    # ``notification_id``; each value carries everything
+    # the fix service needs to apply (per-entity rename
+    # list, per-entity name-target list, ...). The fix
+    # service looks up by notification_id and applies
+    # verbatim -- no re-scoping at apply time, because the
+    # scan that built this entry already applied the
+    # user's full filter configuration. Empty default
+    # keeps the post-restart window safe: a fix click
+    # before the next scan finds no payload and no-ops.
+    repairs: dict[str, logic.EdwRepair] = field(default_factory=dict)
 
 
 # --------------------------------------------------------
@@ -121,6 +138,10 @@ _SCHEMA = vol.Schema(
             vol.Coerce(int), vol.Range(min=1, max=10080)
         ),
         vol.Required("max_device_notifications_raw"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=1000)
+        ),
+        vol.Required("create_repairs_raw"): cv.boolean,
+        vol.Required("max_repairs_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=1000)
         ),
         vol.Required("validate_includes_excludes_raw"): cv.boolean,
@@ -251,6 +272,8 @@ async def _async_argparse(
         exclude_entity_name_regex_lines=en_regex_result.lines,
         check_interval_minutes=data["check_interval_minutes_raw"],
         max_notifications=data["max_device_notifications_raw"],
+        create_repairs=data["create_repairs_raw"],
+        max_repairs=data["max_repairs_raw"],
         validate_includes_excludes=data["validate_includes_excludes_raw"],
         debug_logging=data["debug_logging_raw"],
     )
@@ -280,6 +303,8 @@ async def _async_service_layer(
     exclude_entity_name_regex_lines: list[JoinedRegexLine],
     check_interval_minutes: int,
     max_notifications: int,
+    create_repairs: bool,
+    max_repairs: int,
     validate_includes_excludes: bool,
     debug_logging: bool,
 ) -> None:
@@ -288,7 +313,6 @@ async def _async_service_layer(
         instance_id,
         EdwInstanceState(instance_id=instance_id),
     )
-
     # Make sure the periodic timer is armed with the
     # current interval (handles first-run + interval
     # changes mid-flight).
@@ -305,6 +329,7 @@ async def _async_service_layer(
         exclude_entity_ids=exclude_entities,
         exclude_entity_id_regex=exclude_entity_id_regex,
         exclude_entity_name_regex=exclude_entity_name_regex,
+        create_repairs=create_repairs,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
     )
@@ -402,16 +427,31 @@ async def _async_service_layer(
         unmatched=ev.unmatched_directives,
     )
 
-    # Sweep so prior-run notifications no longer present
-    # this run (e.g. a device whose drift cleared between
-    # runs) get dismissed automatically. The unmatched-
-    # directives spec is appended outside the per-device
-    # cap so a typo'd exclusion always surfaces.
-    await process_persistent_notifications_with_sweep(
+    # The logic already built the device-attached drift as
+    # either repair-carrying specs (when ``create_repairs``
+    # is on) or the aggregate per-device notification (when
+    # off) -- never both -- inside ``ev.notifications``,
+    # plus the matching per-repair payloads in ``ev.repairs``.
+    # Dispatch the whole batch; the unmatched-directives
+    # spec is appended outside the per-device cap so a
+    # typo'd exclusion always surfaces.
+    published_repair_ids = await process_repairs_with_sweep(
         hass,
         list(ev.notifications) + [unmatched_spec],
         sweep_prefix=notif_prefix,
+        create_repairs=create_repairs,
+        repair_cap=max_repairs,
     )
+    # Keep only payloads for repairs that actually landed in
+    # the issue registry (the dispatcher's cap can suppress
+    # some). An external service-call dispatch against a
+    # notification_id the user can't see in the Repairs panel
+    # should be a no-op, not silently apply a hidden fix.
+    state.repairs = {
+        nid: payload
+        for nid, payload in ev.repairs.items()
+        if nid in published_repair_ids
+    }
 
     # Persist diagnostic state.
     update_instance_state(
@@ -887,9 +927,83 @@ async def async_unregister(
     await unregister_blueprint_handler(hass, entry, _SPEC)
 
 
+# --------------------------------------------------------
+# Repair fix services
+# --------------------------------------------------------
+
+FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in logic.FixServices)
+
+
+def _lookup_repair(
+    hass: HomeAssistant,
+    notification_id: str,
+) -> logic.EdwRepair | None:
+    """Find the per-repair payload across all loaded EDW instances."""
+    for inst in _instances(hass).values():
+        payload = inst.repairs.get(notification_id)
+        if payload is not None:
+            return payload
+    return None
+
+
+async def async_register_fix_services(hass: HomeAssistant) -> None:
+    """Register EDW's per-device repair fix services.
+
+    ``register_fix_service`` owns the shared contract
+    (``notification_id`` schema, idempotent ``has_service``
+    guard, crash-PN wrap, id decoding), so each fix is just
+    ``async def (notification_id: str)``.
+
+    Each fix service looks up its rich payload by
+    ``notification_id`` on the per-instance state. The
+    payload was built at scan time with the user's full
+    filter configuration in scope, so the fix service
+    re-applies the captured mutations verbatim without any
+    re-scoping. A click after restart (instance state lost)
+    or after the next scan removed the finding (payload
+    cleared) finds nothing and no-ops; the issue is
+    rebuilt or swept on the next periodic tick.
+    """
+
+    async def _fix_id_drift(notification_id: str) -> None:
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, logic.DeviceEntityIdDriftRepair):
+            return
+        ent_reg = er.async_get(hass)
+        for entity_id, expected_id in payload.entity_renames:
+            entry = ent_reg.async_get(entity_id)
+            if entry is None or entry.entity_id == expected_id:
+                continue
+            ent_reg.async_update_entity(entity_id, new_entity_id=expected_id)
+
+    async def _fix_name_drift(notification_id: str) -> None:
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, logic.DeviceEntityNameDriftRepair):
+            return
+        ent_reg = er.async_get(hass)
+        for entity_id, target in payload.entity_name_targets:
+            entry = ent_reg.async_get(entity_id)
+            if entry is None or entry.name == target:
+                continue
+            ent_reg.async_update_entity(entity_id, name=target)
+
+    register_fix_service(
+        hass,
+        logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
+        _fix_id_drift,
+    )
+    register_fix_service(
+        hass,
+        logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
+        _fix_name_drift,
+    )
+
+
 __all__ = [
     "BLUEPRINT_PATH",
+    "FIX_SERVICES",
     "EdwInstanceState",
     "async_register",
+    "async_register_fix_services",
     "async_unregister",
 ]

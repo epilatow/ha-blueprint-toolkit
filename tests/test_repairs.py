@@ -11,7 +11,7 @@
 # This is AI generated code
 """Repairs flow tests for blueprint_toolkit.
 
-Two flows under test:
+Flows under test:
 
 - ``install_conflicts``: pre-seed an unrecognized symlink
   at one of our destinations, run setup, verify the
@@ -22,6 +22,12 @@ Two flows under test:
   cannot replace (a directory at a destination), run
   setup, verify the failure issue is created with the
   error text in its data, walk the fix flow.
+- ``WatchdogFixFlow``: seed a watchdog repair issue
+  (``__repair_`` id) carrying flattened ``service_data_*``,
+  walk the confirm flow, and verify the confirm form
+  replays the issue's translation placeholders and Submit
+  dispatches the un-flattened service_data to the stashed
+  service, then clears the issue.
 
 Same import-deferral pattern as tests/test_integration.py
 to avoid pytest-HACC's patch_recorder assertion.
@@ -247,6 +253,147 @@ class TestInstallFailureFlow:
             "regular_dir should surface as a conflict, not a failure, "
             "until the user explicitly Overwrites"
         )
+
+
+class TestWatchdogFixFlow:
+    async def _seed_issue(
+        self,
+        hass: HomeAssistant,
+        issue_id: str,
+        *,
+        service_name: str,
+        service_data: dict[str, Any],
+        translation_placeholders: dict[str, str],
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        from custom_components.blueprint_toolkit.helpers_lifecycle import (
+            _flatten_repair_data,
+        )
+
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="dw_device_disabled_diagnostics",
+            translation_placeholders=translation_placeholders,
+            data=_flatten_repair_data(
+                service_name,
+                service_data,
+            ),
+        )
+
+    async def test_confirm_replays_placeholders_and_dispatches(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.repairs import repairs_flow_manager
+        from homeassistant.core import ServiceCall
+        from homeassistant.setup import async_setup_component
+
+        # Load the integration so the repairs platform's
+        # async_create_fix_flow is discoverable for DOMAIN.
+        entry = _mock_config_entry(domain=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        calls: list[dict[str, Any]] = []
+
+        async def _record(call: ServiceCall) -> None:
+            calls.append(dict(call.data))
+
+        hass.services.async_register(DOMAIN, "fix_test_service", _record)
+
+        issue_id = (
+            "blueprint_toolkit_dw__automation.x__"
+            "repair_device_disabled_diagnostics__abc"
+        )
+        await self._seed_issue(
+            hass,
+            issue_id,
+            service_name="fix_test_service",
+            service_data={"notification_id": issue_id},
+            translation_placeholders={
+                "device_name": "Front Door Lock",
+                "count": "2",
+            },
+        )
+
+        assert await async_setup_component(hass, "repairs", {})
+        await hass.async_block_till_done()
+        manager = repairs_flow_manager(hass)
+        assert manager is not None
+
+        flow = await manager.async_init(
+            DOMAIN,
+            data={"issue_id": issue_id},
+        )
+        assert flow["type"] == "form"
+        assert flow["step_id"] == "confirm"
+        # The confirm modal replays the issue's placeholders
+        # so {device_name} / {count} render rather than the
+        # literal tokens.
+        assert flow["description_placeholders"] == {
+            "device_name": "Front Door Lock",
+            "count": "2",
+        }
+
+        flow = await manager.async_configure(
+            flow["flow_id"],
+            user_input={},
+        )
+        await hass.async_block_till_done()
+
+        # Submit un-flattened the service_data and dispatched
+        # the stashed service with exactly the notification_id.
+        assert calls == [{"notification_id": issue_id}]
+        # Issue cleared on create_entry.
+        assert await _get_issue(hass, issue_id) is None
+
+    async def test_missing_service_name_no_dispatch(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.repairs import repairs_flow_manager
+        from homeassistant.helpers import issue_registry as ir
+        from homeassistant.setup import async_setup_component
+
+        entry = _mock_config_entry(domain=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        issue_id = (
+            "blueprint_toolkit_dw__automation.x__"
+            "repair_device_disabled_diagnostics__noservice"
+        )
+        # No service_name in data: the flow must still close
+        # cleanly without attempting a dispatch.
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="dw_device_disabled_diagnostics",
+            translation_placeholders={},
+            data={},
+        )
+
+        assert await async_setup_component(hass, "repairs", {})
+        await hass.async_block_till_done()
+        manager = repairs_flow_manager(hass)
+        assert manager is not None
+        flow = await manager.async_init(DOMAIN, data={"issue_id": issue_id})
+        flow = await manager.async_configure(
+            flow["flow_id"],
+            user_input={},
+        )
+        await hass.async_block_till_done()
+        assert await _get_issue(hass, issue_id) is None
 
 
 class TestIssueClearedOnCleanReconcile:

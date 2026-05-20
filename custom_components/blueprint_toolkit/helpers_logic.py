@@ -703,9 +703,56 @@ class TypedServiceResponse:
     notification_message: str = ""
 
 
+@dataclass(frozen=True)
+class FixService:
+    """Wire payload for a repair fix service.
+
+    A repair-marked ``PersistentNotification`` carries one
+    of these. ``service_name`` is the HA service the fix
+    flow dispatches to (each handler registers its names
+    from a per-handler ``FixServices`` enum);
+    ``notification_id`` is the repair-issue id the fix
+    service uses to look up its rich payload (entity lists,
+    rename targets, ...) on the handler's instance state.
+
+    Every fix service has the same wire shape -- a service
+    name plus a notification_id -- so a single generic
+    dataclass covers them all. The rich per-repair data
+    stays off the wire (HA's issue registry persists
+    ``data`` as flat JSON primitives only); the
+    notification_id is the key that recovers it.
+    """
+
+    service_name: str
+    notification_id: str
+
+
+def repair_notification_id(
+    notification_prefix: str,
+    service_name: str,
+    device_id: str,
+) -> str:
+    """Build a per-device repair-issue notification_id.
+
+    Injects the ``repair_`` token so the result carries the
+    ``__repair_`` substring that ``repairs.async_create_fix_flow``
+    routes on to pick the watchdog fix flow. Callers pass
+    their ``FixServices`` value + the device id and stay
+    agnostic of the token -- the routing convention is owned
+    here, in the shared helper, not duplicated in each
+    handler's logic.
+
+    Format: ``{notification_prefix}repair_{service_name}__{device_id}``.
+    ``notification_prefix`` already ends in ``__`` (see
+    ``notification_prefix``), so the ``repair_`` injection
+    yields the ``__repair_`` routing substring.
+    """
+    return f"{notification_prefix}repair_{service_name}__{device_id}"
+
+
 @dataclass
 class PersistentNotification:
-    """A persistent notification to create or dismiss.
+    """A persistent notification or repair-issue spec.
 
     ``active=True`` means create (or refresh in place);
     ``active=False`` means dismiss. Pure data so logic
@@ -722,6 +769,40 @@ class PersistentNotification:
     notification builders that originate from a per-
     instance service call should set this; ad-hoc one-off
     notifications can leave it empty.
+
+    ``repair_callback`` opts the spec into the HA Repairs
+    surface. When set to a ``FixService`` instance AND the
+    dispatcher is told ``create_repairs=True``, the spec
+    routes to the issue registry instead of persistent
+    notifications -- the issue's fix flow dispatches
+    ``hass.services.async_call(DOMAIN, fix.service_name,
+    {"notification_id": fix.notification_id})`` when the
+    user clicks Submit. Only the ``notification_id`` goes on
+    the wire (HA's issue registry persists ``data`` as flat
+    JSON primitives); the fix service uses it to look up the
+    rich payload (entity lists, rename targets) it stashed
+    on the handler's instance state at scan time.
+
+    Other ``PersistentNotification`` fields remain
+    meaningful for the issue: ``title`` / ``message`` feed
+    the issue's translation placeholders,
+    ``notification_id`` doubles as the issue ID. Specs with
+    ``repair_callback=None`` always route to persistent
+    notifications regardless of the dispatcher's
+    ``create_repairs`` flag, so a non-repairable finding
+    emitted alongside repairable ones still surfaces
+    correctly.
+
+    ``translation_key`` selects the entry under
+    ``strings.json``'s ``issues:`` block when a spec is
+    routed as a repair issue. Required (non-empty) for
+    every spec with ``repair_callback`` set; ignored for
+    notification-routed specs.
+
+    ``translation_placeholders`` carries dynamic values the
+    selected translation entry interpolates (``{device_name}``,
+    ``{count}``, etc). Ignored for notification-routed
+    specs.
     """
 
     active: bool
@@ -729,6 +810,9 @@ class PersistentNotification:
     title: str
     message: str
     instance_id: str | None = None
+    repair_callback: FixService | None = None
+    translation_key: str = ""
+    translation_placeholders: dict[str, str] | None = None
 
 
 def _config_error_notification_id(service: str, instance_id: str) -> str:
@@ -1275,6 +1359,7 @@ __all__ = [
     "BlueprintHandlerSpec",
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
+    "FixService",
     "IssueNotification",
     "JoinedRegexLine",
     "JoinedRegexResult",
@@ -1309,6 +1394,7 @@ __all__ = [
     "matches_pattern",
     "md_escape",
     "notification_prefix",
+    "repair_notification_id",
     "resolve_target_integrations",
     "script_dashboard_link",
     "script_edit_link",

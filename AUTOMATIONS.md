@@ -301,7 +301,20 @@ Notifications:
 
 - `PersistentNotification` (dataclass) -- spec for create/dismiss;
   `instance_id` field drives the `Automation: [name](edit-link)\n` prefix the
-  dispatcher prepends.
+  dispatcher prepends. Optional `repair_callback` / `translation_key` /
+  `translation_placeholders` fields opt the spec into the Repairs surface (see
+  "Repairs" below).
+- `FixService` (frozen dataclass) -- the wire payload a repair-marked
+  `PersistentNotification` carries: `service_name` (the HA service the fix
+  flow dispatches to) + `notification_id` (the repair-issue id the fix service
+  uses to look up its rich payload). One generic class, not a subclass per fix
+  -- every fix service has the same wire shape. The rich per-repair data
+  (entity lists, rename targets) stays off the wire on the handler's instance
+  state, keyed by `notification_id`; the issue registry's `data` holds only
+  flat JSON primitives (the service name + that id), which the fix flow
+  reconstructs into the service call. Each handler's `logic.py` defines a
+  `FixServices(StrEnum)` of its service names and builds `FixService`
+  instances directly.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active
@@ -311,6 +324,13 @@ Notifications:
 - `process_persistent_notifications_with_sweep(...)` -- sweep variant;
   dismisses any prior-run notifications matching `sweep_prefix` not in the
   current batch.
+- `process_repairs_with_sweep(...)` -- routes a per-instance batch by
+  `repair_callback`. Kwargs: `sweep_prefix`, `create_repairs: bool`,
+  `repair_cap: int = 0`. With `create_repairs=False` repair-marked specs drop
+  entirely (the logic builds the finding as a `repair_callback=None`
+  notification spec instead); with `True` they route to the issue registry
+  while non-repair specs continue to the notification path. See "Repairs"
+  below.
 - `make_config_error_notification(...)` -- builder; `md_escape`s every error
   bullet; empty errors -> dismiss spec.
 - `emit_config_error(...)` -- builder + dispatcher convenience wrapper; safe
@@ -503,9 +523,10 @@ state write, action dispatch, debug log, response), and the canonical order
 across the integration is:
 
 1. **Sweep PNs.** Dispatch the per-instance persistent-notification set for
-   this run via `process_persistent_notifications_with_sweep`. Clears stale
-   config-error / per-finding entries from prior runs and emits the current
-   findings.
+   this run via `process_persistent_notifications_with_sweep` (or
+   `process_repairs_with_sweep` when the handler emits a mix of repair +
+   notification specs -- EDW + DW). Clears stale config-error / per-finding
+   entries from prior runs and emits the current findings.
 2. **Update state.** Write the diagnostic state entity via
    `update_instance_state`. Records what we did this run.
 3. **Action dispatch.** `homeassistant.turn_on` / `turn_off` / etc, for
@@ -678,14 +699,7 @@ against that field).
   `instance_id=<the automation entity_id>`.** The dispatcher uses it to
   prepend `Automation: [name](edit-link)\n` to every active notification body
   so users can click through to the automation that emitted the notification;
-  an unset `instance_id` silently skips the prefix. Concretely:
-  `make_config_error_notification` does it for you (just pass `instance_id=`
-  to the wrapper). For other categories you build directly (multi-category
-  handlers like RW: per-owner, source-orphans summary; ZRM: api_unavailable,
-  apply\_<node>, timeout\_\<...>, circuit_breaker), pass
-  `instance_id=instance_id` to every `PersistentNotification(...)` call. For
-  `prepare_notifications`, pass `instance_id=instance_id` so the cap-summary
-  spec gets stamped too.
+  an unset `instance_id` silently skips the prefix.
 - **Apply `helpers.md_escape(...)` to every user-controlled string going into
   a notification body.** Persistent notifications render through
   `<ha-markdown>`, so stray `[` / `]` / `\` in body text can corrupt the
@@ -703,6 +717,11 @@ against that field).
   handler: `__config_error` (schema / cross-field validation failure; managed
   by `emit_config_error`) and `__crash` (unhandled handler exception; managed
   by `register_blueprint_handler`). Other `{kind}` values are per-handler.
+  Repair fix-service crashes (registered directly via
+  `hass.services.async_register`, not through `register_blueprint_handler`)
+  use a separate scheme: `blueprint_toolkit__{service_name}__crash__{target}`
+  (no `instance_id`; the crash means the fix service is broken, not the
+  automation that emitted the repair).
 - **Pick the right dispatcher.** `process_persistent_notifications_with_sweep`
   is the right choice when the caller is asserting the COMPLETE per-instance
   notification state for this run -- it dismisses any prior-run notifications
@@ -711,6 +730,69 @@ against that field).
   notification ID (e.g. `emit_config_error` against a fixed `__config_error`
   slot), so the call doesn't collateral-dismiss findings emitted by other
   categories.
+
+## Repairs
+
+Findings whose fix is deterministic + automatable can route to HA's Repairs UI
+as one-click Fix issues instead of as persistent notifications.
+
+- **One surface per finding.** The logic chooses notification-vs-repair at
+  build time from `config.create_repairs`, so a fixable finding is emitted on
+  exactly one surface -- never both. With `create_repairs` on, the finding
+  becomes a repair-carrying `PersistentNotification` (`repair_callback` set +
+  `translation_key` + `translation_placeholders`); with it off, the same
+  finding renders as the per-device notification body. The per-backend sweep
+  clears the other surface when the toggle flips.
+- **Repair spec.** `PersistentNotification.repair_callback` (a `FixService` or
+  `None`) is what marks a spec as a repair. The `FixService` (see "Shared
+  helpers") carries the service name + the repair's `notification_id`; the
+  rich per-repair payload (entity lists, rename targets) lives on the
+  handler's instance state keyed by that id.
+- **Dispatcher.** `process_repairs_with_sweep` replaces
+  `process_persistent_notifications_with_sweep` for handlers emitting fixable
+  findings. Specs with `repair_callback` route to the issue registry when
+  `create_repairs=True` (else they're dropped -- the logic doesn't build them
+  in that case); plain specs route to notifications. The per-instance sweep
+  removes prior-run issues / notifications under the prefix not in the current
+  batch from their respective backend. Returns the set of published repair
+  `notification_id`s so handlers can prune their per-repair state to what's
+  reachable.
+- **Cap.** `repair_cap > 0` keeps the visible repair count manageable (HA's
+  Repairs UI has no bulk-dismiss). Specs above the cap coalesce into a single
+  per-instance cap-summary **notification** -- not a repair issue --
+  (`{prefix}cap_summary`). The cap-summary slot is always dispatched (active
+  when over cap, inactive otherwise) so a previously-active summary
+  auto-dismisses when the next run is back under cap.
+- **Fix services.** Each repairable finding kind backs a per-device service
+  registered from each handler's `async_register_fix_services` via the shared
+  `helpers.register_fix_service(hass, service_name, handler)`, which owns the
+  whole fix-service contract: the `notification_id` schema, the idempotent
+  `has_service` guard, the crash-PN wrap, and decoding the id out of the
+  `ServiceCall`. A handler supplies only
+  `async def (notification_id: str) -> None`. The logic builds the repair
+  specs plus the rich payloads; the fix service looks up its payload by
+  `notification_id` and applies it verbatim (no re-scoping -- the scan that
+  built the payload had the user's full filter configuration in scope).
+  Per-device grouping: a device with N drifted entities is one Submit, not N
+  (EDW emits up to two, one per drift kind).
+- **Issue ID format.**
+  `blueprint_toolkit_{service}__{instance_id}__repair_{fix_service_name}__{device_id}`
+  -- the same `__` separator convention as notifications, built via the shared
+  `helpers.repair_notification_id(notification_prefix, fix_service_name, device_id)`.
+  That helper injects the `repair_` token (callers pass their `FixServices`
+  value + device id and stay agnostic of it), so the resulting id carries the
+  `__repair_` substring that `repairs.async_create_fix_flow` routes on to pick
+  the `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
+  `InstallFailureFlow`.
+- **Translations.** Each repair spec sets `translation_key=<kind>`; the
+  entries in `strings.json` / `translations/en.json` carry the user-visible
+  title + description with `{placeholder}` fields filled via
+  `translation_placeholders`. Every fixable finding passes an `{entities}`
+  placeholder -- a markdown list of the affected entities the confirm modal
+  renders, mirroring the per-device notification body. The list shows
+  `old -> new` for renames (EDW id-drift entity IDs, EDW name-drift names) and
+  `` `<entity_id>` (<name>) `` for DW disabled diagnostics; the DW
+  notification body and repair use identical entity-line text.
 
 ## URL generation
 

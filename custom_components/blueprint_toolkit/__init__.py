@@ -302,6 +302,13 @@ async def async_setup_entry(
     await dw_handler.async_register(hass, entry)
     await stsc_handler.async_register(hass, entry)
 
+    # Per-handler repair fix services. Each watchdog owns
+    # its own ``FixServices`` enum + the backing
+    # ``hass.services.async_register`` calls; this module
+    # just orchestrates the per-handler registration pass.
+    await edw_handler.async_register_fix_services(hass)
+    await dw_handler.async_register_fix_services(hass)
+
     # Conflicts surface to the user via Repairs rather
     # than by failing the setup. Real install errors raise
     # an OSError inside the executor job which propagates
@@ -334,6 +341,12 @@ async def async_unload_entry(
     await edw_handler.async_unregister(hass, entry)
     await dw_handler.async_unregister(hass, entry)
     await stsc_handler.async_unregister(hass, entry)
+    for service in (
+        *edw_handler.FIX_SERVICES,
+        *dw_handler.FIX_SERVICES,
+    ):
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)
     return True
 
 

@@ -126,6 +126,14 @@ the blueprint once per check)</li>
 <td>Cap on per-device notifications. Default 10. 0 = unlimited.</td>
 </tr>
 <tr>
+<td>Create repairs for fixable findings</td>
+<td>Default on. Routes disabled-diagnostic-entity findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. See <strong>Repairs</strong> below.</td>
+</tr>
+<tr>
+<td>Max repairs</td>
+<td>Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when <strong>Create repairs</strong> is on.</td>
+</tr>
+<tr>
 <td>Validate include / exclude directives</td>
 <td>Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See <strong>Unmatched include / exclude directives</strong> below.</td>
 </tr>
@@ -159,6 +167,25 @@ or remove the stale entry and the notification clears on the next scan. The
 notification is informational, not a config error. Disable the toggle to skip
 the check; any prior unmatched-directives notification dismisses on the next
 scan.</p>
+<h3>Repairs</h3>
+<p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each
+disabled-recommended-diagnostic-entity finding surfaces as an HA Repair with a
+one-click Fix button instead of (or alongside) the per-device summary
+notification. Submit clears <code>disabled_by</code> on the named entity so it goes back
+to monitoring.</p>
+<p>Other finding categories (unavailable / stale devices) keep using
+notifications regardless of the toggle -- those don't have a deterministic
+single-click fix.</p>
+<p>The repair issue auto-clears once the entity is re-enabled (next scan no
+longer flags it and the dispatcher's sweep removes the stale issue).</p>
+<p><strong>Cap.</strong> Repairs are not bulk-dismissable in HA's UI, so the <strong>Max repairs</strong>
+input limits per-run issue count (default 5; 0 = unlimited). When the cap is
+exceeded, a single cap-summary persistent notification surfaces telling the
+user how many findings were suppressed; raise the cap or fix the visible
+issues to surface more. The summary uses a regular notification (not a repair)
+so it can be dismissed in bulk from the notifications panel.</p>
+<p>Disable <strong>Create repairs</strong> to keep notification-only behavior on this
+instance.</p>
 <h2>Developer notes</h2>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to

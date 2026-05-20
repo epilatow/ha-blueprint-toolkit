@@ -248,6 +248,14 @@ class TestSetupEntry:
             "entity_defaults_watchdog",
             "device_watchdog",
             "sensor_threshold_switch_controller",
+            # Per-device repair fix services. Listed
+            # explicitly so a future refactor that drops
+            # one from ``async_register_fix_services`` is
+            # caught here (otherwise the subset-check
+            # would silently pass).
+            "fix_edw_device_entity_id_drift",
+            "fix_edw_device_entity_name_drift",
+            "fix_dw_device_disabled_diagnostics",
         }
         registered = set(hass.services.async_services().get(DOMAIN, {}))
         missing = expected - registered

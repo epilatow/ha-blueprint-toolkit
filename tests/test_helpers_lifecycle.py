@@ -48,6 +48,7 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
+import voluptuous as vol  # noqa: E402
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -133,6 +134,80 @@ _ha_components_hassio.get_addons_info = lambda _hass: None  # type: ignore[attr-
 _ha_helpers_hassio = types.ModuleType("homeassistant.helpers.hassio")
 _ha_helpers_hassio.is_hassio = lambda _hass: False  # type: ignore[attr-defined]
 
+
+# Mock issue_registry so process_repairs_with_sweep's
+# late-import succeeds during test runs. Tests use
+# monkeypatch on these stubs to drive routing assertions.
+class _IssueSeverity:  # noqa: D101
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass
+class _StubIssue:
+    domain: str
+    issue_id: str
+
+
+@dataclass
+class _StubIssueRegistry:
+    issues: dict[tuple[str, str], _StubIssue] = field(
+        default_factory=dict,
+    )
+
+
+_ISSUE_REGISTRY = _StubIssueRegistry()
+_CREATE_ISSUE_CALLS: list[dict[str, Any]] = []
+_DELETE_ISSUE_CALLS: list[tuple[str, str]] = []
+
+
+def _ir_async_create_issue(
+    _hass: Any,
+    domain: str,
+    issue_id: str,
+    *,
+    is_fixable: bool = False,
+    severity: str = "",
+    translation_key: str = "",
+    translation_placeholders: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    _CREATE_ISSUE_CALLS.append(
+        {
+            "domain": domain,
+            "issue_id": issue_id,
+            "is_fixable": is_fixable,
+            "severity": severity,
+            "translation_key": translation_key,
+            "translation_placeholders": translation_placeholders or {},
+            "data": data or {},
+        },
+    )
+    _ISSUE_REGISTRY.issues[(domain, issue_id)] = _StubIssue(
+        domain=domain,
+        issue_id=issue_id,
+    )
+
+
+def _ir_async_delete_issue(
+    _hass: Any,
+    domain: str,
+    issue_id: str,
+) -> None:
+    _DELETE_ISSUE_CALLS.append((domain, issue_id))
+    _ISSUE_REGISTRY.issues.pop((domain, issue_id), None)
+
+
+def _ir_async_get(_hass: Any) -> _StubIssueRegistry:
+    return _ISSUE_REGISTRY
+
+
+_ha_helpers_ir = types.ModuleType("homeassistant.helpers.issue_registry")
+_ha_helpers_ir.IssueSeverity = _IssueSeverity  # type: ignore[attr-defined]
+_ha_helpers_ir.async_create_issue = _ir_async_create_issue  # type: ignore[attr-defined]
+_ha_helpers_ir.async_delete_issue = _ir_async_delete_issue  # type: ignore[attr-defined]
+_ha_helpers_ir.async_get = _ir_async_get  # type: ignore[attr-defined]
+
 sys.modules["homeassistant"] = _ha
 sys.modules["homeassistant.components"] = _ha_components
 sys.modules["homeassistant.components.automation"] = _ha_components_automation
@@ -143,6 +218,7 @@ sys.modules["homeassistant.helpers"] = _ha_helpers
 sys.modules["homeassistant.helpers.entity_registry"] = _ha_helpers_er
 sys.modules["homeassistant.helpers.event"] = _ha_helpers_event
 sys.modules["homeassistant.helpers.hassio"] = _ha_helpers_hassio
+sys.modules["homeassistant.helpers.issue_registry"] = _ha_helpers_ir
 
 from custom_components.blueprint_toolkit import (  # noqa: E402
     helpers,
@@ -2252,6 +2328,542 @@ class TestFileEditorAddonIngressUrl:
             helpers.file_editor_addon_ingress_url(self._hass())
             == "/api/hassio_ingress/abc123/"
         )
+
+
+class TestProcessRepairsWithSweep:
+    """Routing + cap + sweep behaviour for the repairs dispatcher."""
+
+    def setup_method(self) -> None:
+        _ISSUE_REGISTRY.issues.clear()
+        _CREATE_ISSUE_CALLS.clear()
+        _DELETE_ISSUE_CALLS.clear()
+
+    def _hass(self) -> _MockHass:
+        return _MockHass()
+
+    def _repair(
+        self,
+        notification_id: str,
+        translation_key: str = "fake_fix",
+    ) -> helpers.PersistentNotification:
+        return helpers.PersistentNotification(
+            active=True,
+            notification_id=notification_id,
+            title="",
+            message="",
+            translation_key=translation_key,
+            translation_placeholders={"device_name": "Foo", "count": "1"},
+            repair_callback=helpers.FixService(
+                service_name="fake_fix",
+                notification_id=notification_id,
+            ),
+        )
+
+    def _notif(
+        self,
+        notification_id: str,
+    ) -> helpers.PersistentNotification:
+        return helpers.PersistentNotification(
+            active=True,
+            notification_id=notification_id,
+            title="Title",
+            message="Body",
+            instance_id="automation.test",
+        )
+
+    @pytest.mark.asyncio
+    async def test_toggle_off_drops_repair_specs(self) -> None:
+        # The plan + user doc both promise toggle-off keeps
+        # today's behavior. Repair specs (with empty
+        # title / message because their visible content lives
+        # in the issue's translation strings) MUST NOT route
+        # to the notification backend or the user sees blank
+        # notifications.
+        hass = self._hass()
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [
+                self._repair("blueprint_toolkit_x__a__repair_e1"),
+                self._notif("blueprint_toolkit_x__a__device_d1"),
+            ],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=False,
+        )
+        assert _CREATE_ISSUE_CALLS == []
+        # Only the per-device notification reached the
+        # persistent_notification surface; the repair spec
+        # was dropped silently.
+        notif_create_data = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        ids = {data["notification_id"] for data in notif_create_data}
+        assert "blueprint_toolkit_x__a__device_d1" in ids
+        assert "blueprint_toolkit_x__a__repair_e1" not in ids
+
+    @pytest.mark.asyncio
+    async def test_toggle_on_routes_repair_specs_to_issues(self) -> None:
+        hass = self._hass()
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [
+                self._repair("blueprint_toolkit_x__a__repair_e1"),
+                self._notif("blueprint_toolkit_x__a__device_d1"),
+            ],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert "blueprint_toolkit_x__a__repair_e1" in repair_ids
+        # Per-device summary still reaches notifications.
+        notif_create_data = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        ids = {data["notification_id"] for data in notif_create_data}
+        assert "blueprint_toolkit_x__a__device_d1" in ids
+
+    @pytest.mark.asyncio
+    async def test_repair_cap_emits_cap_summary(self) -> None:
+        hass = self._hass()
+        specs = [
+            self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
+            for i in range(7)
+        ]
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            specs,
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+            repair_cap=3,
+        )
+        # 3 visible repair findings; the cap-summary lives on
+        # the notification surface, not in the issue registry
+        # (Repairs has no "Dismiss all" and the summary isn't
+        # automatable).
+        repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert len(repair_ids) == 3
+        assert "blueprint_toolkit_x__a__cap_summary" not in repair_ids
+        notif_create_data = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        cap_notif = next(
+            data
+            for data in notif_create_data
+            if data["notification_id"] == "blueprint_toolkit_x__a__cap_summary"
+        )
+        assert "4 additional repairable findings" in cap_notif["title"]
+        assert "`3`" in cap_notif["message"]
+        assert "`max_repairs`" in cap_notif["message"]
+
+    @pytest.mark.asyncio
+    async def test_repair_cap_picks_deterministic_subset(self) -> None:
+        # Caller-side iteration order on the inputs is not
+        # guaranteed (the per-handler spec builders walk
+        # registry / device dicts). The dispatcher must sort
+        # by notification_id before applying the cap so the
+        # visible / suppressed split stays reproducible
+        # across runs and so caller refactors that change
+        # iteration order can't silently shift which
+        # findings the user sees.
+        hass = self._hass()
+        scrambled = [
+            self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
+            for i in (5, 2, 0, 6, 3, 1, 4)
+        ]
+        published = await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            scrambled,
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+            repair_cap=3,
+        )
+        repair_ids = sorted(c["issue_id"] for c in _CREATE_ISSUE_CALLS)
+        assert repair_ids == [
+            "blueprint_toolkit_x__a__repair_e0",
+            "blueprint_toolkit_x__a__repair_e1",
+            "blueprint_toolkit_x__a__repair_e2",
+        ]
+        # The return value tracks what landed in the issue
+        # registry -- the suppressed-by-cap entries are
+        # excluded so callers can prune any per-repair side
+        # data they keep on the instance state.
+        assert published == {
+            "blueprint_toolkit_x__a__repair_e0",
+            "blueprint_toolkit_x__a__repair_e1",
+            "blueprint_toolkit_x__a__repair_e2",
+        }
+
+    @pytest.mark.asyncio
+    async def test_toggle_off_returns_empty_published_set(self) -> None:
+        # ``create_repairs=False`` drops every repair-marked
+        # spec; the return value must reflect that so callers
+        # don't keep stale payloads on instance state for
+        # repairs that didn't actually go anywhere.
+        hass = self._hass()
+        published = await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair("blueprint_toolkit_x__a__repair_e1")],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=False,
+        )
+        assert published == set()
+
+    @pytest.mark.asyncio
+    async def test_repair_cap_zero_unlimited(self) -> None:
+        hass = self._hass()
+        specs = [
+            self._repair(f"blueprint_toolkit_x__a__repair_e{i}")
+            for i in range(20)
+        ]
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            specs,
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+            repair_cap=0,
+        )
+        # All 20 reach the issue registry. The cap-summary
+        # never surfaces on either backend: cap=0 means no
+        # cap can apply, the dispatcher emits an inactive
+        # (dismiss) spec for the slot, and
+        # ``process_persistent_notifications`` no-ops a
+        # dismiss against an ID that isn't currently active.
+        repair_ids = {c["issue_id"] for c in _CREATE_ISSUE_CALLS}
+        assert len(repair_ids) == 20
+        assert "blueprint_toolkit_x__a__cap_summary" not in repair_ids
+        notif_create_ids = {
+            data["notification_id"]
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        }
+        assert "blueprint_toolkit_x__a__cap_summary" not in notif_create_ids
+
+    @pytest.mark.asyncio
+    async def test_sweep_deletes_stale_issues(self) -> None:
+        # Pre-populate the issue registry with a prior-run
+        # finding under the per-instance prefix; current run
+        # only has spec for ``e1``. ``e_old`` should
+        # async_delete_issue.
+        hass = self._hass()
+        _ISSUE_REGISTRY.issues[
+            (DOMAIN, "blueprint_toolkit_x__a__repair_e_old")
+        ] = _StubIssue(
+            domain=DOMAIN,
+            issue_id="blueprint_toolkit_x__a__repair_e_old",
+        )
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair("blueprint_toolkit_x__a__repair_e1")],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        deleted_ids = {iid for _, iid in _DELETE_ISSUE_CALLS}
+        assert "blueprint_toolkit_x__a__repair_e_old" in deleted_ids
+
+    @pytest.mark.asyncio
+    async def test_issue_data_is_json_primitive_only(self) -> None:
+        hass = self._hass()
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair("blueprint_toolkit_x__a__repair_e1")],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        import json
+
+        for call in _CREATE_ISSUE_CALLS:
+            # JSON round-trip MUST succeed -- HA's issue
+            # registry persists data via .storage JSON.
+            json.dumps(call["data"])
+
+
+class TestFixServiceCrashNotification:
+    """Tests for the per-(service, target) crash PN helpers.
+
+    Repair fix services are registered directly via
+    ``hass.services.async_register`` rather than through the
+    blueprint dispatcher's ``register_blueprint_handler``,
+    so the dispatcher's per-instance crash wrap doesn't
+    cover them. These helpers back the parallel wrap in
+    ``custom_components.blueprint_toolkit.__init__`` and
+    deliberately scope the PN to the fix service itself
+    rather than to any automation -- a fix-service crash
+    means the fix service is broken, not the automation
+    that emitted the repair.
+    """
+
+    def _hass(self) -> _MockHass:
+        return _MockHass()
+
+    @pytest.mark.asyncio
+    async def test_emit_creates_pn_keyed_to_service_and_target(self) -> None:
+        hass = self._hass()
+        await helpers.emit_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_edw_device_drift",
+            raw_data={"device_id": "abc123"},
+            exc=RuntimeError("nope [bad]"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert len(creates) == 1
+        data = creates[0]
+        assert data["notification_id"] == (
+            "blueprint_toolkit__fix_edw_device_drift__crash__abc123"
+        )
+        # Title identifies the fix service.
+        assert "fix_edw_device_drift" in data["title"]
+        # Body names the service, the target, the exception
+        # class, and md_escape's the message so brackets
+        # in the exception text don't corrupt the rendered
+        # markdown.
+        assert "fix_edw_device_drift" in data["message"]
+        assert "abc123" in data["message"]
+        assert "RuntimeError" in data["message"]
+        assert "\\[bad\\]" in data["message"]
+        # The PN deliberately does NOT carry an instance_id
+        # prefix -- it's not attributable to any one
+        # automation. The dispatcher only prepends the
+        # ``Automation: ...`` line when the spec opts in.
+        assert "Automation:" not in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_emit_falls_back_to_entity_id_target(self) -> None:
+        # Legacy / future per-entity fix services pass
+        # ``entity_id`` instead of ``device_id``; the slot
+        # ID should pick whichever is present so concurrent
+        # failures stay on distinct PNs.
+        hass = self._hass()
+        await helpers.emit_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_xyz",
+            raw_data={"entity_id": "sensor.foo"},
+            exc=ValueError("oops"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert creates[0]["notification_id"] == (
+            "blueprint_toolkit__fix_xyz__crash__sensor.foo"
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_uses_unknown_target_when_no_id_present(self) -> None:
+        # Pathological / out-of-band call payloads still
+        # surface a single PN rather than crashing the
+        # crash-PN helper itself.
+        hass = self._hass()
+        await helpers.emit_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_xyz",
+            raw_data={},
+            exc=RuntimeError("hmm"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert creates[0]["notification_id"] == (
+            "blueprint_toolkit__fix_xyz__crash__unknown"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dismiss_targets_same_slot(self) -> None:
+        # The dismiss helper has to use the same slot ID
+        # the emit helper writes so a recovered fix run
+        # actually clears its prior crash PN. Seed the
+        # PN store so the dispatcher's
+        # "skip-dismiss-when-inactive" guard doesn't elide
+        # the call we're asserting on.
+        hass = self._hass()
+        slot = "blueprint_toolkit__fix_edw_device_drift__crash__abc123"
+        hass.data["persistent_notification"] = {
+            slot: _stub_existing_pn(slot, title="stale", message="stale"),
+        }
+        await helpers.dismiss_fix_service_crash_notification(
+            hass,  # type: ignore[arg-type]
+            service_name="fix_edw_device_drift",
+            raw_data={"device_id": "abc123"},
+        )
+        dismisses = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "dismiss"
+        ]
+        assert len(dismisses) == 1
+        assert dismisses[0]["notification_id"] == slot
+
+
+class TestRegisterFixService:
+    """register_fix_service owns the whole fix-service contract.
+
+    The ``notification_id`` schema, the idempotent
+    ``has_service`` guard, the crash-PN wrap, and decoding
+    the id out of the ``ServiceCall`` all live in the helper,
+    so a handler is just ``async def (notification_id: str)``.
+    On failure the wrap emits a per-(service, target) crash PN
+    then re-raises; on success it dismisses that slot.
+    """
+
+    def _hass(self) -> _MockHass:
+        return _MockHass()
+
+    def _call(self, **data: Any) -> Any:
+        class _Call:
+            pass
+
+        c = _Call()
+        c.data = data  # type: ignore[attr-defined]
+        return c
+
+    def _registered(self, hass: _MockHass, name: str) -> Callable[..., Any]:
+        return hass.services.registered[(DOMAIN, name)]
+
+    @pytest.mark.asyncio
+    async def test_registers_with_notification_id_schema(self) -> None:
+        hass = self._hass()
+
+        async def _handler(_nid: str) -> None:
+            return
+
+        helpers.register_fix_service(
+            hass,  # type: ignore[arg-type]
+            "fix_dw_device_disabled_diagnostics",
+            _handler,
+        )
+        key = (DOMAIN, "fix_dw_device_disabled_diagnostics")
+        assert key in hass.services.registered
+        # The helper owns the schema; it validates a good
+        # payload and rejects a missing notification_id.
+        schema = hass.services.registered_kwargs[key]["schema"]
+        assert schema({"notification_id": "x"}) == {"notification_id": "x"}
+        with pytest.raises(vol.Invalid):
+            schema({})
+
+    @pytest.mark.asyncio
+    async def test_idempotent_under_existing_service(self) -> None:
+        hass = self._hass()
+
+        async def _handler(_nid: str) -> None:
+            return
+
+        async def _other(_nid: str) -> None:
+            return
+
+        helpers.register_fix_service(hass, "fix_xyz", _handler)  # type: ignore[arg-type]
+        first = self._registered(hass, "fix_xyz")
+        # Second registration is a no-op -- has_service guard.
+        helpers.register_fix_service(hass, "fix_xyz", _other)  # type: ignore[arg-type]
+        assert self._registered(hass, "fix_xyz") is first
+
+    @pytest.mark.asyncio
+    async def test_decodes_notification_id_to_handler(self) -> None:
+        hass = self._hass()
+        seen: list[str] = []
+
+        async def _handler(nid: str) -> None:
+            seen.append(nid)
+
+        helpers.register_fix_service(hass, "fix_xyz", _handler)  # type: ignore[arg-type]
+        await self._registered(hass, "fix_xyz")(
+            self._call(notification_id="nid_abc"),
+        )
+        assert seen == ["nid_abc"]
+
+    @pytest.mark.asyncio
+    async def test_failure_emits_crash_pn_and_reraises(self) -> None:
+        hass = self._hass()
+
+        class _Boom(RuntimeError):
+            pass
+
+        async def _handler(_nid: str) -> None:
+            raise _Boom("bad [stuff]")
+
+        helpers.register_fix_service(
+            hass,  # type: ignore[arg-type]
+            "fix_dw_device_disabled_diagnostics",
+            _handler,
+        )
+        wrapped = self._registered(hass, "fix_dw_device_disabled_diagnostics")
+        with pytest.raises(_Boom):
+            await wrapped(self._call(notification_id="nid_abc"))
+
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert len(creates) == 1
+        # Slot keys on the call's notification_id target.
+        assert creates[0]["notification_id"] == (
+            "blueprint_toolkit__fix_dw_device_disabled_diagnostics__"
+            "crash__nid_abc"
+        )
+        assert "_Boom" in creates[0]["message"]
+        assert "\\[stuff\\]" in creates[0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_success_dismisses_prior_crash_pn(self) -> None:
+        hass = self._hass()
+        slot = (
+            "blueprint_toolkit__fix_dw_device_disabled_diagnostics__"
+            "crash__nid_abc"
+        )
+        # Seed the store so the dispatcher's
+        # skip-dismiss-when-inactive guard doesn't elide it.
+        hass.data["persistent_notification"] = {
+            slot: _stub_existing_pn(slot, title="stale", message="stale"),
+        }
+
+        async def _handler(_nid: str) -> None:
+            return
+
+        helpers.register_fix_service(
+            hass,  # type: ignore[arg-type]
+            "fix_dw_device_disabled_diagnostics",
+            _handler,
+        )
+        await self._registered(hass, "fix_dw_device_disabled_diagnostics")(
+            self._call(notification_id="nid_abc")
+        )
+
+        dismisses = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "dismiss"
+        ]
+        assert len(dismisses) == 1
+        assert dismisses[0]["notification_id"] == slot
+
+    @pytest.mark.asyncio
+    async def test_success_emits_no_crash_pn(self) -> None:
+        hass = self._hass()
+
+        async def _handler(_nid: str) -> None:
+            return
+
+        helpers.register_fix_service(hass, "fix_xyz", _handler)  # type: ignore[arg-type]
+        await self._registered(hass, "fix_xyz")(
+            self._call(notification_id="nid"),
+        )
+        creates = [
+            data
+            for domain, name, data in hass.services.calls
+            if domain == "persistent_notification" and name == "create"
+        ]
+        assert creates == []
 
 
 class TestStaleInputKeyReferences:

@@ -30,6 +30,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import voluptuous as vol
+
 from .const import DOMAIN
 from .helpers_logic import (
     _UNSUBS_KEY,
@@ -47,7 +49,7 @@ from .helpers_logic import (
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import HomeAssistant, ServiceCall
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -437,6 +439,195 @@ async def dismiss_handler_crash_notification(
     await process_persistent_notifications(hass, [spec])
 
 
+def _fix_service_crash_notification_id(
+    service_name: str, raw_data: dict[str, Any]
+) -> str:
+    """Per-target slot ID for a fix-service crash PN.
+
+    Shared by the emit + dismiss helpers so both target the
+    same slot. The target identifier prefers the call's
+    ``notification_id`` (the repair-issue ID, unique per
+    instance + finding-kind + device), falling back to
+    ``device_id`` and ``entity_id`` for fix services that
+    use one of those legacy / future payload shapes, and
+    finally to ``unknown`` so a pathological call still
+    surfaces a single PN rather than a key collision.
+    """
+    target = (
+        raw_data.get("notification_id")
+        or raw_data.get("device_id")
+        or raw_data.get("entity_id")
+        or "unknown"
+    )
+    return f"blueprint_toolkit__{service_name}__crash__{target}"
+
+
+async def emit_fix_service_crash_notification(
+    hass: HomeAssistant,
+    *,
+    service_name: str,
+    raw_data: dict[str, Any],
+    exc: BaseException,
+) -> None:
+    """Surface a repair fix-service crash as a PN.
+
+    The repair fix services (``fix_edw_device_drift``,
+    ``fix_dw_device_disabled_diagnostics``, ...) are
+    registered directly via ``hass.services.async_register``
+    rather than through ``register_blueprint_handler``,
+    so the dispatcher's per-instance crash wrap (see
+    ``emit_handler_crash_notification``) does not cover
+    them. Their failure mode is also distinct: a fix-
+    service crash means the fix service itself is broken,
+    not the automation whose periodic scan emitted the
+    repair. The PN therefore deliberately does NOT carry
+    an ``instance_id`` -- no ``Automation: [name](edit-link)``
+    prefix and no per-automation attribution.
+
+    Notification ID is keyed to the (service, target) pair
+    so concurrent failures on different devices each get
+    their own PN; the wrapped service's success path calls
+    ``dismiss_fix_service_crash_notification`` against the
+    same slot so a recovered fix run clears its prior crash
+    PN.
+
+    Body stays terse: target id + exception class + log
+    pointer. ``md_escape`` is applied because exception
+    messages can carry ``[`` / ``]`` / ``\\`` that would
+    corrupt the rendered markdown.
+    """
+    notification_id = _fix_service_crash_notification_id(service_name, raw_data)
+    target = raw_data.get("device_id") or raw_data.get("entity_id") or "unknown"
+    title = f"Repair fix service crash: {service_name}"
+    body = (
+        f"The repair fix service `{service_name}` failed while applying a "
+        f"repair against `{md_escape(str(target))}`. The automation that "
+        f"emitted the repair is not broken; the fix service itself is. "
+        f"\n\n"
+        f"`{type(exc).__name__}`: {md_escape(str(exc))}\n"
+        f"\n"
+        f"See the Home Assistant log for the full traceback."
+    )
+    spec = PersistentNotification(
+        notification_id=notification_id,
+        title=title,
+        message=body,
+        instance_id=None,
+        active=True,
+    )
+    _LOGGER.warning(
+        "fix-service crash %s (target=%s): %s: %s",
+        service_name,
+        target,
+        type(exc).__name__,
+        exc,
+    )
+    await process_persistent_notifications(hass, [spec])
+
+
+_FIX_SERVICE_SCHEMA = vol.Schema({vol.Required("notification_id"): str})
+
+
+def register_fix_service(
+    hass: HomeAssistant,
+    service_name: str,
+    handler: Callable[[str], Awaitable[None]],
+) -> None:
+    """Register a repair fix service with the shared contract.
+
+    Every repair fix service has the same shape: HA calls it
+    with a single ``notification_id`` (the repair-issue id),
+    and the handler uses that id to look up its rich payload
+    on instance state. This helper owns the whole contract --
+    the ``notification_id`` schema, the idempotent
+    ``has_service`` guard, the crash-PN wrap, and decoding the
+    id out of the ``ServiceCall`` -- so a handler supplies
+    only ``async def (notification_id: str) -> None`` and
+    never touches HA's service-registration surface or rolls
+    its own parameter set.
+
+    Repair fix services are registered directly here rather
+    than through the blueprint dispatcher, so the
+    dispatcher's per-instance crash wrap doesn't cover them.
+    On an unhandled handler exception the wrap emits a
+    per-(service, target) ``__crash`` PN before re-raising
+    (so HA's own log / UI surfaces still fire); a successful
+    run dismisses that slot so a recovered fix clears its own
+    breadcrumb. The ``__crash`` PN carries NO ``instance_id``
+    -- a crash means the fix service is broken, not the
+    automation that emitted the repair.
+    """
+    if hass.services.has_service(DOMAIN, service_name):
+        return
+
+    async def _wrapped(call: ServiceCall) -> None:
+        raw_data = dict(call.data) if call.data else {}
+        notification_id = call.data["notification_id"]
+        try:
+            await handler(notification_id)
+        except Exception as exc:
+            # Broad: every unhandled fix-service exception
+            # should land in the PN. Re-raise so HA's UI /
+            # log machinery surfaces it through its own
+            # channels too.
+            try:
+                await emit_fix_service_crash_notification(
+                    hass,
+                    service_name=service_name,
+                    raw_data=raw_data,
+                    exc=exc,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "failed to emit fix-service crash notification for %s",
+                    service_name,
+                )
+            raise
+        try:
+            await dismiss_fix_service_crash_notification(
+                hass,
+                service_name=service_name,
+                raw_data=raw_data,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "failed to dismiss fix-service crash notification for %s",
+                service_name,
+            )
+
+    hass.services.async_register(
+        DOMAIN,
+        service_name,
+        _wrapped,
+        schema=_FIX_SERVICE_SCHEMA,
+    )
+
+
+async def dismiss_fix_service_crash_notification(
+    hass: HomeAssistant,
+    *,
+    service_name: str,
+    raw_data: dict[str, Any],
+) -> None:
+    """Clear the (service, target) crash PN, if any.
+
+    Called by the wrapped fix-service's success path so a
+    fix run that previously failed but now succeeds drops
+    its prior crash PN. ``process_persistent_notifications``
+    no-ops on a dismiss for an inactive ID, so the call is
+    free in the steady state.
+    """
+    notification_id = _fix_service_crash_notification_id(service_name, raw_data)
+    spec = PersistentNotification(
+        notification_id=notification_id,
+        title="",
+        message="",
+        instance_id=None,
+        active=False,
+    )
+    await process_persistent_notifications(hass, [spec])
+
+
 async def emit_config_error(
     hass: HomeAssistant,
     *,
@@ -806,12 +997,15 @@ async def unregister_blueprint_handler(
 
 __all__ = [
     "automation_friendly_name",
+    "dismiss_fix_service_crash_notification",
     "emit_config_error",
+    "emit_fix_service_crash_notification",
     "entry_for_domain",
     "make_periodic_trigger_callback",
     "prepare_notifications",
     "process_persistent_notifications",
     "process_persistent_notifications_with_sweep",
+    "register_fix_service",
     "unregister_blueprint_handler",
     "update_instance_state",
     "validate_payload_or_emit_config_error",

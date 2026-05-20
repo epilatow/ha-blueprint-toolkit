@@ -47,6 +47,42 @@
           }
         }
       }
+    },
+    "edw_device_entity_id_drift": {
+      "title": "Entity ID drift on device: {device_name}",
+      "description": "Device `{device_name}` has {count} entities whose entity IDs have drifted from their defaults. Click Submit to regenerate them.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Regenerate entity IDs?",
+            "description": "Regenerate drifted entity IDs on `{device_name}` ({count} entities):\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+          }
+        }
+      }
+    },
+    "edw_device_entity_name_drift": {
+      "title": "Entity name drift on device: {device_name}",
+      "description": "Device `{device_name}` has {count} entities whose names have drifted from their defaults. Click Submit to fix them.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Update entity names?",
+            "description": "Update {count} drifted entity name(s) on `{device_name}`:\n\n{entities}\n\nA cleared override reverts to the integration default name. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+          }
+        }
+      }
+    },
+    "dw_device_disabled_diagnostics": {
+      "title": "Disabled diagnostic entities on device: {device_name}",
+      "description": "Device `{device_name}` has {count} recommended diagnostic entities that are currently disabled. Click Submit to re-enable all of them.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Re-enable diagnostic entities?",
+            "description": "Re-enable the {count} disabled recommended-diagnostic entities on `{device_name}`:\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+          }
+        }
+      }
     }
   }
 }

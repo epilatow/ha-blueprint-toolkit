@@ -116,6 +116,75 @@ class InstallFailureFlow(RepairsFlow):
         )
 
 
+class WatchdogFixFlow(RepairsFlow):
+    """Confirm-and-call flow for watchdog-finding repairs.
+
+    Single-step confirm: renders the issue's title and
+    description (translation-placeholder substituted) plus
+    a Submit button. On submit, dispatches the stashed
+    ``(service_name, service_data)`` to the integration's
+    domain. ``service_data`` is rebuilt from the
+    dispatcher's flattened ``service_data_<key>`` encoding
+    so the JSON-only storage round-trip on the issue
+    registry's ``data`` field stays well-formed.
+
+    The fix services are small (per-device entity-registry
+    updates over a bounded entity set) so the flow uses
+    ``blocking=True`` to surface failures via the Repairs
+    UI before the modal closes; the fix-service wrapper's
+    crash-PN guard handles the underlying error reporting.
+    """
+
+    def __init__(
+        self,
+        issue_id: str,
+        data: dict[str, Any] | None,
+    ) -> None:
+        self._issue_id = issue_id
+        self._data = data or {}
+
+    async def async_step_init(
+        self,
+        user_input: dict[str, Any] | None = None,  # noqa: ARG002
+    ) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        if user_input is not None:
+            service_name = self._data.get("service_name", "")
+            if service_name:
+                service_data = {
+                    k.removeprefix("service_data_"): v
+                    for k, v in self._data.items()
+                    if k.startswith("service_data_")
+                }
+                await self.hass.services.async_call(
+                    DOMAIN,
+                    service_name,
+                    service_data,
+                    blocking=True,
+                )
+            return self.async_create_entry(data={})
+        # Replay the issue's translation placeholders so the
+        # confirm modal's description renders ``{device_name}``,
+        # ``{count}``, etc -- without this the modal text shows
+        # the literal braced tokens.
+        from homeassistant.helpers import issue_registry as ir
+
+        issue = ir.async_get(self.hass).async_get_issue(DOMAIN, self._issue_id)
+        placeholders = (
+            (issue.translation_placeholders or {}) if issue is not None else {}
+        )
+        return self.async_show_form(
+            step_id="confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders=placeholders,
+        )
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,  # noqa: ARG001
     issue_id: str,
@@ -126,6 +195,11 @@ async def async_create_fix_flow(
         return InstallConflictsFlow(data)
     if issue_id.startswith(ISSUE_INSTALL_FAILURE):
         return InstallFailureFlow(data)
+    # The ``__repair_`` token is injected by
+    # ``helpers.repair_notification_id`` when a watchdog
+    # builds a repair-issue id; this is the matching consumer.
+    if "__repair_" in issue_id:
+        return WatchdogFixFlow(issue_id, data)
     msg = f"unknown issue_id: {issue_id!r}"
     raise ValueError(msg)
 

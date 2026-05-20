@@ -9,6 +9,7 @@ old names.
 """
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from .. import helpers
 
@@ -97,6 +98,12 @@ class Config:
     exclude_entity_ids: list[str]
     exclude_entity_id_regex: str
     exclude_entity_name_regex: str
+    # When true, device-attached drift findings are emitted
+    # as one-click Repair issues (one for id-drift, one for
+    # name-drift, per device) instead of the per-device
+    # aggregate notification. The logic chooses the surface
+    # at build time so the same finding never shows twice.
+    create_repairs: bool = False
     # Per-instance notification ID prefix, ending with
     # the canonical ``__`` separator. Every notification
     # this module mints must start with this string so
@@ -145,6 +152,58 @@ class DriftDetail:
     expected_name: str | None
     has_redundant_prefix: bool = False
     recommended_override: str | None = None
+    # Default entity_id the registry would have if no
+    # rename had drifted it. Rendered in the per-device
+    # notification body so the user can see the target id
+    # alongside the current one; carried into the id-drift
+    # repair payload as the rename target.
+    expected_entity_id: str | None = None
+
+
+class FixServices(StrEnum):
+    """EDW's repair fix service names.
+
+    Members' values are the HA service names registered
+    under the ``blueprint_toolkit`` domain. Defined in the
+    logic layer so the logic can build ``FixService``
+    payloads directly; the handler imports the enum for
+    ``hass.services.async_register``.
+    """
+
+    DEVICE_ENTITY_ID_DRIFT = "fix_edw_device_entity_id_drift"
+    DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
+
+
+@dataclass(frozen=True)
+class DeviceEntityIdDriftRepair:
+    """Rich per-repair payload for an EDW id-drift fix.
+
+    Built by the logic, stored on the handler's instance
+    state keyed by notification_id, read back by the fix
+    service to apply the captured ``(entity_id,
+    expected_entity_id)`` renames. Stays off the wire (the
+    issue-registry payload is just the notification_id).
+    """
+
+    device_id: str
+    entity_renames: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class DeviceEntityNameDriftRepair:
+    """Rich per-repair payload for an EDW name-drift fix.
+
+    Carries ``(entity_id, target_name)`` pairs. A non-None
+    target SETS the override (legacy recommended-override
+    case); ``None`` CLEARS it (the standard stale-override
+    case, reverting to the integration default).
+    """
+
+    device_id: str
+    entity_name_targets: tuple[tuple[str, str | None], ...]
+
+
+EdwRepair = DeviceEntityIdDriftRepair | DeviceEntityNameDriftRepair
 
 
 @dataclass
@@ -562,6 +621,7 @@ def _check_entity_drift(
         expected_name=entity.expected_name,
         has_redundant_prefix=redundant,
         recommended_override=recommended,
+        expected_entity_id=entity.expected_entity_id,
     )
 
 
@@ -1221,9 +1281,140 @@ class EvaluationResult:
     stat_visible_aliased_kept: int = 0
     stat_visible_aliased_excluded: int = 0
     stat_visible_aliased_flagged: int = 0
+    # Per-repair payloads (keyed by notification_id) the
+    # handler stashes on instance state so the fix services
+    # can recover the exact entity set without re-walking.
+    # Empty when ``create_repairs`` is off (device drift
+    # renders as the aggregate notification instead).
+    repairs: dict[str, EdwRepair] = field(default_factory=dict)
     unmatched_directives: list[helpers.UnmatchedDirective] = field(
         default_factory=list,
     )
+
+
+def _name_drift_line(d: DriftDetail) -> str:
+    """Render one ``old -> new`` name-drift bullet.
+
+    New value is the recommended override (set case) or the
+    expected default name (clear case); falls back to a
+    prose phrase when the default name isn't known. The
+    current name + the override are user-controllable, so
+    both are ``md_escape``d; the entity_id is a code span.
+    """
+    new = (
+        d.recommended_override
+        if d.recommended_override is not None
+        else d.expected_name
+    )
+    current = helpers.md_escape(d.current_name)
+    if new:
+        return f'- `{d.entity_id}`: "{current}" -> "{helpers.md_escape(new)}"'
+    return f'- `{d.entity_id}`: "{current}" -> the integration default name'
+
+
+def _build_device_repair_specs(
+    config: Config,
+    results: list[DeviceResult],
+) -> tuple[
+    list[helpers.PersistentNotification],
+    dict[str, EdwRepair],
+]:
+    """Build per-device drift repairs from device results.
+
+    Emits up to two repair-carrying specs per device with
+    drift -- one for entity-id drift, one for entity-name
+    drift -- plus the matching rich payloads keyed by
+    notification_id. Used in place of the aggregate
+    per-device notification when ``create_repairs`` is on,
+    so a device's drift surfaces as one-click Repairs
+    rather than a notification (never both).
+
+    Each spec carries an ``entities`` translation placeholder
+    -- a markdown list of the affected entities (``old ->
+    new`` for both id-drift and name-drift) -- so the confirm
+    modal lists exactly what will change, mirroring the
+    per-device notification body.
+    """
+    specs: list[helpers.PersistentNotification] = []
+    repairs: dict[str, EdwRepair] = {}
+    for r in results:
+        if r.device_excluded or not r.has_issue:
+            continue
+        id_renames = [
+            (d.entity_id, d.expected_entity_id)
+            for d in r.drifted_entities
+            if d.id_drifted and d.expected_entity_id is not None
+        ]
+        name_drifted = [d for d in r.drifted_entities if d.name_drifted]
+        device_name = r.device_name or r.device_id
+        if id_renames:
+            nid = helpers.repair_notification_id(
+                config.notification_prefix,
+                FixServices.DEVICE_ENTITY_ID_DRIFT,
+                r.device_id,
+            )
+            specs.append(
+                helpers.PersistentNotification(
+                    active=True,
+                    notification_id=nid,
+                    title="",
+                    message="",
+                    instance_id=config.instance_id,
+                    repair_callback=helpers.FixService(
+                        service_name=FixServices.DEVICE_ENTITY_ID_DRIFT.value,
+                        notification_id=nid,
+                    ),
+                    translation_key="edw_device_entity_id_drift",
+                    translation_placeholders={
+                        "device_name": device_name,
+                        "count": str(len(id_renames)),
+                        "entities": "\n".join(
+                            f"- `{old}` -> `{new}`" for old, new in id_renames
+                        ),
+                    },
+                ),
+            )
+            repairs[nid] = DeviceEntityIdDriftRepair(
+                device_id=r.device_id,
+                entity_renames=tuple(id_renames),
+            )
+        if name_drifted:
+            nid = helpers.repair_notification_id(
+                config.notification_prefix,
+                FixServices.DEVICE_ENTITY_NAME_DRIFT,
+                r.device_id,
+            )
+            name_targets: list[tuple[str, str | None]] = [
+                (d.entity_id, d.recommended_override) for d in name_drifted
+            ]
+            specs.append(
+                helpers.PersistentNotification(
+                    active=True,
+                    notification_id=nid,
+                    title="",
+                    message="",
+                    instance_id=config.instance_id,
+                    repair_callback=helpers.FixService(
+                        service_name=(
+                            FixServices.DEVICE_ENTITY_NAME_DRIFT.value
+                        ),
+                        notification_id=nid,
+                    ),
+                    translation_key="edw_device_entity_name_drift",
+                    translation_placeholders={
+                        "device_name": device_name,
+                        "count": str(len(name_drifted)),
+                        "entities": "\n".join(
+                            _name_drift_line(d) for d in name_drifted
+                        ),
+                    },
+                ),
+            )
+            repairs[nid] = DeviceEntityNameDriftRepair(
+                device_id=r.device_id,
+                entity_name_targets=tuple(name_targets),
+            )
+    return specs, repairs
 
 
 def _validate_edw_directives(
@@ -1332,14 +1523,27 @@ def run_evaluation(
 
     results = evaluate_devices(config, devices)
 
-    notifications = helpers.prepare_notifications(
-        results,
-        max_notifications=max_notifications,
-        cap_notification_id=f"{config.notification_prefix}cap",
-        cap_title="Notification cap reached",
-        cap_item_label="devices with drift",
-        instance_id=config.instance_id,
-    )
+    # Device-attached drift goes to ONE surface, chosen
+    # here at build time so the same finding never appears
+    # twice. Repairs on -> two repair-carrying specs per
+    # device (id-drift, name-drift); the aggregate
+    # notification is suppressed. Repairs off -> the
+    # aggregate per-device notification (capped + cap-
+    # summary via ``prepare_notifications``). The per-
+    # backend sweep clears the other surface when the
+    # toggle flips.
+    repairs: dict[str, EdwRepair] = {}
+    if config.create_repairs:
+        notifications, repairs = _build_device_repair_specs(config, results)
+    else:
+        notifications = helpers.prepare_notifications(
+            results,
+            max_notifications=max_notifications,
+            cap_notification_id=f"{config.notification_prefix}cap",
+            cap_title="Notification cap reached",
+            cap_item_label="devices with drift",
+            instance_id=config.instance_id,
+        )
 
     if _check_deviceless_enabled(config):
         deviceless = _evaluate_deviceless(
@@ -1426,6 +1630,7 @@ def run_evaluation(
         stat_visible_aliased_kept=visible_aliased.entries_kept,
         stat_visible_aliased_excluded=visible_aliased.entries_excluded,
         stat_visible_aliased_flagged=len(visible_aliased.findings),
+        repairs=repairs,
         unmatched_directives=_validate_edw_directives(
             directive_inputs
             if directive_inputs is not None

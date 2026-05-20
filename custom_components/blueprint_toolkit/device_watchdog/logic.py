@@ -8,6 +8,7 @@ a configurable threshold).
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 
 from .. import helpers
 
@@ -64,6 +65,12 @@ class Config:
     monitored_entity_domains: list[str]
     dead_threshold_seconds: int
     enabled_checks: frozenset[str]
+    # When true, a disabled-diagnostic finding is emitted
+    # as a one-click Repair issue instead of a persistent
+    # notification. The logic decides which surface at
+    # build time (never both) so the user never sees the
+    # same finding twice.
+    create_repairs: bool = False
     # Per-instance notification ID prefix, ending with
     # the canonical ``__`` separator. Every notification
     # this module mints must start with this string so
@@ -161,15 +168,56 @@ RECOMMENDED_DIAGNOSTICS: dict[str, list[str]] = {
 }
 
 
+@dataclass
+class DisabledDiagnostic:
+    """One disabled recommended diagnostic entity.
+
+    Surfaced in the per-device notification body (which
+    renders ``original_name``) when ``create_repairs`` is
+    off; when on, the per-device findings are grouped into
+    a single repair issue instead.
+    """
+
+    original_name: str
+    entity_id: str
+
+
+class FixServices(StrEnum):
+    """DW's repair fix service names.
+
+    Members' values are the HA service names registered
+    under the ``blueprint_toolkit`` domain. Defined here in
+    the logic layer so the logic can build ``FixService``
+    payloads directly; the handler imports the enum for
+    ``hass.services.async_register``.
+    """
+
+    DEVICE_DISABLED_DIAGNOSTICS = "fix_dw_device_disabled_diagnostics"
+
+
+@dataclass(frozen=True)
+class DisabledDiagnosticsRepair:
+    """Rich per-repair payload for a DW disabled-diagnostics fix.
+
+    Built by the logic, stored on the handler's instance
+    state keyed by notification_id, and read back by the
+    fix service to re-enable exactly the captured entity
+    set. Stays off the wire (the issue-registry payload is
+    just the notification_id).
+    """
+
+    device_id: str
+    entity_ids: tuple[str, ...]
+
+
 def check_disabled_diagnostics(
     integration: str,
     entries: list[RegistryEntry],
-) -> list[str]:
+) -> list[DisabledDiagnostic]:
     """Check for disabled recommended diagnostic entities.
 
-    Returns list of original_name values for entities
-    that exist but are disabled. Entities that don't
-    exist at all are silently skipped.
+    Returns one ``DisabledDiagnostic`` per disabled entity;
+    entities that don't exist at all are silently skipped.
     """
     recommended = RECOMMENDED_DIAGNOSTICS.get(
         integration,
@@ -185,12 +233,17 @@ def check_disabled_diagnostics(
         if e.platform == integration and e.entity_category == "diagnostic"
     ]
 
-    disabled: list[str] = []
+    disabled: list[DisabledDiagnostic] = []
     for name in recommended:
         for entry in diag_entries:
             if entry.original_name == name:
                 if entry.disabled:
-                    disabled.append(name)
+                    disabled.append(
+                        DisabledDiagnostic(
+                            original_name=name,
+                            entity_id=entry.entity_id,
+                        ),
+                    )
                 break
     return disabled
 
@@ -198,19 +251,32 @@ def check_disabled_diagnostics(
 def evaluate_diagnostics(
     config: Config,
     devices: list[DeviceInfo],
-) -> list[helpers.PersistentNotification]:
+) -> tuple[
+    list[helpers.PersistentNotification],
+    dict[str, DisabledDiagnosticsRepair],
+]:
     """Check all devices for disabled diagnostics.
 
-    Uses device.de.integration_entities and
-    device.registry_entries
-    to find disabled recommended diagnostic entities.
+    Returns the per-device spec batch plus the per-repair
+    payloads (keyed by notification_id) the handler stashes
+    on instance state.
 
-    Skips devices with no integrations in
-    RECOMMENDED_DIAGNOSTICS. Returns a
-    helpers.PersistentNotification per device that has at least
-    one relevant integration.
+    With ``config.create_repairs`` on, a device's disabled
+    diagnostics become a single one-click Repair issue (the
+    spec carries ``repair_callback`` + translation data).
+    With it off, they render as the per-device persistent-
+    notification body. Never both --
+    the surface is chosen here at build time, so the same
+    finding never appears on two surfaces; the per-backend
+    sweep clears the other surface when the toggle flips.
+
+    Devices with no disabled diagnostics emit nothing; the
+    dispatcher's prefix sweep removes any prior-run artifact
+    for them. Skips devices with no integrations in
+    RECOMMENDED_DIAGNOSTICS.
     """
     results: list[helpers.PersistentNotification] = []
+    repairs: dict[str, DisabledDiagnosticsRepair] = {}
     for device in devices:
         integrations = sorted(
             device.de.integration_entities.keys(),
@@ -220,17 +286,55 @@ def evaluate_diagnostics(
         ]
         if not has_recommendations:
             continue
-        disabled: list[str] = []
+        disabled: list[DisabledDiagnostic] = []
         for integration in integrations:
             disabled += check_disabled_diagnostics(
                 integration,
                 device.registry_entries,
             )
-        notification_id = f"{config.notification_prefix}diag_{device.de.id}"
-        if disabled:
-            entity_list = "\n- ".join(
-                helpers.md_escape(eid) for eid in disabled
+        if not disabled:
+            continue
+        # Shared affected-entity list -- identical text on both
+        # the repair-issue body and the persistent-notification
+        # body so the two surfaces stay consistent. entity_id in
+        # a code span (constrained charset, markdown-safe);
+        # original_name md_escaped (user-controllable).
+        entity_lines = "\n".join(
+            f"- `{d.entity_id}` ({helpers.md_escape(d.original_name)})"
+            for d in disabled
+        )
+        if config.create_repairs:
+            nid = helpers.repair_notification_id(
+                config.notification_prefix,
+                FixServices.DEVICE_DISABLED_DIAGNOSTICS,
+                device.de.id,
             )
+            results.append(
+                helpers.PersistentNotification(
+                    active=True,
+                    notification_id=nid,
+                    title="",
+                    message="",
+                    instance_id=config.instance_id,
+                    repair_callback=helpers.FixService(
+                        service_name=(
+                            FixServices.DEVICE_DISABLED_DIAGNOSTICS.value
+                        ),
+                        notification_id=nid,
+                    ),
+                    translation_key="dw_device_disabled_diagnostics",
+                    translation_placeholders={
+                        "device_name": device.de.name or device.de.id,
+                        "count": str(len(disabled)),
+                        "entities": entity_lines,
+                    },
+                ),
+            )
+            repairs[nid] = DisabledDiagnosticsRepair(
+                device_id=device.de.id,
+                entity_ids=tuple(d.entity_id for d in disabled),
+            )
+        else:
             header = helpers.device_header_line(
                 device.de.name,
                 device.de.id,
@@ -238,28 +342,20 @@ def evaluate_diagnostics(
             message = (
                 f"{header}\n\n"
                 f"Recommended diagnostic entities are disabled:"
-                f"\n\n- {entity_list}"
+                f"\n\n{entity_lines}"
             )
             results.append(
                 helpers.PersistentNotification(
                     active=True,
-                    notification_id=notification_id,
+                    notification_id=(
+                        f"{config.notification_prefix}diag_{device.de.id}"
+                    ),
                     title=device.de.name,
                     message=message,
                     instance_id=config.instance_id,
                 ),
             )
-        else:
-            results.append(
-                helpers.PersistentNotification(
-                    active=False,
-                    notification_id=notification_id,
-                    title="",
-                    message="",
-                    instance_id=config.instance_id,
-                ),
-            )
-    return results
+    return results, repairs
 
 
 def _filter_entities(
@@ -559,6 +655,14 @@ class EvaluationResult:
     issues_count: int
     stat_entity_issues: int
     stat_stale: int
+    # Per-repair payloads (keyed by notification_id) the
+    # handler stashes on instance state so the fix service
+    # can recover the exact entity set without re-walking.
+    # Empty when ``create_repairs`` is off (findings render
+    # as notifications instead).
+    repairs: dict[str, DisabledDiagnosticsRepair] = field(
+        default_factory=dict,
+    )
     unmatched_directives: list[helpers.UnmatchedDirective] = field(
         default_factory=list,
     )
@@ -650,8 +754,12 @@ def run_evaluation(
     results = evaluate_devices(config, devices, current_time)
 
     diag_notifications: list[helpers.PersistentNotification] = []
+    diag_repairs: dict[str, DisabledDiagnosticsRepair] = {}
     if CHECK_DISABLED_DIAGNOSTICS in config.enabled_checks:
-        diag_notifications = evaluate_diagnostics(config, devices)
+        diag_notifications, diag_repairs = evaluate_diagnostics(
+            config,
+            devices,
+        )
 
     notifications = helpers.prepare_notifications(
         results,
@@ -685,5 +793,6 @@ def run_evaluation(
         issues_count=len(issues),
         stat_entity_issues=sum(len(r.unavailable_entities) for r in issues),
         stat_stale=sum(1 for r in issues if r.is_stale),
+        repairs=diag_repairs,
         unmatched_directives=unmatched,
     )

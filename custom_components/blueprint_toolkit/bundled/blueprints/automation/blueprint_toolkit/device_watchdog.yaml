@@ -144,6 +144,34 @@ blueprint:
           max: 1000
           mode: box
 
+    create_repairs:
+      name: Create repairs for fixable findings
+      description: >
+        When enabled, findings with a deterministic fix
+        (disabled diagnostic entity) surface as Home
+        Assistant Repairs with a one-click Fix button
+        instead of as persistent notifications. Other
+        findings (unavailable / stale devices) keep
+        surfacing as notifications.
+      default: true
+      selector:
+        boolean: {}
+
+    max_repairs:
+      name: Max repairs
+      description: >
+        Cap on per-run repair issues. Set to 0 for
+        unlimited. Repairs are not bulk-dismissable in
+        HA's UI, so a cap is recommended; a cap-summary
+        notification indicates how many additional findings
+        were suppressed.
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 1000
+          mode: box
+
     validate_includes_excludes:
       name: Validate include / exclude directives
       description: >
@@ -200,6 +228,8 @@ actions:
       dead_device_threshold_minutes_raw: !input dead_device_threshold_minutes
       enabled_checks_raw: !input enabled_checks
       max_device_notifications_raw: !input max_device_notifications
+      create_repairs_raw: !input create_repairs
+      max_repairs_raw: !input max_repairs
       validate_includes_excludes_raw: !input validate_includes_excludes
       debug_logging_raw: !input debug_logging
 

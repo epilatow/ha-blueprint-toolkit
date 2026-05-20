@@ -122,6 +122,8 @@ def _valid_payload(
     exclude_entity_name_regex: str = "",
     check_interval_minutes: int = 60,
     max_device_notifications: int = 0,
+    create_repairs: bool = False,
+    max_repairs: int = 5,
     validate_includes_excludes: bool = True,
 ) -> dict[str, Any]:
     """Build a fully-populated EDW service-call payload."""
@@ -137,6 +139,8 @@ def _valid_payload(
         "exclude_entity_name_regex_raw": exclude_entity_name_regex,
         "check_interval_minutes_raw": check_interval_minutes,
         "max_device_notifications_raw": max_device_notifications,
+        "create_repairs_raw": create_repairs,
+        "max_repairs_raw": max_repairs,
         "validate_includes_excludes_raw": validate_includes_excludes,
         "debug_logging_raw": False,
     }
@@ -1232,6 +1236,181 @@ class TestVisibleAliasedScan:
             f"hidden_by must remain None after a flagged run; "
             f"got {after.hidden_by!r}"
         )
+
+
+class TestFixServiceDeviceDrift:
+    """End-to-end EDW id-drift / name-drift repair fixes.
+
+    Populates an instance's per-repair payload directly --
+    the scan-side build is covered by the logic tests -- then
+    calls each fix service and asserts the registry mutation
+    lands on exactly the captured entities (rename for
+    id-drift; set / clear name override for name-drift).
+    """
+
+    async def test_id_drift_submit_renames_entity(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        await _setup_integration(hass)
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="drift-1",
+            original_name="Temp",
+        )
+        old_id = entry.entity_id
+        new_id = "sensor.renamed_target"
+
+        nid = (
+            "blueprint_toolkit_edw__automation.x__"
+            "repair_device_entity_id_drift__dev1"
+        )
+        insts = edw._instances(hass)
+        insts["automation.x"] = edw.EdwInstanceState(
+            instance_id="automation.x",
+        )
+        insts["automation.x"].repairs[nid] = (
+            edw_logic.DeviceEntityIdDriftRepair(
+                device_id="dev1",
+                entity_renames=((old_id, new_id),),
+            )
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_device_entity_id_drift",
+            {"notification_id": nid},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert ent_reg.async_get(new_id) is not None
+        assert ent_reg.async_get(old_id) is None
+
+    async def test_name_drift_submit_sets_override(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        await _setup_integration(hass)
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="name-1",
+            original_name="Temp",
+        )
+
+        nid = (
+            "blueprint_toolkit_edw__automation.x__"
+            "repair_device_entity_name_drift__dev1"
+        )
+        insts = edw._instances(hass)
+        insts["automation.x"] = edw.EdwInstanceState(
+            instance_id="automation.x",
+        )
+        insts["automation.x"].repairs[nid] = (
+            edw_logic.DeviceEntityNameDriftRepair(
+                device_id="dev1",
+                entity_name_targets=((entry.entity_id, "Custom Name"),),
+            )
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_device_entity_name_drift",
+            {"notification_id": nid},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        updated = ent_reg.async_get(entry.entity_id)
+        assert updated is not None
+        assert updated.name == "Custom Name"
+
+    async def test_name_drift_submit_clears_stale_override(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        await _setup_integration(hass)
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="name-2",
+            original_name="Temp",
+        )
+        ent_reg.async_update_entity(entry.entity_id, name="Stale Override")
+
+        nid = (
+            "blueprint_toolkit_edw__automation.x__"
+            "repair_device_entity_name_drift__dev2"
+        )
+        insts = edw._instances(hass)
+        insts["automation.x"] = edw.EdwInstanceState(
+            instance_id="automation.x",
+        )
+        # None target CLEARS the override, reverting to the
+        # integration-provided default name.
+        insts["automation.x"].repairs[nid] = (
+            edw_logic.DeviceEntityNameDriftRepair(
+                device_id="dev2",
+                entity_name_targets=((entry.entity_id, None),),
+            )
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_device_entity_name_drift",
+            {"notification_id": nid},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        updated = ent_reg.async_get(entry.entity_id)
+        assert updated is not None
+        assert updated.name is None
+
+    async def test_unknown_notification_id_is_noop(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_device_entity_id_drift",
+            {"notification_id": "blueprint_toolkit_edw__x__repair_x__none"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
