@@ -30,6 +30,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import voluptuous as vol
+
 from .const import DOMAIN
 from .helpers_logic import (
     _UNSUBS_KEY,
@@ -523,28 +525,46 @@ async def emit_fix_service_crash_notification(
     await process_persistent_notifications(hass, [spec])
 
 
-def make_fix_service_wrapper(
+_FIX_SERVICE_SCHEMA = vol.Schema({vol.Required("notification_id"): str})
+
+
+def register_fix_service(
     hass: HomeAssistant,
     service_name: str,
-    handler: Callable[[ServiceCall], Any],
-) -> Callable[[ServiceCall], Any]:
-    """Wrap a fix-service handler in a crash-PN guard.
+    handler: Callable[[str], Awaitable[None]],
+) -> None:
+    """Register a repair fix service with the shared contract.
 
-    Repair fix services are registered directly via
-    ``hass.services.async_register`` rather than through
-    the blueprint dispatcher, so the dispatcher's per-
-    instance crash wrap doesn't cover them. This factory
-    returns a drop-in replacement that emits a per-
-    (service, target) ``__crash`` PN on unhandled
-    exceptions before re-raising, and dismisses the same
-    slot on a successful run so a recovered fix clears its
-    own breadcrumb.
+    Every repair fix service has the same shape: HA calls it
+    with a single ``notification_id`` (the repair-issue id),
+    and the handler uses that id to look up its rich payload
+    on instance state. This helper owns the whole contract --
+    the ``notification_id`` schema, the idempotent
+    ``has_service`` guard, the crash-PN wrap, and decoding the
+    id out of the ``ServiceCall`` -- so a handler supplies
+    only ``async def (notification_id: str) -> None`` and
+    never touches HA's service-registration surface or rolls
+    its own parameter set.
+
+    Repair fix services are registered directly here rather
+    than through the blueprint dispatcher, so the
+    dispatcher's per-instance crash wrap doesn't cover them.
+    On an unhandled handler exception the wrap emits a
+    per-(service, target) ``__crash`` PN before re-raising
+    (so HA's own log / UI surfaces still fire); a successful
+    run dismisses that slot so a recovered fix clears its own
+    breadcrumb. The ``__crash`` PN carries NO ``instance_id``
+    -- a crash means the fix service is broken, not the
+    automation that emitted the repair.
     """
+    if hass.services.has_service(DOMAIN, service_name):
+        return
 
     async def _wrapped(call: ServiceCall) -> None:
         raw_data = dict(call.data) if call.data else {}
+        notification_id = call.data["notification_id"]
         try:
-            await handler(call)
+            await handler(notification_id)
         except Exception as exc:
             # Broad: every unhandled fix-service exception
             # should land in the PN. Re-raise so HA's UI /
@@ -575,7 +595,12 @@ def make_fix_service_wrapper(
                 service_name,
             )
 
-    return _wrapped
+    hass.services.async_register(
+        DOMAIN,
+        service_name,
+        _wrapped,
+        schema=_FIX_SERVICE_SCHEMA,
+    )
 
 
 async def dismiss_fix_service_crash_notification(
@@ -976,11 +1001,11 @@ __all__ = [
     "emit_config_error",
     "emit_fix_service_crash_notification",
     "entry_for_domain",
-    "make_fix_service_wrapper",
     "make_periodic_trigger_callback",
     "prepare_notifications",
     "process_persistent_notifications",
     "process_persistent_notifications_with_sweep",
+    "register_fix_service",
     "unregister_blueprint_handler",
     "update_instance_state",
     "validate_payload_or_emit_config_error",

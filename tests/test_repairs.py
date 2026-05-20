@@ -280,7 +280,6 @@ class TestWatchdogFixFlow:
             translation_key="dw_device_disabled_diagnostics",
             translation_placeholders=translation_placeholders,
             data=_flatten_repair_data(
-                "dw_device_disabled_diagnostics",
                 service_name,
                 service_data,
             ),
@@ -381,7 +380,7 @@ class TestWatchdogFixFlow:
             severity=ir.IssueSeverity.WARNING,
             translation_key="dw_device_disabled_diagnostics",
             translation_placeholders={},
-            data={"finding_kind": "dw_device_disabled_diagnostics"},
+            data={},
         )
 
         assert await async_setup_component(hass, "repairs", {})

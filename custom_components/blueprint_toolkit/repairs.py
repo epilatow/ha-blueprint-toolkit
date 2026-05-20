@@ -195,6 +195,9 @@ async def async_create_fix_flow(
         return InstallConflictsFlow(data)
     if issue_id.startswith(ISSUE_INSTALL_FAILURE):
         return InstallFailureFlow(data)
+    # The ``__repair_`` token is injected by
+    # ``helpers.repair_notification_id`` when a watchdog
+    # builds a repair-issue id; this is the matching consumer.
     if "__repair_" in issue_id:
         return WatchdogFixFlow(issue_id, data)
     msg = f"unknown issue_id: {issue_id!r}"

@@ -174,29 +174,6 @@ class FixServices(StrEnum):
     DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
 
 
-# Maps each fix service to the ``{kind}`` substring of its
-# repair-issue notification_id. Keeps the id format in one
-# place rather than rebuilt from literals at each call site.
-_REPAIR_ID_KIND: dict[FixServices, str] = {
-    FixServices.DEVICE_ENTITY_ID_DRIFT: "repair_device_entity_id_drift",
-    FixServices.DEVICE_ENTITY_NAME_DRIFT: "repair_device_entity_name_drift",
-}
-
-
-def repair_notification_id(
-    notification_prefix: str,
-    service: FixServices,
-    device_id: str,
-) -> str:
-    """Build the per-device repair-issue notification_id.
-
-    Format: ``{prefix}{kind}__{device_id}``. The ``kind``
-    carries the ``repair_`` substring the repairs flow
-    factory routes on.
-    """
-    return f"{notification_prefix}{_REPAIR_ID_KIND[service]}__{device_id}"
-
-
 @dataclass(frozen=True)
 class DeviceEntityIdDriftRepair:
     """Rich per-repair payload for an EDW id-drift fix.
@@ -1349,7 +1326,7 @@ def _build_device_repair_specs(
         ]
         device_name = r.device_name or r.device_id
         if id_renames:
-            nid = repair_notification_id(
+            nid = helpers.repair_notification_id(
                 config.notification_prefix,
                 FixServices.DEVICE_ENTITY_ID_DRIFT,
                 r.device_id,
@@ -1377,7 +1354,7 @@ def _build_device_repair_specs(
                 entity_renames=tuple(id_renames),
             )
         if name_targets:
-            nid = repair_notification_id(
+            nid = helpers.repair_notification_id(
                 config.notification_prefix,
                 FixServices.DEVICE_ENTITY_NAME_DRIFT,
                 r.device_id,

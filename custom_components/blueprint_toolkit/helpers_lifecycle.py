@@ -444,7 +444,6 @@ _CAP_SUMMARY_SUFFIX = "cap_summary"
 
 
 def _flatten_repair_data(
-    finding_kind: str,
     service_name: str,
     service_data: dict[str, Any],
 ) -> dict[str, Any]:
@@ -452,14 +451,12 @@ def _flatten_repair_data(
 
     HA's issue registry persists ``data`` to ``.storage`` via JSON
     round-trip; nested dicts and non-primitive values fail silently
-    or corrupt at restore. Each ``service_data`` field is encoded as
-    ``service_data_<key>``; the fix flow's ``async_step_confirm``
-    rebuilds the inverse.
+    or corrupt at restore. ``service_name`` names the service the
+    fix flow dispatches to; each ``service_data`` field is encoded
+    as ``service_data_<key>``, which ``async_step_confirm`` rebuilds
+    into the inverse.
     """
-    out: dict[str, Any] = {
-        "finding_kind": finding_kind,
-        "service_name": service_name,
-    }
+    out: dict[str, Any] = {"service_name": service_name}
     for k, v in service_data.items():
         out[f"service_data_{k}"] = v
     return out
@@ -479,14 +476,15 @@ async def process_repairs_with_sweep(
     Each spec is one of:
 
     - ``active=True, repair_callback=<tuple>`` -- repair candidate.
-      Routed to the issue registry when ``create_repairs=True``,
-      otherwise to the notification dispatcher (so a user with the
-      toggle off keeps today's behavior).
+      Routed to the issue registry when ``create_repairs=True``;
+      dropped when ``create_repairs=False`` (the logic instead
+      builds the finding as a ``repair_callback=None`` spec, so it
+      still surfaces once -- as a persistent notification).
     - ``active=True, repair_callback=None`` -- always a
       notification
     - ``active=False`` -- dismiss spec for either backend.
 
-    Sweep semantics mirror today's
+    Sweep semantics match
     ``process_persistent_notifications_with_sweep``: any prior-run
     artifact (notification or issue) under ``sweep_prefix`` not in
     the current batch is removed from its respective backend.
@@ -631,7 +629,6 @@ async def _dispatch_repairs_with_sweep(
             translation_key=spec.translation_key,
             translation_placeholders=spec.translation_placeholders or {},
             data=_flatten_repair_data(
-                spec.translation_key,
                 fix.service_name,
                 {"notification_id": fix.notification_id},
             ),

@@ -57,13 +57,13 @@ from ..helpers import (
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
-    make_fix_service_wrapper,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
     notification_prefix,
     process_repairs_with_sweep,
     register_blueprint_handler,
+    register_fix_service,
     resolve_target_integrations,
     schedule_periodic_with_jitter,
     spec_bucket,
@@ -716,11 +716,10 @@ def _lookup_repair(
 async def async_register_fix_services(hass: HomeAssistant) -> None:
     """Register DW's per-device repair fix services.
 
-    Idempotent under config-entry reload --
-    ``hass.services.has_service`` guards re-registration.
-    The handler is wrapped via ``make_fix_service_wrapper``
-    so a crash surfaces as a (service, target) crash PN
-    before re-raising.
+    ``register_fix_service`` owns the shared contract
+    (``notification_id`` schema, idempotent ``has_service``
+    guard, crash-PN wrap, id decoding), so each fix is just
+    ``async def (notification_id: str)``.
 
     The fix service looks up its rich payload by
     ``notification_id`` on the per-instance state. The
@@ -732,8 +731,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     (payload cleared) finds nothing and no-ops.
     """
 
-    async def _fix_disabled_diagnostics(call: ServiceCall) -> None:
-        notification_id = call.data["notification_id"]
+    async def _fix_disabled_diagnostics(notification_id: str) -> None:
         payload = _lookup_repair(hass, notification_id)
         if payload is None:
             return
@@ -751,19 +749,11 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
             # is idempotent and never destructive.
             ent_reg.async_update_entity(entity_id, disabled_by=None)
 
-    if not hass.services.has_service(
-        DOMAIN, logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS,
-            make_fix_service_wrapper(
-                hass,
-                logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS,
-                _fix_disabled_diagnostics,
-            ),
-            schema=vol.Schema({vol.Required("notification_id"): cv.string}),
-        )
+    register_fix_service(
+        hass,
+        logic.FixServices.DEVICE_DISABLED_DIAGNOSTICS,
+        _fix_disabled_diagnostics,
+    )
 
 
 __all__ = [

@@ -48,6 +48,7 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
+import voluptuous as vol  # noqa: E402
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -2704,15 +2705,15 @@ class TestFixServiceCrashNotification:
         assert dismisses[0]["notification_id"] == slot
 
 
-class TestMakeFixServiceWrapper:
-    """The drop-in crash guard around a fix-service handler.
+class TestRegisterFixService:
+    """register_fix_service owns the whole fix-service contract.
 
-    Mirrors the dispatcher's per-instance crash wrap, but
-    for the fix services registered directly via
-    ``hass.services.async_register``. On failure: emit a
-    per-(service, target) crash PN, then re-raise so HA's
-    own error surfaces still fire. On success: dismiss the
-    same slot so a recovered run clears its breadcrumb.
+    The ``notification_id`` schema, the idempotent
+    ``has_service`` guard, the crash-PN wrap, and decoding
+    the id out of the ``ServiceCall`` all live in the helper,
+    so a handler is just ``async def (notification_id: str)``.
+    On failure the wrap emits a per-(service, target) crash PN
+    then re-raises; on success it dismisses that slot.
     """
 
     def _hass(self) -> _MockHass:
@@ -2726,6 +2727,60 @@ class TestMakeFixServiceWrapper:
         c.data = data  # type: ignore[attr-defined]
         return c
 
+    def _registered(self, hass: _MockHass, name: str) -> Callable[..., Any]:
+        return hass.services.registered[(DOMAIN, name)]
+
+    @pytest.mark.asyncio
+    async def test_registers_with_notification_id_schema(self) -> None:
+        hass = self._hass()
+
+        async def _handler(_nid: str) -> None:
+            return
+
+        helpers.register_fix_service(
+            hass,  # type: ignore[arg-type]
+            "fix_dw_device_disabled_diagnostics",
+            _handler,
+        )
+        key = (DOMAIN, "fix_dw_device_disabled_diagnostics")
+        assert key in hass.services.registered
+        # The helper owns the schema; it validates a good
+        # payload and rejects a missing notification_id.
+        schema = hass.services.registered_kwargs[key]["schema"]
+        assert schema({"notification_id": "x"}) == {"notification_id": "x"}
+        with pytest.raises(vol.Invalid):
+            schema({})
+
+    @pytest.mark.asyncio
+    async def test_idempotent_under_existing_service(self) -> None:
+        hass = self._hass()
+
+        async def _handler(_nid: str) -> None:
+            return
+
+        async def _other(_nid: str) -> None:
+            return
+
+        helpers.register_fix_service(hass, "fix_xyz", _handler)  # type: ignore[arg-type]
+        first = self._registered(hass, "fix_xyz")
+        # Second registration is a no-op -- has_service guard.
+        helpers.register_fix_service(hass, "fix_xyz", _other)  # type: ignore[arg-type]
+        assert self._registered(hass, "fix_xyz") is first
+
+    @pytest.mark.asyncio
+    async def test_decodes_notification_id_to_handler(self) -> None:
+        hass = self._hass()
+        seen: list[str] = []
+
+        async def _handler(nid: str) -> None:
+            seen.append(nid)
+
+        helpers.register_fix_service(hass, "fix_xyz", _handler)  # type: ignore[arg-type]
+        await self._registered(hass, "fix_xyz")(
+            self._call(notification_id="nid_abc"),
+        )
+        assert seen == ["nid_abc"]
+
     @pytest.mark.asyncio
     async def test_failure_emits_crash_pn_and_reraises(self) -> None:
         hass = self._hass()
@@ -2733,16 +2788,17 @@ class TestMakeFixServiceWrapper:
         class _Boom(RuntimeError):
             pass
 
-        async def _handler(_call: Any) -> None:
+        async def _handler(_nid: str) -> None:
             raise _Boom("bad [stuff]")
 
-        wrapper = helpers.make_fix_service_wrapper(
+        helpers.register_fix_service(
             hass,  # type: ignore[arg-type]
             "fix_dw_device_disabled_diagnostics",
             _handler,
         )
+        wrapped = self._registered(hass, "fix_dw_device_disabled_diagnostics")
         with pytest.raises(_Boom):
-            await wrapper(self._call(notification_id="nid_abc"))
+            await wrapped(self._call(notification_id="nid_abc"))
 
         creates = [
             data
@@ -2771,15 +2827,17 @@ class TestMakeFixServiceWrapper:
             slot: _stub_existing_pn(slot, title="stale", message="stale"),
         }
 
-        async def _handler(_call: Any) -> None:
+        async def _handler(_nid: str) -> None:
             return
 
-        wrapper = helpers.make_fix_service_wrapper(
+        helpers.register_fix_service(
             hass,  # type: ignore[arg-type]
             "fix_dw_device_disabled_diagnostics",
             _handler,
         )
-        await wrapper(self._call(notification_id="nid_abc"))
+        await self._registered(hass, "fix_dw_device_disabled_diagnostics")(
+            self._call(notification_id="nid_abc")
+        )
 
         dismisses = [
             data
@@ -2793,15 +2851,13 @@ class TestMakeFixServiceWrapper:
     async def test_success_emits_no_crash_pn(self) -> None:
         hass = self._hass()
 
-        async def _handler(_call: Any) -> None:
+        async def _handler(_nid: str) -> None:
             return
 
-        wrapper = helpers.make_fix_service_wrapper(
-            hass,  # type: ignore[arg-type]
-            "fix_xyz",
-            _handler,
+        helpers.register_fix_service(hass, "fix_xyz", _handler)  # type: ignore[arg-type]
+        await self._registered(hass, "fix_xyz")(
+            self._call(notification_id="nid"),
         )
-        await wrapper(self._call(notification_id="nid"))
         creates = [
             data
             for domain, name, data in hass.services.calls

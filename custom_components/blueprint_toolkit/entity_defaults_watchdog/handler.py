@@ -59,13 +59,13 @@ from ..helpers import (
     entry_for_domain,
     integration_entity_ids,
     make_emit_config_error,
-    make_fix_service_wrapper,
     make_lifecycle_mutators,
     make_periodic_trigger_callback,
     make_unmatched_directives_notification,
     notification_prefix,
     process_repairs_with_sweep,
     register_blueprint_handler,
+    register_fix_service,
     resolve_target_integrations,
     schedule_periodic_with_jitter,
     spec_bucket,
@@ -949,11 +949,10 @@ def _lookup_repair(
 async def async_register_fix_services(hass: HomeAssistant) -> None:
     """Register EDW's per-device repair fix services.
 
-    Idempotent under config-entry reload --
-    ``hass.services.has_service`` guards re-registration.
-    Each handler is wrapped via ``make_fix_service_wrapper``
-    so a crash surfaces as a (service, target) crash PN
-    before re-raising.
+    ``register_fix_service`` owns the shared contract
+    (``notification_id`` schema, idempotent ``has_service``
+    guard, crash-PN wrap, id decoding), so each fix is just
+    ``async def (notification_id: str)``.
 
     Each fix service looks up its rich payload by
     ``notification_id`` on the per-instance state. The
@@ -966,8 +965,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
     rebuilt or swept on the next periodic tick.
     """
 
-    async def _fix_id_drift(call: ServiceCall) -> None:
-        notification_id = call.data["notification_id"]
+    async def _fix_id_drift(notification_id: str) -> None:
         payload = _lookup_repair(hass, notification_id)
         if not isinstance(payload, logic.DeviceEntityIdDriftRepair):
             return
@@ -978,8 +976,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
                 continue
             ent_reg.async_update_entity(entity_id, new_entity_id=expected_id)
 
-    async def _fix_name_drift(call: ServiceCall) -> None:
-        notification_id = call.data["notification_id"]
+    async def _fix_name_drift(notification_id: str) -> None:
         payload = _lookup_repair(hass, notification_id)
         if not isinstance(payload, logic.DeviceEntityNameDriftRepair):
             return
@@ -990,32 +987,16 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
                 continue
             ent_reg.async_update_entity(entity_id, name=target)
 
-    if not hass.services.has_service(
-        DOMAIN, logic.FixServices.DEVICE_ENTITY_ID_DRIFT
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
-            make_fix_service_wrapper(
-                hass,
-                logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
-                _fix_id_drift,
-            ),
-            schema=vol.Schema({vol.Required("notification_id"): cv.string}),
-        )
-    if not hass.services.has_service(
-        DOMAIN, logic.FixServices.DEVICE_ENTITY_NAME_DRIFT
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
-            make_fix_service_wrapper(
-                hass,
-                logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
-                _fix_name_drift,
-            ),
-            schema=vol.Schema({vol.Required("notification_id"): cv.string}),
-        )
+    register_fix_service(
+        hass,
+        logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
+        _fix_id_drift,
+    )
+    register_fix_service(
+        hass,
+        logic.FixServices.DEVICE_ENTITY_NAME_DRIFT,
+        _fix_name_drift,
+    )
 
 
 __all__ = [

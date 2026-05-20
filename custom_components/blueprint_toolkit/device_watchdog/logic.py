@@ -195,31 +195,6 @@ class FixServices(StrEnum):
     DEVICE_DISABLED_DIAGNOSTICS = "fix_dw_device_disabled_diagnostics"
 
 
-# Maps each fix service to the ``{kind}`` substring of its
-# repair-issue notification_id. Kept next to the enum so
-# the id format lives in one place rather than being
-# rebuilt from literals at each call site.
-_REPAIR_ID_KIND: dict[FixServices, str] = {
-    FixServices.DEVICE_DISABLED_DIAGNOSTICS: (
-        "repair_device_disabled_diagnostics"
-    ),
-}
-
-
-def repair_notification_id(
-    notification_prefix: str,
-    service: FixServices,
-    device_id: str,
-) -> str:
-    """Build the per-device repair-issue notification_id.
-
-    Format: ``{prefix}{kind}__{device_id}``. The ``kind``
-    carries the ``repair_`` substring the repairs flow
-    factory routes on.
-    """
-    return f"{notification_prefix}{_REPAIR_ID_KIND[service]}__{device_id}"
-
-
 @dataclass(frozen=True)
 class DisabledDiagnosticsRepair:
     """Rich per-repair payload for a DW disabled-diagnostics fix.
@@ -290,7 +265,7 @@ def evaluate_diagnostics(
     diagnostics become a single one-click Repair issue (the
     spec carries ``repair_callback`` + translation data).
     With it off, they render as the per-device persistent-
-    notification body the user is used to. Never both --
+    notification body. Never both --
     the surface is chosen here at build time, so the same
     finding never appears on two surfaces; the per-backend
     sweep clears the other surface when the toggle flips.
@@ -320,7 +295,7 @@ def evaluate_diagnostics(
         if not disabled:
             continue
         if config.create_repairs:
-            nid = repair_notification_id(
+            nid = helpers.repair_notification_id(
                 config.notification_prefix,
                 FixServices.DEVICE_DISABLED_DIAGNOSTICS,
                 device.de.id,

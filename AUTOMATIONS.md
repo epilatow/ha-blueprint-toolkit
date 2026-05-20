@@ -310,10 +310,11 @@ Notifications:
   uses to look up its rich payload). One generic class, not a subclass per fix
   -- every fix service has the same wire shape. The rich per-repair data
   (entity lists, rename targets) stays off the wire on the handler's instance
-  state, keyed by `notification_id`; only that id is serialised to the issue
-  registry (which persists `data` as flat JSON primitives). Each handler's
-  `logic.py` defines a `FixServices(StrEnum)` of its service names and builds
-  `FixService` instances directly.
+  state, keyed by `notification_id`; the issue registry's `data` holds only
+  flat JSON primitives (the service name + that id), which the fix flow
+  reconstructs into the service call. Each handler's `logic.py` defines a
+  `FixServices(StrEnum)` of its service names and builds `FixService`
+  instances directly.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active
@@ -326,9 +327,10 @@ Notifications:
 - `process_repairs_with_sweep(...)` -- routes a per-instance batch by
   `repair_callback`. Kwargs: `sweep_prefix`, `create_repairs: bool`,
   `repair_cap: int = 0`. With `create_repairs=False` repair-marked specs drop
-  entirely so the user's notification stream stays today's; with `True` they
-  route to the issue registry while non-repair specs continue to the
-  notification path. See "Repairs" below.
+  entirely (the logic builds the finding as a `repair_callback=None`
+  notification spec instead); with `True` they route to the issue registry
+  while non-repair specs continue to the notification path. See "Repairs"
+  below.
 - `make_config_error_notification(...)` -- builder; `md_escape`s every error
   bullet; empty errors -> dismiss spec.
 - `emit_config_error(...)` -- builder + dispatcher convenience wrapper; safe
@@ -762,18 +764,25 @@ as one-click Fix issues instead of as persistent notifications.
   when over cap, inactive otherwise) so a previously-active summary
   auto-dismisses when the next run is back under cap.
 - **Fix services.** Each repairable finding kind backs a per-device service
-  registered from each handler's `async_register_fix_services`. The logic
-  builds the repair specs + the rich payloads; the fix service looks up its
-  payload by `notification_id` and applies it verbatim (no re-scoping -- the
-  scan that built the payload had the user's full filter configuration in
-  scope). Per-device grouping: a device with N drifted entities is one Submit,
-  not N (EDW emits up to two, one per drift kind).
+  registered from each handler's `async_register_fix_services` via the shared
+  `helpers.register_fix_service(hass, service_name, handler)`, which owns the
+  whole fix-service contract: the `notification_id` schema, the idempotent
+  `has_service` guard, the crash-PN wrap, and decoding the id out of the
+  `ServiceCall`. A handler supplies only
+  `async def (notification_id: str) -> None`. The logic builds the repair
+  specs plus the rich payloads; the fix service looks up its payload by
+  `notification_id` and applies it verbatim (no re-scoping -- the scan that
+  built the payload had the user's full filter configuration in scope).
+  Per-device grouping: a device with N drifted entities is one Submit, not N
+  (EDW emits up to two, one per drift kind).
 - **Issue ID format.**
-  `blueprint_toolkit_{service}__{instance_id}__repair_<kind>__<device_id>` --
-  the same `__` separator convention as notifications, built via each
-  handler's `logic.repair_notification_id(...)` helper. The `__repair_`
-  substring is the routing key for `repairs.async_create_fix_flow` to pick the
-  `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
+  `blueprint_toolkit_{service}__{instance_id}__repair_{fix_service_name}__{device_id}`
+  -- the same `__` separator convention as notifications, built via the shared
+  `helpers.repair_notification_id(notification_prefix, fix_service_name, device_id)`.
+  That helper injects the `repair_` token (callers pass their `FixServices`
+  value + device id and stay agnostic of it), so the resulting id carries the
+  `__repair_` substring that `repairs.async_create_fix_flow` routes on to pick
+  the `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
   `InstallFailureFlow`.
 - **Translations.** Each repair spec sets `translation_key=<kind>`; the
   entries in `strings.json` / `translations/en.json` carry the user-visible

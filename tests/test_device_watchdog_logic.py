@@ -42,12 +42,12 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     check_disabled_diagnostics,
     evaluate_devices,
     evaluate_diagnostics,
-    repair_notification_id,
     run_evaluation,
 )
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     FixService,
     PersistentNotification,
+    repair_notification_id,
     validate_and_join_regex_patterns,
 )
 

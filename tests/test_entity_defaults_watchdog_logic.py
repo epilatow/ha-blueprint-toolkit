@@ -54,7 +54,6 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     _matches_with_collision_suffix,
     _validate_edw_directives,
     evaluate_devices,
-    repair_notification_id,
 )
 
 # -- Helpers -----------------------------------------
@@ -1761,7 +1760,7 @@ class TestBuildDeviceRepairSpecs:
         specs, repairs = _build_device_repair_specs(cfg, [result])
         assert len(specs) == 1
         spec = specs[0]
-        expected_id = repair_notification_id(
+        expected_id = helpers.repair_notification_id(
             cfg.notification_prefix,
             FixServices.DEVICE_ENTITY_ID_DRIFT,
             "abc",
@@ -1797,7 +1796,7 @@ class TestBuildDeviceRepairSpecs:
         specs, repairs = _build_device_repair_specs(cfg, [result])
         assert len(specs) == 1
         spec = specs[0]
-        expected_id = repair_notification_id(
+        expected_id = helpers.repair_notification_id(
             cfg.notification_prefix,
             FixServices.DEVICE_ENTITY_NAME_DRIFT,
             "abc",

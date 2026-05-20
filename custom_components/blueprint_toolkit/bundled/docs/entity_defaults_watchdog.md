@@ -300,7 +300,7 @@ user how many findings were suppressed; raise the cap or fix the visible
 issues to surface more. The summary uses a regular notification (not a repair)
 so it can be dismissed in bulk from the notifications panel.
 
-Disable **Create repairs** to keep today's notification-only behavior on this
+Disable **Create repairs** to keep notification-only behavior on this
 instance.
 
 ## Developer notes
