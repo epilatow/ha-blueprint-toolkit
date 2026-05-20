@@ -161,7 +161,18 @@ class DeviceResult:
 # at all, it's silently skipped (device doesn't support
 # it).
 RECOMMENDED_DIAGNOSTICS: dict[str, list[str]] = {
-    "zwave_js": ["Last seen", "Node status", "Signal strength"],
+    "zwave_js": [
+        "Last seen",
+        "Node status",
+        "Signal strength",
+        "Battery level",
+        "Round trip time",
+        "Successful commands (RX)",
+        "Successful commands (TX)",
+        "Commands dropped (RX)",
+        "Commands dropped (TX)",
+        "Timed out responses",
+    ],
     "bthome": ["Signal strength"],
     "shelly": ["RSSI"],
     "unifiprotect": ["Wi-Fi signal strength", "Uptime"],

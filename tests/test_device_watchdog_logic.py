@@ -26,6 +26,7 @@ from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa:
     CHECK_DEVICE_UPDATES,
     CHECK_DISABLED_DIAGNOSTICS,
     CHECK_UNAVAILABLE_ENTITIES,
+    RECOMMENDED_DIAGNOSTICS,
     Config,
     DeviceEntry,
     DeviceInfo,
@@ -851,6 +852,44 @@ class TestCheckDisabledDiagnostics:
             entries,
         )
         assert [d.original_name for d in result] == ["Last seen", "Node status"]
+
+    def test_zwave_js_recommended_set(self) -> None:
+        # Pin the zwave_js recommended-diagnostic set: the
+        # always-present node health indicators plus the
+        # per-node network-health statistics zwave_js disables
+        # by default. A future edit that drops one is a
+        # regression.
+        assert set(RECOMMENDED_DIAGNOSTICS["zwave_js"]) == {
+            "Last seen",
+            "Node status",
+            "Signal strength",
+            "Battery level",
+            "Round trip time",
+            "Successful commands (RX)",
+            "Successful commands (TX)",
+            "Commands dropped (RX)",
+            "Commands dropped (TX)",
+            "Timed out responses",
+        }
+
+    def test_zwave_js_statistic_flagged_when_disabled(self) -> None:
+        # A disabled per-node statistic (not just the original
+        # three) is flagged once it's in the recommended set.
+        entries = [
+            _reg_entry(
+                original_name="Round trip time",
+                disabled=True,
+            ),
+            _reg_entry(
+                original_name="Commands dropped (TX)",
+                disabled=True,
+            ),
+        ]
+        result = check_disabled_diagnostics("zwave_js", entries)
+        assert {d.original_name for d in result} == {
+            "Round trip time",
+            "Commands dropped (TX)",
+        }
 
     def test_partial_disabled(self) -> None:
         entries = [

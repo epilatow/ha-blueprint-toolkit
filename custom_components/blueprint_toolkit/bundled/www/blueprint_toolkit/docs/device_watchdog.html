@@ -66,8 +66,10 @@ etc.)</li>
 <li>Configurable entity domain filtering</li>
 <li>Configurable check interval and staleness threshold</li>
 <li>Notification cap to limit per-device notifications</li>
-<li>Diagnostic entity check: notifies when recommended diagnostic entities
-(e.g., Last seen, Node status, Signal strength) are disabled</li>
+<li>Diagnostic entity check: notifies when recommended diagnostic entities are
+disabled (for Z-Wave JS: Last seen, Node status, Signal strength, Battery
+level, plus the per-node network-health statistics -- round trip time,
+successful / dropped commands, timed-out responses)</li>
 <li>Per-check selection so exclusion lists can be scoped per check (instantiate
 the blueprint once per check)</li>
 <li>Optional debug logging</li>
