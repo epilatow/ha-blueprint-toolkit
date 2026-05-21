@@ -39,8 +39,8 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     EdwRepair,
     EntityDriftInfo,
     FixServices,
+    VisibleAliasedCandidate,
     VisibleAliasedEntityFinding,
-    VisibleAliasedEntityInfo,
     VisibleAliasedEntityRepair,
     _build_device_notification_message,
     _build_device_repair_specs,
@@ -1370,23 +1370,45 @@ class TestValidateEdwDirectives:
         assert not [u for u in out if u.field == "exclude_entities"], out
 
 
-def _vinfo(
-    source_entity_id: str = "switch.foo",
+def _vcandidate(
+    source_entity_id: str | None = "switch.foo",
     wrapper_entity_id: str = "foo",
-    wrapper_target_domain: str = "fan",
-    wrapper_title: str = "Foo Fan",
+    wrapper_target_domain: str | None = "fan",
     source_friendly_name: str = "Foo",
     source_device_id: str | None = "dev_abc",
     source_config_entry_id: str | None = "cfg_abc",
-) -> VisibleAliasedEntityInfo:
-    return VisibleAliasedEntityInfo(
+    *,
+    entry_disabled: bool = False,
+    source_registered: bool = True,
+    source_hidden_by: str | None = None,
+    source_disabled_by: str | None = None,
+    wrapper_obj_ids: tuple[str, ...] | None = None,
+    source_device_name: str | None = None,
+    source_device_integrations: tuple[str, ...] = (),
+) -> VisibleAliasedCandidate:
+    """Build a clean finding-candidate by default.
+
+    The defaults describe a visible source with a single
+    wrapper -- a genuine finding. The keyword knobs let a test
+    flip one fact to exercise a defensive-skip branch.
+    """
+    return VisibleAliasedCandidate(
+        entry_disabled=entry_disabled,
         source_entity_id=source_entity_id,
-        wrapper_entity_id=wrapper_entity_id,
-        wrapper_target_domain=wrapper_target_domain,
-        wrapper_title=wrapper_title,
+        target_domain=wrapper_target_domain,
+        source_registered=source_registered,
+        wrapper_obj_ids=(
+            wrapper_obj_ids
+            if wrapper_obj_ids is not None
+            else (wrapper_entity_id,)
+        ),
+        source_hidden_by=source_hidden_by,
+        source_disabled_by=source_disabled_by,
         source_friendly_name=source_friendly_name,
         source_device_id=source_device_id,
         source_config_entry_id=source_config_entry_id,
+        source_device_name=source_device_name,
+        source_device_integrations=source_device_integrations,
     )
 
 
@@ -1394,50 +1416,52 @@ class TestVisibleAliasedEvaluate:
     """Per-port logic-side coverage of the visible-aliased
     drift check.
 
-    The handler is responsible for the defensive-skip cases
-    (entry disabled, malformed options, wrapper missing,
-    source disabled, source already hidden) -- those entries
-    never reach the logic layer, so the tests here only
-    cover the user-exclusion + finding-shape / body-render
-    paths.
+    The handler hands one raw candidate per switch_as_x config
+    entry; this logic layer owns both the defensive-skip
+    classification (entry disabled, malformed options, source
+    missing, wrapper count, source disabled / hidden) and the
+    user-exclusion + finding-shape / body-render paths.
     """
 
-    def test_no_infos_no_findings(self) -> None:
+    def test_no_candidates_no_findings(self) -> None:
         cfg = _config()
         result = _evaluate_visible_aliased_entities(cfg, [])
         assert result.has_issue is False
         assert result.findings == []
         assert result.entries_kept == 0
         assert result.entries_excluded == 0
+        assert result.defensive_skipped == 0
 
-    def test_each_info_yields_one_finding(self) -> None:
+    def test_each_candidate_yields_one_finding(self) -> None:
         cfg = _config()
-        infos = [
-            _vinfo(
+        candidates = [
+            _vcandidate(
                 source_entity_id="switch.foo",
                 wrapper_entity_id="foo",
                 wrapper_target_domain="fan",
                 source_friendly_name="Foo",
             ),
-            _vinfo(
+            _vcandidate(
                 source_entity_id="switch.bar",
                 wrapper_entity_id="bar",
                 wrapper_target_domain="light",
                 source_friendly_name="Bar",
             ),
         ]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         assert result.has_issue is True
         assert len(result.findings) == 2
         eids = {f.source_entity_id for f in result.findings}
         assert eids == {"switch.foo", "switch.bar"}
+        assert result.entries_kept == 2
+        assert result.defensive_skipped == 0
 
     def test_finding_shape_carries_wrapper_and_source_ids(
         self,
     ) -> None:
         cfg = _config()
-        infos = [
-            _vinfo(
+        candidates = [
+            _vcandidate(
                 source_entity_id="switch.kitchen",
                 wrapper_entity_id="kitchen",
                 wrapper_target_domain="fan",
@@ -1446,7 +1470,7 @@ class TestVisibleAliasedEvaluate:
                 source_config_entry_id="ce_kitchen",
             ),
         ]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         assert len(result.findings) == 1
         finding = result.findings[0]
         assert isinstance(finding, VisibleAliasedEntityFinding)
@@ -1465,28 +1489,116 @@ class TestVisibleAliasedEvaluate:
         # builder routes to the deviceless link form in
         # that case.
         cfg = _config()
-        infos = [
-            _vinfo(
+        candidates = [
+            _vcandidate(
                 source_entity_id="switch.input",
                 source_device_id=None,
                 source_config_entry_id="cfg_input",
             ),
         ]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         finding = result.findings[0]
         assert finding.source_device_id is None
         assert finding.source_config_entry_id == "cfg_input"
 
+    def test_entry_disabled_skipped(self) -> None:
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [_vcandidate(entry_disabled=True)],
+        )
+        assert result.findings == []
+        assert result.defensive_skipped == 1
+
+    def test_malformed_options_skipped(self) -> None:
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [
+                _vcandidate(source_entity_id=None),
+                _vcandidate(wrapper_target_domain=None),
+            ],
+        )
+        assert result.findings == []
+        assert result.defensive_skipped == 2
+
+    def test_unregistered_source_skipped(self) -> None:
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [_vcandidate(source_registered=False)],
+        )
+        assert result.findings == []
+        assert result.defensive_skipped == 1
+
+    def test_wrong_wrapper_count_skipped(self) -> None:
+        # Zero or multiple wrapper entities for one switch_as_x
+        # entry means something has gone sideways; flagging
+        # would mislead.
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [
+                _vcandidate(wrapper_obj_ids=()),
+                _vcandidate(wrapper_obj_ids=("a", "b")),
+            ],
+        )
+        assert result.findings == []
+        assert result.defensive_skipped == 2
+
+    def test_disabled_source_skipped(self) -> None:
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [_vcandidate(source_disabled_by="user")],
+        )
+        assert result.findings == []
+        assert result.defensive_skipped == 1
+
+    def test_hidden_source_is_healthy_and_skipped(self) -> None:
+        # The source still carrying hidden_by is the healthy
+        # state switch_as_x set up -- not a finding.
+        cfg = _config()
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [_vcandidate(source_hidden_by="integration")],
+        )
+        assert result.findings == []
+        assert result.defensive_skipped == 1
+
+    def test_mixed_finding_skip_and_exclusion_counts(self) -> None:
+        cfg = _config(exclude_entity_ids=["switch.excluded"])
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [
+                _vcandidate(source_entity_id="switch.flagged"),
+                _vcandidate(
+                    source_entity_id="switch.excluded",
+                    wrapper_entity_id="excluded",
+                ),
+                _vcandidate(
+                    source_entity_id="switch.hidden",
+                    source_hidden_by="integration",
+                ),
+            ],
+        )
+        assert {f.source_entity_id for f in result.findings} == {
+            "switch.flagged",
+        }
+        assert result.entries_kept == 1
+        assert result.entries_excluded == 1
+        assert result.defensive_skipped == 1
+
     def test_excluded_by_entity_id_list(self) -> None:
         cfg = _config(exclude_entity_ids=["switch.foo"])
-        infos = [
-            _vinfo(source_entity_id="switch.foo"),
-            _vinfo(
+        candidates = [
+            _vcandidate(source_entity_id="switch.foo"),
+            _vcandidate(
                 source_entity_id="switch.bar",
                 wrapper_entity_id="bar",
             ),
         ]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         assert {f.source_entity_id for f in result.findings} == {
             "switch.bar",
         }
@@ -1494,14 +1606,14 @@ class TestVisibleAliasedEvaluate:
 
     def test_excluded_by_entity_id_regex(self) -> None:
         cfg = _config(exclude_entity_id_regex="^switch\\.skip_")
-        infos = [
-            _vinfo(source_entity_id="switch.skip_me"),
-            _vinfo(
+        candidates = [
+            _vcandidate(source_entity_id="switch.skip_me"),
+            _vcandidate(
                 source_entity_id="switch.keep",
                 wrapper_entity_id="keep",
             ),
         ]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         assert {f.source_entity_id for f in result.findings} == {
             "switch.keep",
         }
@@ -1509,18 +1621,18 @@ class TestVisibleAliasedEvaluate:
 
     def test_excluded_by_entity_name_regex(self) -> None:
         cfg = _config(exclude_entity_name_regex="^Skip ")
-        infos = [
-            _vinfo(
+        candidates = [
+            _vcandidate(
                 source_entity_id="switch.foo",
                 source_friendly_name="Skip Me",
             ),
-            _vinfo(
+            _vcandidate(
                 source_entity_id="switch.bar",
                 wrapper_entity_id="bar",
                 source_friendly_name="Keep",
             ),
         ]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         assert {f.source_entity_id for f in result.findings} == {
             "switch.bar",
         }
@@ -1528,8 +1640,8 @@ class TestVisibleAliasedEvaluate:
 
     def test_only_emits_when_nonempty(self) -> None:
         cfg = _config(exclude_entity_ids=["switch.foo"])
-        infos = [_vinfo(source_entity_id="switch.foo")]
-        result = _evaluate_visible_aliased_entities(cfg, infos)
+        candidates = [_vcandidate(source_entity_id="switch.foo")]
+        result = _evaluate_visible_aliased_entities(cfg, candidates)
         assert result.has_issue is False
         assert result.findings == []
         # Title + message stay empty when there is nothing
@@ -1541,7 +1653,7 @@ class TestVisibleAliasedEvaluate:
         cfg = _config(
             notification_prefix="entity_defaults_watchdog_test__",
         )
-        result = _evaluate_visible_aliased_entities(cfg, [_vinfo()])
+        result = _evaluate_visible_aliased_entities(cfg, [_vcandidate()])
         assert result.notification_id == (
             "entity_defaults_watchdog_test__visible_aliased"
         )
@@ -2007,7 +2119,9 @@ class TestVisibleAliasedRepairBranch:
             peers_by_domain={},
             all_integrations=[],
             max_notifications=100,
-            visible_aliased_infos=[_vinfo(source_entity_id="switch.foo")],
+            visible_aliased_candidates=[
+                _vcandidate(source_entity_id="switch.foo"),
+            ],
         )
         return ev.notifications, ev.repairs
 

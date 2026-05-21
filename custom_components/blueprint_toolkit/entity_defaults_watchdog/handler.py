@@ -352,18 +352,13 @@ async def _async_service_layer(
         logic.DEVICELESS_DOMAINS,
         target_integrations,
     )
-    # Visible-aliased inputs come from the switch_as_x
+    # Visible-aliased candidates come from the switch_as_x
     # config entries, not the entity registry walk -- the
     # source-entity hide is keyed off the wrapper config
-    # entry, so the entry list is the natural starting
-    # point. Defensive-check skips (entry disabled,
-    # malformed options, wrapper missing, source disabled,
-    # source already hidden) get filtered out at the
-    # builder so the logic layer only sees genuinely
-    # candidate sources.
-    visible_aliased_infos, visible_aliased_defensive_skipped = (
-        _build_visible_aliased_inputs(hass)
-    )
+    # entry, so the entry list is the natural starting point.
+    # The extractor only reads the registry; the logic layer
+    # owns the defensive-skip + finding decisions.
+    visible_aliased_candidates = _extract_visible_aliased_candidates(hass)
 
     # Candidate sets for the directive validators. Sourced
     # from the FULL device + entity registries (NOT filtered
@@ -418,7 +413,7 @@ async def _async_service_layer(
         all_integrations,
         max_notifications,
         directive_inputs,
-        visible_aliased_infos,
+        visible_aliased_candidates,
     )
 
     unmatched_spec = make_unmatched_directives_notification(
@@ -478,19 +473,19 @@ async def _async_service_layer(
             "deviceless_excluded": ev.stat_deviceless_excluded,
             "deviceless_drift": ev.stat_deviceless_drift,
             "deviceless_stale": ev.stat_deviceless_stale,
-            # ``kept + excluded`` is ``len(infos)`` -- every
-            # candidate the handler handed to the logic
-            # layer. Adding the handler-side defensive-skip
-            # count gives the total number of switch_as_x
-            # entries walked.
+            # ``kept + excluded + defensive_skipped`` is every
+            # switch_as_x entry the extractor walked. The logic
+            # layer owns all three counts; the excluded total
+            # rolls the defensive skips in with the user
+            # exclusions.
             "visible_aliased_total": (
                 ev.stat_visible_aliased_kept
                 + ev.stat_visible_aliased_excluded
-                + visible_aliased_defensive_skipped
+                + ev.stat_visible_aliased_defensive_skipped
             ),
             "visible_aliased_excluded": (
                 ev.stat_visible_aliased_excluded
-                + visible_aliased_defensive_skipped
+                + ev.stat_visible_aliased_defensive_skipped
             ),
             "visible_aliased_flagged": (ev.stat_visible_aliased_flagged),
             "unmatched_directives": len(ev.unmatched_directives),
@@ -740,92 +735,68 @@ def _build_deviceless_inputs(
 _SWITCH_AS_X_DOMAIN = "switch_as_x"
 
 
-def _build_visible_aliased_inputs(
+def _extract_visible_aliased_candidates(
     hass: HomeAssistant,
-) -> tuple[list[logic.VisibleAliasedEntityInfo], int]:
-    """Walk switch_as_x entries; return surviving inputs + defensive-skip count.
+) -> list[logic.VisibleAliasedCandidate]:
+    """Extract one candidate per switch_as_x config entry.
 
-    Defensive-skip cases (counted into the returned int, not
-    the input list):
-
-    - The whole switch_as_x entry is disabled
-      (``entry.disabled_by is not None``) -- skip.
-    - ``entry.options`` is malformed (missing
-      ``entity_id`` / ``target_domain``, or non-string
-      values, or the source isn't registered) -- skip.
-    - No registry entry whose
-      ``config_entry_id == entry.entry_id`` AND
-      ``domain == target_domain`` matches, OR more than one
-      such entry matches. Something else has gone sideways
-      with the entry; a flag would mislead.
-    - The source is disabled in the registry
-      (``source.disabled_by is not None``) -- skip.
-      Disabled covers the same user-facing symptom (source
-      row hidden), so flagging would be a false positive.
-    - The source still has ``hidden_by`` set -- this is the
-      healthy case. Filtered out at the builder so the
-      logic layer's input list maps 1:1 to candidate
-      findings.
+    Reads the config entries plus the entity / device
+    registries and records the raw facts for each entry,
+    applying NO skip decisions -- the logic layer's
+    ``_evaluate_visible_aliased_entities`` owns the defensive
+    rules and the finding-vs-skip classification. Source facts
+    (hidden / disabled state, friendly name, device info) are
+    populated only when the source resolves in the registry;
+    otherwise they stay at their empty defaults and the logic
+    skips the entry before reading them.
     """
     ent_reg = er.async_get(hass)
-    infos: list[logic.VisibleAliasedEntityInfo] = []
-    defensive_skipped = 0
+    candidates: list[logic.VisibleAliasedCandidate] = []
 
     for entry in hass.config_entries.async_entries(
         _SWITCH_AS_X_DOMAIN,
     ):
-        if entry.disabled_by is not None:
-            defensive_skipped += 1
-            continue
-
         options: Mapping[str, Any] = entry.options or {}
         source_eid_raw = options.get("entity_id")
         target_domain_raw = options.get("target_domain")
-        if not isinstance(source_eid_raw, str) or not source_eid_raw:
-            defensive_skipped += 1
-            continue
-        if not isinstance(target_domain_raw, str) or not target_domain_raw:
-            defensive_skipped += 1
-            continue
-
-        source = ent_reg.async_get(source_eid_raw)
-        if source is None:
-            defensive_skipped += 1
-            continue
-
-        # Filter wrapper candidates by both ``config_entry_id``
-        # and ``target_domain`` so the lookup remains stable if
-        # a switch_as_x entry ever registers more than one
-        # entity (today HA core registers exactly one per
-        # entry; the registry walk order isn't guaranteed
-        # stable across HA versions).
-        wrapper_matches = [
-            e
-            for e in ent_reg.entities.values()
-            if e.config_entry_id == entry.entry_id
-            and e.domain == target_domain_raw
-        ]
-        if len(wrapper_matches) != 1:
-            defensive_skipped += 1
-            continue
-        wrapper = wrapper_matches[0]
-
-        if source.disabled_by is not None:
-            defensive_skipped += 1
-            continue
-
-        # Healthy case: integration- (or user-) hidden source
-        # is filtered out here. Logic only sees candidates
-        # whose source is visible, mapping 1:1 to findings
-        # before user exclusions.
-        if source.hidden_by is not None:
-            defensive_skipped += 1
-            continue
-
-        wrapper_obj_id = wrapper.entity_id.split(".", 1)[1]
-        friendly = str(
-            source.name or source.original_name or source_eid_raw,
+        source_eid = (
+            source_eid_raw
+            if isinstance(source_eid_raw, str) and source_eid_raw
+            else None
         )
+        target_domain = (
+            target_domain_raw
+            if isinstance(target_domain_raw, str) and target_domain_raw
+            else None
+        )
+
+        # Wrapper entities matching this entry on both
+        # config_entry_id and target_domain. HA core registers
+        # exactly one per entry today; the logic flags any other
+        # count. Skipped when the target_domain option is
+        # malformed (the logic skips that entry anyway).
+        wrapper_obj_ids: tuple[str, ...] = ()
+        if target_domain is not None:
+            wrapper_obj_ids = tuple(
+                e.entity_id.split(".", 1)[1]
+                for e in ent_reg.entities.values()
+                if e.config_entry_id == entry.entry_id
+                and e.domain == target_domain
+            )
+
+        source = ent_reg.async_get(source_eid) if source_eid else None
+        if source is None:
+            candidates.append(
+                logic.VisibleAliasedCandidate(
+                    entry_disabled=entry.disabled_by is not None,
+                    source_entity_id=source_eid,
+                    target_domain=target_domain,
+                    source_registered=False,
+                    wrapper_obj_ids=wrapper_obj_ids,
+                ),
+            )
+            continue
+
         device_name: str | None = None
         device_integrations: tuple[str, ...] = ()
         if source.device_id is not None:
@@ -841,21 +812,33 @@ def _build_visible_aliased_inputs(
                     },
                 ),
             )
-        infos.append(
-            logic.VisibleAliasedEntityInfo(
-                source_entity_id=source_eid_raw,
-                wrapper_entity_id=wrapper_obj_id,
-                wrapper_target_domain=target_domain_raw,
-                wrapper_title=str(entry.title or ""),
-                source_friendly_name=friendly,
+        candidates.append(
+            logic.VisibleAliasedCandidate(
+                entry_disabled=entry.disabled_by is not None,
+                source_entity_id=source_eid,
+                target_domain=target_domain,
+                source_registered=True,
+                wrapper_obj_ids=wrapper_obj_ids,
+                source_hidden_by=(
+                    str(source.hidden_by)
+                    if source.hidden_by is not None
+                    else None
+                ),
+                source_disabled_by=(
+                    str(source.disabled_by)
+                    if source.disabled_by is not None
+                    else None
+                ),
+                source_friendly_name=str(
+                    source.name or source.original_name or source_eid,
+                ),
                 source_device_id=source.device_id,
                 source_config_entry_id=source.config_entry_id,
                 source_device_name=device_name,
                 source_device_integrations=device_integrations,
             ),
         )
-
-    return infos, defensive_skipped
+    return candidates
 
 
 # --------------------------------------------------------

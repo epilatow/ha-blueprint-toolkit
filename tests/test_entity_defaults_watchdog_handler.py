@@ -608,6 +608,7 @@ class _FakeRegistryEntry:
         disabled_by: object = None,
         name: str | None = None,
         original_name: str | None = None,
+        device_id: str | None = None,
     ) -> None:
         self.entity_id = entity_id
         self.config_entry_id = config_entry_id
@@ -616,6 +617,7 @@ class _FakeRegistryEntry:
         self.disabled_by = disabled_by
         self.name = name
         self.original_name = original_name
+        self.device_id = device_id
 
 
 class _FakeEntityRegistry:
@@ -659,12 +661,15 @@ class _FakeHassForBuilder:
         self.config_entries = _FakeConfigEntries(entries)
 
 
-class TestBuildVisibleAliasedInputs:
-    """Defensive-skip coverage for ``_build_visible_aliased_inputs``.
+class TestExtractVisibleAliasedCandidates:
+    """Extractor coverage for ``_extract_visible_aliased_candidates``.
 
-    The logic layer sees only entries that pass every
-    defensive check; each test below plants a single failing
-    case and asserts no info reached the input list.
+    The extractor is a thin reader: one raw candidate per
+    switch_as_x config entry, no skip decisions. Each test
+    plants registry / config-entry state and asserts the
+    extracted candidate carries the right raw facts; the
+    finding-vs-skip classification of those facts is covered by
+    the logic-layer tests.
     """
 
     def setup_method(self) -> None:
@@ -679,10 +684,10 @@ class TestBuildVisibleAliasedInputs:
     def teardown_method(self) -> None:
         handler.er.async_get = self._real_async_get
 
-    def test_wrapper_missing_in_registry_skipped(self) -> None:
-        # Source registered + visible, switch_as_x entry has
-        # well-formed options, but no registry entry whose
-        # config_entry_id matches -> defensive-skipped.
+    def test_clean_entry_extracted(self) -> None:
+        # Visible source + exactly one wrapper: the candidate
+        # carries the source facts and the single wrapper
+        # object_id (the logic turns this into a finding).
         self._registry.add(
             _FakeRegistryEntry(
                 entity_id="switch.foo",
@@ -692,47 +697,69 @@ class TestBuildVisibleAliasedInputs:
                 original_name="Foo",
             ),
         )
+        self._registry.add(
+            _FakeRegistryEntry(
+                entity_id="fan.foo",
+                domain="fan",
+                config_entry_id="entry-id-foo",
+                original_name="Foo",
+            ),
+        )
         entry = _FakeConfigEntry(
-            entry_id="orphan-entry-id",
+            entry_id="entry-id-foo",
             domain="switch_as_x",
-            options={
-                "entity_id": "switch.foo",
-                "target_domain": "fan",
-            },
+            options={"entity_id": "switch.foo", "target_domain": "fan"},
         )
         h = _FakeHassForBuilder([entry])
 
-        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
 
-        assert infos == []
-        assert skipped == 1
+        assert len(candidates) == 1
+        c = candidates[0]
+        assert c.entry_disabled is False
+        assert c.source_entity_id == "switch.foo"
+        assert c.target_domain == "fan"
+        assert c.source_registered is True
+        assert c.wrapper_obj_ids == ("foo",)
+        assert c.source_hidden_by is None
+        assert c.source_disabled_by is None
+        assert c.source_friendly_name == "Foo"
 
-    def test_multiple_wrappers_for_same_entry_skipped(self) -> None:
-        # Two registry entries match the same switch_as_x
-        # entry on both ``config_entry_id`` and
-        # ``domain == target_domain``. Today HA core
-        # registers exactly one wrapper per entry, but the
-        # builder defensively skips any entry with !=1
-        # matches so a future core change can't silently
-        # pick whichever entry the registry walk happens to
-        # yield first.
+    def test_wrapper_missing_yields_no_wrapper_ids(self) -> None:
+        # Source registered, well-formed options, but no
+        # registry entry whose config_entry_id matches -> the
+        # candidate carries an empty wrapper_obj_ids tuple.
         self._registry.add(
             _FakeRegistryEntry(
-                entity_id="switch.dup",
+                entity_id="switch.foo",
                 domain="switch",
-                hidden_by=None,
-                disabled_by=None,
-                original_name="Dup",
+                original_name="Foo",
             ),
+        )
+        entry = _FakeConfigEntry(
+            entry_id="orphan-entry-id",
+            domain="switch_as_x",
+            options={"entity_id": "switch.foo", "target_domain": "fan"},
+        )
+        h = _FakeHassForBuilder([entry])
+
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+
+        assert len(candidates) == 1
+        assert candidates[0].wrapper_obj_ids == ()
+
+    def test_multiple_wrappers_carried_through(self) -> None:
+        # Two registry entries match the same switch_as_x entry
+        # on config_entry_id + target_domain. The extractor
+        # carries both object_ids; the logic flags the !=1 count.
+        self._registry.add(
+            _FakeRegistryEntry(entity_id="switch.dup", domain="switch"),
         )
         self._registry.add(
             _FakeRegistryEntry(
                 entity_id="fan.dup_a",
                 domain="fan",
                 config_entry_id="entry-id-dup",
-                hidden_by=None,
-                disabled_by=None,
-                original_name="Dup A",
             ),
         )
         self._registry.add(
@@ -740,35 +767,25 @@ class TestBuildVisibleAliasedInputs:
                 entity_id="fan.dup_b",
                 domain="fan",
                 config_entry_id="entry-id-dup",
-                hidden_by=None,
-                disabled_by=None,
-                original_name="Dup B",
             ),
         )
         entry = _FakeConfigEntry(
             entry_id="entry-id-dup",
             domain="switch_as_x",
-            options={
-                "entity_id": "switch.dup",
-                "target_domain": "fan",
-            },
+            options={"entity_id": "switch.dup", "target_domain": "fan"},
         )
         h = _FakeHassForBuilder([entry])
 
-        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
 
-        assert infos == []
-        assert skipped == 1
+        assert len(candidates) == 1
+        assert set(candidates[0].wrapper_obj_ids) == {"dup_a", "dup_b"}
 
-    def test_source_disabled_in_registry_skipped(self) -> None:
-        # Source is disabled in the registry. Disabled covers
-        # the "source row hidden" symptom, so flagging would
-        # be a false positive; defensive-skipped.
+    def test_source_disabled_carried_through(self) -> None:
         self._registry.add(
             _FakeRegistryEntry(
                 entity_id="switch.bar",
                 domain="switch",
-                hidden_by=None,
                 disabled_by="user",
                 original_name="Bar",
             ),
@@ -778,45 +795,82 @@ class TestBuildVisibleAliasedInputs:
                 entity_id="fan.bar",
                 domain="fan",
                 config_entry_id="entry-id-bar",
-                hidden_by=None,
-                disabled_by=None,
-                original_name="Bar",
             ),
         )
         entry = _FakeConfigEntry(
             entry_id="entry-id-bar",
             domain="switch_as_x",
-            options={
-                "entity_id": "switch.bar",
-                "target_domain": "fan",
-            },
+            options={"entity_id": "switch.bar", "target_domain": "fan"},
         )
         h = _FakeHassForBuilder([entry])
 
-        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
 
-        assert infos == []
-        assert skipped == 1
+        assert len(candidates) == 1
+        assert candidates[0].source_disabled_by == "user"
+
+    def test_disabled_entry_carried_through(self) -> None:
+        entry = _FakeConfigEntry(
+            entry_id="entry-id-disabled",
+            domain="switch_as_x",
+            options={"entity_id": "switch.x", "target_domain": "fan"},
+            disabled_by="user",
+        )
+        h = _FakeHassForBuilder([entry])
+
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+
+        assert len(candidates) == 1
+        assert candidates[0].entry_disabled is True
+
+    def test_malformed_options_yield_none_fields(self) -> None:
+        entry = _FakeConfigEntry(
+            entry_id="entry-id-malformed",
+            domain="switch_as_x",
+            options={},
+        )
+        h = _FakeHassForBuilder([entry])
+
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+
+        assert len(candidates) == 1
+        c = candidates[0]
+        assert c.source_entity_id is None
+        assert c.target_domain is None
+        assert c.source_registered is False
+
+    def test_unregistered_source_marked_unregistered(self) -> None:
+        # entity_id present in the options but not in the
+        # registry: the candidate keeps the id but flags the
+        # source as unregistered.
+        entry = _FakeConfigEntry(
+            entry_id="entry-id-ghost",
+            domain="switch_as_x",
+            options={"entity_id": "switch.ghost", "target_domain": "fan"},
+        )
+        h = _FakeHassForBuilder([entry])
+
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+
+        assert len(candidates) == 1
+        c = candidates[0]
+        assert c.source_entity_id == "switch.ghost"
+        assert c.source_registered is False
 
     def test_non_switch_as_x_integration_ignored(self) -> None:
         # ``async_entries("switch_as_x")`` filters by domain,
-        # so an entry from another integration doesn't reach
-        # the loop and contributes nothing -- not even a
-        # defensive-skip count.
+        # so an entry from another integration never reaches the
+        # extractor loop.
         entry = _FakeConfigEntry(
             entry_id="other-entry-id",
             domain="some_other_integration",
-            options={
-                "entity_id": "switch.unrelated",
-                "target_domain": "fan",
-            },
+            options={"entity_id": "switch.unrelated", "target_domain": "fan"},
         )
         h = _FakeHassForBuilder([entry])
 
-        infos, skipped = handler._build_visible_aliased_inputs(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
 
-        assert infos == []
-        assert skipped == 0
+        assert candidates == []
 
 
 # --------------------------------------------------------

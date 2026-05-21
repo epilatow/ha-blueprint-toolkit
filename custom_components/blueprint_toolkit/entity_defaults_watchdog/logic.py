@@ -289,45 +289,48 @@ class DevicelessResult:
 
 
 @dataclass
-class VisibleAliasedEntityInfo:
-    """Per-switch_as_x-entry input for the visible-aliased
-    drift check.
+class VisibleAliasedCandidate:
+    """Raw per-switch_as_x-entry facts extracted by the handler.
 
-    Built by the handler from
-    ``hass.config_entries.async_entries("switch_as_x")``
-    plus entity-registry lookups; consumed by
-    ``_evaluate_visible_aliased_entities``. The handler is
-    responsible for defensive checks (entry disabled,
-    malformed options, wrapper entity missing, source
-    disabled in registry, source already hidden) -- entries
-    that fail those checks are simply not added to the
-    input list.
+    One per ``switch_as_x`` config entry, carrying the
+    config-entry + entity-registry facts the logic layer needs
+    to classify it -- with NO skip decisions applied. The
+    handler is a thin extractor (registry reads only);
+    ``_evaluate_visible_aliased_entities`` owns every defensive
+    rule (entry disabled, malformed options, source missing,
+    wrapper count, source disabled / hidden) and the
+    finding-vs-skip decision.
 
-    Carrying the wrapper's ``target_domain`` + ``title``
-    keeps the logic-side notification body self-contained
-    without re-querying the registry.
+    Source facts are populated only when ``source_registered``
+    is true; for a malformed entry (no usable ``entity_id`` /
+    ``target_domain`` in the options) or an unregistered source
+    they stay at their empty defaults, and the logic skips the
+    entry before reading them.
     """
 
-    source_entity_id: str
-    wrapper_entity_id: str
-    wrapper_target_domain: str
-    wrapper_title: str
-    source_friendly_name: str
-    # Source's registry ``device_id`` / ``config_entry_id``
-    # if set. Threaded into ``VisibleAliasedEntityFinding``
-    # so the notification body picks ``device_entity_link``
-    # for device-attached sources or
-    # ``deviceless_entity_link`` for helper / template
-    # sources without a device.
+    entry_disabled: bool
+    # ``options["entity_id"]`` / ``options["target_domain"]``,
+    # ``None`` when the option is missing or non-string.
+    source_entity_id: str | None
+    target_domain: str | None
+    source_registered: bool
+    # Registry entries whose ``config_entry_id`` matches this
+    # switch_as_x entry AND whose ``domain`` is the target
+    # domain. The logic flags anything other than exactly one
+    # as a defensive skip; the single match's object_id becomes
+    # the finding's ``wrapper_entity_id``.
+    wrapper_obj_ids: tuple[str, ...] = ()
+    source_hidden_by: str | None = None
+    source_disabled_by: str | None = None
+    source_friendly_name: str = ""
     source_device_id: str | None = None
     source_config_entry_id: str | None = None
     # Source device's display name + the integrations whose
-    # entities are attached to it, resolved by the handler
-    # when ``source_device_id`` is set. Threaded into the
-    # repair spec's ``DeviceRef`` so the confirm modal's
-    # attribution header carries the same Device / Integrations
-    # lines as the device-drift repairs. Empty for deviceless
-    # (template / helper) sources.
+    # entities are attached to it, resolved when the source has
+    # a ``device_id``. Threaded into the finding's repair
+    # ``DeviceRef`` so the confirm modal's attribution header
+    # carries the Device / Integrations lines. Empty for
+    # deviceless (template / helper) sources.
     source_device_name: str | None = None
     source_device_integrations: tuple[str, ...] = ()
 
@@ -344,10 +347,9 @@ class VisibleAliasedEntityFinding:
     fields or pollute the deviceless schema with optional
     aliased-only fields.
 
-    ``source_device_id`` / ``source_config_entry_id`` are
-    threaded from ``VisibleAliasedEntityInfo`` so the body
-    picks ``device_entity_link`` (both set) or
-    ``deviceless_entity_link`` (neither set, or no
+    ``source_device_id`` / ``source_config_entry_id`` carry
+    from the candidate so the body picks ``device_entity_link``
+    (both set) or ``deviceless_entity_link`` (neither set, or no
     device_id) per-finding.
     """
 
@@ -372,13 +374,15 @@ class VisibleAliasedResult:
     notification body assembles them into the rendered
     aggregate message.
 
-    ``entries_kept`` is the count of ``infos`` that survived
-    user exclusion (``len(infos) - entries_excluded``);
-    ``entries_excluded`` is the count filtered out by
-    ``exclude_entities`` / ``exclude_entity_id_regex`` /
-    ``exclude_entity_name_regex``. Defensive-check
-    bookkeeping (entries dropped at the handler before
-    they ever reach logic) is the handler's responsibility.
+    ``entries_kept`` is the count of candidates that passed
+    the defensive rules and survived user exclusion (equals
+    ``len(findings)``); ``entries_excluded`` is the count
+    filtered out by ``exclude_entities`` /
+    ``exclude_entity_id_regex`` / ``exclude_entity_name_regex``;
+    ``defensive_skipped`` is the count dropped by the defensive
+    rules (entry disabled, malformed options, source missing,
+    wrapper count, source disabled / hidden). The three plus
+    cover every candidate the handler extracted.
     """
 
     has_issue: bool
@@ -388,6 +392,7 @@ class VisibleAliasedResult:
     findings: list[VisibleAliasedEntityFinding]
     entries_kept: int
     entries_excluded: int
+    defensive_skipped: int
 
 
 @dataclass
@@ -1161,46 +1166,73 @@ def _build_visible_aliased_notification_message(
     return "\n".join(lines)
 
 
+def _is_visible_aliased_candidate(c: VisibleAliasedCandidate) -> bool:
+    """Whether a switch_as_x entry is a genuine drift finding.
+
+    A finding is a switch_as_x entry whose source is registered,
+    enabled, currently visible (``hidden_by is None``), and
+    backed by exactly one wrapper entity. Everything else is a
+    defensive skip: a disabled entry, malformed options (no
+    usable ``entity_id`` / ``target_domain``), an unregistered
+    source, a zero- or multi-wrapper entry, a disabled source
+    (already hidden by the disable), or a source that is still
+    integration / user hidden (the healthy case).
+    """
+    if c.entry_disabled:
+        return False
+    if not c.source_entity_id or not c.target_domain:
+        return False
+    if not c.source_registered:
+        return False
+    if len(c.wrapper_obj_ids) != 1:
+        return False
+    if c.source_disabled_by is not None:
+        return False
+    return c.source_hidden_by is None
+
+
 def _evaluate_visible_aliased_entities(
     config: Config,
-    infos: list[VisibleAliasedEntityInfo],
+    candidates: list[VisibleAliasedCandidate],
 ) -> VisibleAliasedResult:
-    """Evaluate switch_as_x sources for visibility drift.
+    """Classify switch_as_x candidates for visibility drift.
 
-    Each ``info`` represents a switch_as_x entry whose
-    source is currently visible (``hidden_by is None``);
-    handler-side defensive checks have already filtered
-    out entries with malformed options, disabled wrappers,
-    disabled sources, or missing wrapper entities.
-
-    Per-entity exclusions still apply at the logic layer so
-    users can keep a known-good aliased pair visible without
-    disabling the whole check (the
-    ``exclude_entities`` / ``exclude_entity_id_regex`` /
-    ``exclude_entity_name_regex`` config fields are reused
-    from the device-attached + deviceless paths).
+    Each candidate is one switch_as_x config entry the handler
+    extracted without deciding anything. This applies the
+    defensive rules (via ``_is_visible_aliased_candidate``) plus
+    per-entity user exclusions, so a clean visible source with a
+    single wrapper becomes a finding, a user-excluded one is
+    counted as excluded, and everything else is a defensive
+    skip. The ``exclude_entities`` / ``exclude_entity_id_regex``
+    / ``exclude_entity_name_regex`` config fields are shared
+    with the device-attached + deviceless paths.
     """
     findings: list[VisibleAliasedEntityFinding] = []
     excluded = 0
+    defensive_skipped = 0
 
-    for info in infos:
-        if _is_excluded(
-            config,
-            info.source_entity_id,
-            info.source_friendly_name,
-        ):
+    for c in candidates:
+        if not _is_visible_aliased_candidate(c):
+            defensive_skipped += 1
+            continue
+        # source_entity_id / target_domain are non-None and
+        # wrapper_obj_ids has exactly one entry once the candidate
+        # passes the guard above.
+        assert c.source_entity_id is not None
+        assert c.target_domain is not None
+        if _is_excluded(config, c.source_entity_id, c.source_friendly_name):
             excluded += 1
             continue
         findings.append(
             VisibleAliasedEntityFinding(
-                source_entity_id=info.source_entity_id,
-                wrapper_entity_id=info.wrapper_entity_id,
-                wrapper_target_domain=info.wrapper_target_domain,
-                source_friendly_name=info.source_friendly_name,
-                source_device_id=info.source_device_id,
-                source_config_entry_id=info.source_config_entry_id,
-                source_device_name=info.source_device_name,
-                source_device_integrations=info.source_device_integrations,
+                source_entity_id=c.source_entity_id,
+                wrapper_entity_id=c.wrapper_obj_ids[0],
+                wrapper_target_domain=c.target_domain,
+                source_friendly_name=c.source_friendly_name,
+                source_device_id=c.source_device_id,
+                source_config_entry_id=c.source_config_entry_id,
+                source_device_name=c.source_device_name,
+                source_device_integrations=c.source_device_integrations,
             ),
         )
 
@@ -1219,8 +1251,9 @@ def _evaluate_visible_aliased_entities(
         notification_title=title,
         notification_message=message,
         findings=findings,
-        entries_kept=len(infos) - excluded,
+        entries_kept=len(findings),
         entries_excluded=excluded,
+        defensive_skipped=defensive_skipped,
     )
 
 
@@ -1318,15 +1351,17 @@ class EvaluationResult:
     stat_deviceless_excluded: int
     stat_deviceless_drift: int
     stat_deviceless_stale: int
-    # Visible-aliased-entity counters. ``kept`` is the count
-    # of inputs the logic layer received that survived user
-    # exclusion; ``excluded`` is the count filtered by user
-    # exclusion. The handler adds defensive-skip bookkeeping
-    # (entries dropped before they reached logic) on top to
-    # populate the diagnostic state.
+    # Visible-aliased-entity counters. ``kept`` is the count of
+    # candidates that passed the defensive rules and survived
+    # user exclusion; ``excluded`` is the count filtered by user
+    # exclusion; ``defensive_skipped`` is the count dropped by
+    # the defensive rules. The three plus cover every candidate
+    # the handler extracted, and the handler folds them into the
+    # diagnostic-state totals.
     stat_visible_aliased_kept: int = 0
     stat_visible_aliased_excluded: int = 0
     stat_visible_aliased_flagged: int = 0
+    stat_visible_aliased_defensive_skipped: int = 0
     # Per-repair payloads (keyed by notification_id) the
     # handler stashes on instance state so the fix services
     # can recover the exact entity set without re-walking.
@@ -1621,7 +1656,7 @@ def run_evaluation(
     all_integrations: list[str],
     max_notifications: int,
     directive_inputs: DirectiveInputs | None = None,
-    visible_aliased_infos: list[VisibleAliasedEntityInfo] | None = None,
+    visible_aliased_candidates: list[VisibleAliasedCandidate] | None = None,
 ) -> EvaluationResult:
     """Run entity defaults evaluation in a worker thread.
 
@@ -1630,8 +1665,8 @@ def run_evaluation(
     drift classification + notification body assembly stays
     off the event loop.
     """
-    if visible_aliased_infos is None:
-        visible_aliased_infos = []
+    if visible_aliased_candidates is None:
+        visible_aliased_candidates = []
 
     results = evaluate_devices(config, devices)
 
@@ -1686,7 +1721,7 @@ def run_evaluation(
     if _check_visible_aliased_enabled(config):
         visible_aliased = _evaluate_visible_aliased_entities(
             config,
-            visible_aliased_infos,
+            visible_aliased_candidates,
         )
     else:
         visible_aliased = VisibleAliasedResult(
@@ -1697,6 +1732,7 @@ def run_evaluation(
             findings=[],
             entries_kept=0,
             entries_excluded=0,
+            defensive_skipped=0,
         )
 
     # Same one-surface-per-finding split as device drift above.
@@ -1756,6 +1792,9 @@ def run_evaluation(
         stat_visible_aliased_kept=visible_aliased.entries_kept,
         stat_visible_aliased_excluded=visible_aliased.entries_excluded,
         stat_visible_aliased_flagged=len(visible_aliased.findings),
+        stat_visible_aliased_defensive_skipped=(
+            visible_aliased.defensive_skipped
+        ),
         repairs=repairs,
         unmatched_directives=_validate_edw_directives(
             directive_inputs
