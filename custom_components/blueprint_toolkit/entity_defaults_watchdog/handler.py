@@ -36,14 +36,17 @@ pattern):
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -359,6 +362,12 @@ async def _async_service_layer(
     # The extractor only reads the registry; the logic layer
     # owns the defensive-skip + finding decisions.
     visible_aliased_candidates = _extract_visible_aliased_candidates(hass)
+    # Script inputs come from the entity registry: every
+    # ``platform == "script"`` entry carries the unique_id HA
+    # registered the YAML block key as, so a slug that has
+    # diverged from that key is visible without re-parsing
+    # scripts.yaml.
+    script_infos = _build_script_inputs(hass)
 
     # Candidate sets for the directive validators. Sourced
     # from the FULL device + entity registries (NOT filtered
@@ -414,6 +423,7 @@ async def _async_service_layer(
         max_notifications,
         directive_inputs,
         visible_aliased_candidates,
+        script_infos,
     )
 
     unmatched_spec = make_unmatched_directives_notification(
@@ -488,6 +498,7 @@ async def _async_service_layer(
                 + ev.stat_visible_aliased_defensive_skipped
             ),
             "visible_aliased_flagged": (ev.stat_visible_aliased_flagged),
+            "script_yaml_key_flagged": ev.stat_script_yaml_key_flagged,
             "unmatched_directives": len(ev.unmatched_directives),
         },
     )
@@ -841,6 +852,29 @@ def _extract_visible_aliased_candidates(
     return candidates
 
 
+def _build_script_inputs(hass: HomeAssistant) -> list[logic.ScriptInfo]:
+    """Walk the entity registry for ``script`` entries.
+
+    Each ``platform == "script"`` entry carries the
+    ``unique_id`` HA registered the scripts.yaml block key as.
+    The logic layer compares it against the entity-id slug to
+    flag YAML-key drift.
+    """
+    ent_reg = er.async_get(hass)
+    infos: list[logic.ScriptInfo] = []
+    for e in ent_reg.entities.values():
+        if e.platform != "script":
+            continue
+        infos.append(
+            logic.ScriptInfo(
+                entity_id=e.entity_id,
+                unique_id=e.unique_id or "",
+                friendly_name=(e.name or e.original_name or ""),
+            ),
+        )
+    return infos
+
+
 # --------------------------------------------------------
 # Periodic timer + recovery kick
 # --------------------------------------------------------
@@ -1001,6 +1035,59 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
             hidden_by=hidden,
         )
 
+    async def _fix_script_yaml_key(notification_id: str) -> None:
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, logic.ScriptYamlKeyDriftRepair):
+            return
+        scripts_path = hass.config.path("scripts.yaml")
+        ts = dt_util.now().strftime("%Y%m%d_%H%M%S")
+
+        def _rewrite() -> bool:
+            try:
+                text = Path(scripts_path).read_text()
+            except OSError:
+                return False
+            try:
+                new_text = logic.rename_top_level_yaml_key(
+                    text, payload.old_key, payload.new_slug
+                )
+            except ValueError:
+                return False
+            Path(f"{scripts_path}.edw-repair-{ts}.bak").write_text(text)
+            tmp_path = f"{scripts_path}.edw-repair.tmp"
+            Path(tmp_path).write_text(new_text)
+            os.replace(tmp_path, scripts_path)
+            return True
+
+        if not await hass.async_add_executor_job(_rewrite):
+            # Block absent from scripts.yaml (script defined via
+            # packages / !include_dir, or the file was edited
+            # out of band). Raise so the shared fix-service wrap
+            # surfaces a crash PN -- the user gets feedback that
+            # this script can't be auto-fixed, rather than a
+            # silently-failed Submit.
+            raise HomeAssistantError(
+                f"Could not rename the scripts.yaml block for "
+                f"{payload.entity_id}: the key '{payload.old_key}:' "
+                f"was not found in {scripts_path}. Scripts defined "
+                f"via packages or !include_dir are not supported by "
+                f"this repair."
+            )
+        ent_reg = er.async_get(hass)
+        if ent_reg.async_get(payload.entity_id) is not None:
+            ent_reg.async_remove(payload.entity_id)
+        await hass.services.async_call("script", "reload", blocking=True)
+        target = f"script.{payload.new_slug}"
+        new_eid = ent_reg.async_get_entity_id(
+            "script", "script", payload.new_slug
+        )
+        if (
+            new_eid is not None
+            and new_eid != target
+            and ent_reg.async_get(target) is None
+        ):
+            ent_reg.async_update_entity(new_eid, new_entity_id=target)
+
     register_fix_service(
         hass,
         logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
@@ -1015,6 +1102,11 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
         hass,
         logic.FixServices.VISIBLE_ALIASED_ENTITY,
         _fix_visible_aliased,
+    )
+    register_fix_service(
+        hass,
+        logic.FixServices.SCRIPT_YAML_KEY_DRIFT,
+        _fix_script_yaml_key,
     )
 
 

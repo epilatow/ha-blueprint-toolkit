@@ -1400,6 +1400,318 @@ class TestVisibleAliasedScan:
         )
 
 
+class TestScriptYamlKeyScan:
+    """End-to-end coverage of the script-yaml-key drift check.
+
+    Plants a ``platform == "script"`` registry entry whose
+    ``unique_id`` (the scripts.yaml block key) differs from
+    its entity-id slug, then drives a service call with the
+    new ``script-yaml-key`` drift-check value. The check is
+    repair-only: it surfaces on the Repairs surface when
+    ``create_repairs`` is on and on no surface at all when
+    off.
+    """
+
+    def _plant_script(
+        self,
+        hass: HomeAssistant,
+        *,
+        unique_id: str,
+        suggested_object_id: str,
+        friendly_name: str = "Bath Fan",
+    ) -> str:
+        """Register a script entity; return its entity_id."""
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="script",
+            platform="script",
+            unique_id=unique_id,
+            suggested_object_id=suggested_object_id,
+            original_name=friendly_name,
+        )
+        return entry.entity_id
+
+    async def test_create_repairs_true_publishes_repair(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """With ``create_repairs=true`` a drifted script
+        surfaces as one block-key-rename repair issue.
+        """
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        eid = self._plant_script(
+            hass,
+            unique_id="bath_fan",
+            suggested_object_id="bathroom",
+        )
+        assert eid == "script.bathroom"
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_script_repair",
+                drift_checks=["script-yaml-key"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        reg = ir.async_get(hass)
+        repair_issues = [
+            i
+            for i in reg.issues.values()
+            if i.domain == DOMAIN
+            and "__repair_fix_edw_script_yaml_key__" in i.issue_id
+        ]
+        assert len(repair_issues) == 1, sorted(reg.issues)
+        # The confirm modal leads with the shared attribution
+        # header; the dispatcher injects the placeholder for
+        # every repair (see AUTOMATIONS.md "Repairs"), and the
+        # confirm string must reference it.
+        placeholders = repair_issues[0].translation_placeholders or {}
+        assert "attribution" in placeholders
+
+    async def test_create_repairs_false_no_issue_no_notification(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """With ``create_repairs=false`` a drifted script
+        surfaces on no surface at all -- no repair issue and
+        no persistent notification (repair-only by design).
+        """
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        self._plant_script(
+            hass,
+            unique_id="bath_fan",
+            suggested_object_id="bathroom",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_script_notif",
+                drift_checks=["script-yaml-key"],
+                create_repairs=False,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        reg = ir.async_get(hass)
+        assert not [
+            i
+            for i in reg.issues.values()
+            if i.domain == DOMAIN
+            and "__repair_fix_edw_script_yaml_key__" in i.issue_id
+        ]
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        script_notifs = [
+            k
+            for k in notifs
+            if "edw_script_notif" in k and "config_error" not in k
+        ]
+        assert script_notifs == [], sorted(notifs)
+
+    async def test_diagnostic_state_carries_counter(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """The state entity gets ``script_yaml_key_flagged``."""
+        await _setup_integration(hass)
+        self._plant_script(
+            hass,
+            unique_id="bath_fan",
+            suggested_object_id="bathroom",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.edw_script_state",
+                drift_checks=["script-yaml-key"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        state = hass.states.get(
+            "blueprint_toolkit.edw_edw_script_state_state",
+        )
+        assert state is not None
+        assert state.attributes["script_yaml_key_flagged"] == 1
+
+    async def test_fix_rewrites_scripts_yaml_block_key(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """The fix service rewrites the scripts.yaml block key
+        and writes a timestamped backup.
+
+        Plants the per-repair payload directly + a real
+        scripts.yaml under the HA config dir, then calls the
+        fix service. Asserts the on-disk key was renamed and a
+        backup file was left behind. The registry-rebuild /
+        slug-reconcile dance after ``script.reload`` depends on
+        the script component fully wiring up in the harness, so
+        this test pins the deterministic file-edit behaviour
+        and leaves the registry-side reconcile to live
+        dev-deploy verification.
+        """
+        from homeassistant.setup import async_setup_component
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        await _setup_integration(hass)
+        scripts_path = Path(hass.config.path("scripts.yaml"))
+        scripts_path.write_text(
+            "bath_fan:\n"
+            "  alias: Bath Fan\n"
+            "  sequence:\n"
+            "    - delay: 1\n"
+            "other_script:\n"
+            "  alias: Other\n",
+        )
+        # The fix service calls ``script.reload`` after the
+        # file edit; set up the script component so the
+        # service exists, and provide the configuration.yaml
+        # the reload reads (the harness ships none).
+        config_yaml = Path(hass.config.path("configuration.yaml"))
+        if not config_yaml.exists():
+            config_yaml.write_text("script: !include scripts.yaml\n")
+        assert await async_setup_component(hass, "script", {"script": {}})
+        await hass.async_block_till_done()
+
+        # The harness config dir persists across runs, so
+        # snapshot pre-existing backups and diff against them.
+        backup_glob = "scripts.yaml.edw-repair-*.bak"
+        before = set(scripts_path.parent.glob(backup_glob))
+
+        nid = (
+            "blueprint_toolkit_edw__automation.x__"
+            "repair_fix_edw_script_yaml_key__bathroom"
+        )
+        insts = edw._instances(hass)
+        insts["automation.x"] = edw.EdwInstanceState(
+            instance_id="automation.x",
+        )
+        insts["automation.x"].repairs[nid] = edw_logic.ScriptYamlKeyDriftRepair(
+            old_key="bath_fan",
+            new_slug="bathroom",
+            entity_id="script.bathroom",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_script_yaml_key",
+            {"notification_id": nid},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        new_text = scripts_path.read_text()
+        assert new_text.startswith("bathroom:\n")
+        assert "bath_fan:" not in new_text
+        assert "other_script:\n" in new_text
+        new_backups = set(scripts_path.parent.glob(backup_glob)) - before
+        assert len(new_backups) == 1
+        assert next(iter(new_backups)).read_text().startswith("bath_fan:\n")
+
+    async def test_fix_missing_key_raises_and_leaves_file_untouched(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """If the captured block key is absent from
+        scripts.yaml (script defined via packages, or the
+        file edited out-of-band), the fix raises so the
+        shared crash-PN wrap surfaces feedback, and leaves
+        the file unchanged.
+        """
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        await _setup_integration(hass)
+        scripts_path = Path(hass.config.path("scripts.yaml"))
+        original = "other_script:\n  alias: Other\n"
+        scripts_path.write_text(original)
+        # The harness config dir persists across runs, so
+        # snapshot pre-existing backups and diff against them.
+        backup_glob = "scripts.yaml.edw-repair-*.bak"
+        before = set(scripts_path.parent.glob(backup_glob))
+
+        nid = (
+            "blueprint_toolkit_edw__automation.x__"
+            "repair_fix_edw_script_yaml_key__bathroom"
+        )
+        insts = edw._instances(hass)
+        insts["automation.x"] = edw.EdwInstanceState(
+            instance_id="automation.x",
+        )
+        insts["automation.x"].repairs[nid] = edw_logic.ScriptYamlKeyDriftRepair(
+            old_key="bath_fan",
+            new_slug="bathroom",
+            entity_id="script.bathroom",
+        )
+
+        with pytest.raises(HomeAssistantError):
+            await hass.services.async_call(
+                DOMAIN,
+                "fix_edw_script_yaml_key",
+                {"notification_id": nid},
+                blocking=True,
+            )
+        await hass.async_block_till_done()
+
+        assert scripts_path.read_text() == original
+        assert set(scripts_path.parent.glob(backup_glob)) == before
+
+    async def test_fix_unknown_notification_id_is_noop(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """The fix no-ops (no raise) when the notification_id
+        maps to no stored payload.
+        """
+        await _setup_integration(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_script_yaml_key",
+            {
+                "notification_id": (
+                    "blueprint_toolkit_entity_defaults_watchdog"
+                    "__automation.x__repair_fix_edw_script_yaml_key"
+                    "__gone"
+                ),
+            },
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+
 class TestFixServiceDeviceDrift:
     """End-to-end EDW id-drift / name-drift repair fixes.
 

@@ -8,6 +8,7 @@ change their naming conventions and HA auto-preserves
 old names.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -48,6 +49,7 @@ DRIFT_CHECK_DEVICE_ENTITY_ID = "device-entity-id"
 DRIFT_CHECK_DEVICE_ENTITY_NAME = "device-entity-name"
 DRIFT_CHECK_ENTITY_ID = "entity-id"
 DRIFT_CHECK_VISIBLE_ALIASED_ENTITY = "visible-aliased-entity"
+DRIFT_CHECK_SCRIPT_YAML_KEY = "script-yaml-key"
 
 CHECK_ALL: frozenset[str] = frozenset(
     {
@@ -55,6 +57,7 @@ CHECK_ALL: frozenset[str] = frozenset(
         DRIFT_CHECK_DEVICE_ENTITY_NAME,
         DRIFT_CHECK_ENTITY_ID,
         DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
+        DRIFT_CHECK_SCRIPT_YAML_KEY,
     },
 )
 
@@ -173,6 +176,7 @@ class FixServices(StrEnum):
     DEVICE_ENTITY_ID_DRIFT = "fix_edw_device_entity_id_drift"
     DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
     VISIBLE_ALIASED_ENTITY = "fix_edw_visible_aliased_entity"
+    SCRIPT_YAML_KEY_DRIFT = "fix_edw_script_yaml_key"
 
 
 @dataclass(frozen=True)
@@ -219,10 +223,30 @@ class VisibleAliasedEntityRepair:
     source_entity_id: str
 
 
+@dataclass(frozen=True)
+class ScriptYamlKeyDriftRepair:
+    """Rich per-repair payload for an EDW script-yaml-key fix.
+
+    Carries the script's current scripts.yaml block key
+    (``old_key`` -- the ``unique_id`` HA registered) plus the
+    entity-id object part (``new_slug``) to rename it to, and
+    the entity_id the fix re-registers afterward. Built by the
+    logic, stored on the handler's instance state keyed by
+    notification_id, read back by the fix service to rewrite
+    the scripts.yaml block key. Stays off the wire (the
+    issue-registry payload is just the notification_id).
+    """
+
+    old_key: str
+    new_slug: str
+    entity_id: str
+
+
 EdwRepair = (
     DeviceEntityIdDriftRepair
     | DeviceEntityNameDriftRepair
     | VisibleAliasedEntityRepair
+    | ScriptYamlKeyDriftRepair
 )
 
 
@@ -396,6 +420,42 @@ class VisibleAliasedResult:
 
 
 @dataclass
+class ScriptInfo:
+    """Per-script input for the script-yaml-key drift check.
+
+    Built by the handler from the entity-registry entries
+    whose ``platform == "script"``. ``unique_id`` is the
+    scripts.yaml block key HA registered the script under
+    (a YAML script keyed ``K`` registers ``unique_id == K``,
+    service ``script.K``); ``entity_id`` is the entity id the
+    user may have since renamed. When the slug differs from
+    ``unique_id`` the script answers to two names.
+    """
+
+    entity_id: str
+    unique_id: str
+    friendly_name: str
+
+
+@dataclass
+class ScriptYamlKeyDriftFinding:
+    """One flagged script whose YAML block key no longer
+    matches its entity-id slug.
+
+    ``old_key`` is the current scripts.yaml block key (the
+    registered ``unique_id``); ``new_slug`` is the entity-id
+    object part the user renamed to. The one-click fix
+    renames the block key to ``new_slug`` so the two names
+    converge.
+    """
+
+    entity_id: str
+    old_key: str
+    new_slug: str
+    friendly_name: str
+
+
+@dataclass
 class DeviceResult:
     """Per-device evaluation result."""
 
@@ -514,6 +574,11 @@ def _check_deviceless_enabled(config: Config) -> bool:
 def _check_visible_aliased_enabled(config: Config) -> bool:
     """True if visible-aliased-entity check is active."""
     return DRIFT_CHECK_VISIBLE_ALIASED_ENTITY in config.drift_checks
+
+
+def _check_script_yaml_key_enabled(config: Config) -> bool:
+    """True if script-yaml-key check is active."""
+    return DRIFT_CHECK_SCRIPT_YAML_KEY in config.drift_checks
 
 
 def _matches_with_collision_suffix(
@@ -1257,6 +1322,55 @@ def _evaluate_visible_aliased_entities(
     )
 
 
+def _evaluate_script_yaml_key_drift(
+    config: Config,
+    script_infos: list[ScriptInfo],
+) -> list[ScriptYamlKeyDriftFinding]:
+    """Flag scripts whose YAML block key no longer matches
+    their entity-id slug.
+
+    Drift is ``unique_id != <entity-id object part>``. A
+    script keyed ``K`` -- whether authored in YAML or created
+    in the UI, which slugifies the alias into the block key --
+    registers ``unique_id == K`` and service ``script.K``;
+    renaming the entity id to ``script.<slug>`` (slug != K)
+    leaves two names for one script. Per-entity exclusions
+    apply via the shared ``_is_excluded``. An entry with no
+    ``unique_id`` is skipped (nothing to compare or rename).
+    """
+    findings: list[ScriptYamlKeyDriftFinding] = []
+    for info in script_infos:
+        if not info.unique_id:
+            continue
+        if _is_excluded(config, info.entity_id, info.friendly_name):
+            continue
+        slug = info.entity_id.split(".", 1)[1]
+        if info.unique_id == slug:
+            continue
+        findings.append(
+            ScriptYamlKeyDriftFinding(
+                entity_id=info.entity_id,
+                old_key=info.unique_id,
+                new_slug=slug,
+                friendly_name=info.friendly_name,
+            ),
+        )
+    return findings
+
+
+def rename_top_level_yaml_key(text: str, old_key: str, new_key: str) -> str:
+    """Rename a top-level YAML mapping key, preserving everything else.
+
+    Matches the block key at column 0 (`^old_key:`); raises ValueError
+    if it doesn't appear exactly once (block missing / ambiguous), so
+    the caller can fail gracefully without corrupting the file.
+    """
+    pattern = re.compile(rf"(?m)^{re.escape(old_key)}:")
+    if len(pattern.findall(text)) != 1:
+        raise ValueError(f"key {old_key!r} not found exactly once")
+    return pattern.sub(f"{new_key}:", text, count=1)
+
+
 def evaluate_devices(
     config: Config,
     devices: list[DeviceInfo],
@@ -1362,6 +1476,11 @@ class EvaluationResult:
     stat_visible_aliased_excluded: int = 0
     stat_visible_aliased_flagged: int = 0
     stat_visible_aliased_defensive_skipped: int = 0
+    # Count of scripts flagged for YAML-key drift. Set on
+    # every run regardless of ``create_repairs`` (the finding
+    # only surfaces as a repair, but the count is always a
+    # diagnostic-state signal).
+    stat_script_yaml_key_flagged: int = 0
     # Per-repair payloads (keyed by notification_id) the
     # handler stashes on instance state so the fix services
     # can recover the exact entity set without re-walking.
@@ -1564,6 +1683,62 @@ def _build_visible_aliased_repair_specs(
     return specs, repairs
 
 
+def _build_script_yaml_key_repair_specs(
+    config: Config,
+    findings: list[ScriptYamlKeyDriftFinding],
+) -> tuple[
+    list[helpers.PersistentNotification],
+    dict[str, EdwRepair],
+]:
+    """Build one block-key-rename repair per script-yaml-key
+    finding.
+
+    Script-yaml-key drift is a repair-only surface: the only
+    way it surfaces at all is as a one-click Repair when
+    ``create_repairs`` is on (the caller emits nothing for
+    this finding when it's off). The rich payload (the old
+    key + new slug + entity_id) is stored keyed by
+    notification_id; the issue carries only the id.
+
+    Each spec carries an ``entities`` translation placeholder
+    -- a one-item markdown list showing the key rename -- so
+    the confirm modal shows exactly what will change.
+    """
+    specs: list[helpers.PersistentNotification] = []
+    repairs: dict[str, EdwRepair] = {}
+    for f in findings:
+        nid = helpers.repair_notification_id(
+            config.notification_prefix,
+            FixServices.SCRIPT_YAML_KEY_DRIFT,
+            f.new_slug,
+        )
+        specs.append(
+            helpers.PersistentNotification(
+                active=True,
+                notification_id=nid,
+                title="",
+                message="",
+                instance_id=config.instance_id,
+                repair_callback=helpers.FixService(
+                    service_name=FixServices.SCRIPT_YAML_KEY_DRIFT.value,
+                    notification_id=nid,
+                ),
+                translation_key="edw_script_yaml_key_drift",
+                translation_placeholders={
+                    "entity_id": f.entity_id,
+                    "old_key": f.old_key,
+                    "new_slug": f.new_slug,
+                },
+            ),
+        )
+        repairs[nid] = ScriptYamlKeyDriftRepair(
+            old_key=f.old_key,
+            new_slug=f.new_slug,
+            entity_id=f.entity_id,
+        )
+    return specs, repairs
+
+
 def _validate_edw_directives(
     inputs: DirectiveInputs,
     all_integrations: list[str],
@@ -1657,6 +1832,7 @@ def run_evaluation(
     max_notifications: int,
     directive_inputs: DirectiveInputs | None = None,
     visible_aliased_candidates: list[VisibleAliasedCandidate] | None = None,
+    script_infos: list[ScriptInfo] | None = None,
 ) -> EvaluationResult:
     """Run entity defaults evaluation in a worker thread.
 
@@ -1667,6 +1843,8 @@ def run_evaluation(
     """
     if visible_aliased_candidates is None:
         visible_aliased_candidates = []
+    if script_infos is None:
+        script_infos = []
 
     results = evaluate_devices(config, devices)
 
@@ -1758,6 +1936,25 @@ def run_evaluation(
             ),
         )
 
+    # Script-yaml-key drift is a repair-only surface: with
+    # ``create_repairs`` on, each flagged script becomes a
+    # one-click block-key-rename Repair; with it off, the
+    # finding is emitted on no surface at all (there is no
+    # notification fallback by design -- the only sensible
+    # action is the automated rename). The stat below is set
+    # regardless so the diagnostic-state count is always live.
+    if _check_script_yaml_key_enabled(config):
+        script_findings = _evaluate_script_yaml_key_drift(config, script_infos)
+    else:
+        script_findings = []
+    if config.create_repairs:
+        sk_specs, sk_repairs = _build_script_yaml_key_repair_specs(
+            config,
+            script_findings,
+        )
+        notifications.extend(sk_specs)
+        repairs.update(sk_repairs)
+
     issues = [r for r in results if r.has_issue]
     stat_deviceless_stale = sum(
         [1 for d in deviceless.drifted if d.stale_suffix]
@@ -1795,6 +1992,7 @@ def run_evaluation(
         stat_visible_aliased_defensive_skipped=(
             visible_aliased.defensive_skipped
         ),
+        stat_script_yaml_key_flagged=len(script_findings),
         repairs=repairs,
         unmatched_directives=_validate_edw_directives(
             directive_inputs

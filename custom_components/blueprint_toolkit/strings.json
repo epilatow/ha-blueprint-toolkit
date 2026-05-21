@@ -95,6 +95,18 @@
           }
         }
       }
+    },
+    "edw_script_yaml_key_drift": {
+      "title": "Script YAML-key drift: {entity_id}",
+      "description": "The script `{entity_id}` is registered under the service name `script.{old_key}`, which no longer matches its entity id. Click Submit to rename the scripts.yaml block key to `{new_slug}` so the names match.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Rename scripts.yaml key to {new_slug}?",
+            "description": "{attribution}\n\nRename the scripts.yaml block key `{old_key}` to `{new_slug}` so the service name and entity id match. A timestamped backup of scripts.yaml is written before the change, and scripts are reloaded afterward.\n\nClick Submit to apply."
+          }
+        }
+      }
     }
   }
 }

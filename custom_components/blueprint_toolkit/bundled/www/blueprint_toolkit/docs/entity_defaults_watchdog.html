@@ -71,10 +71,13 @@ HA would add it automatically)</li>
 <li>Detect visible aliased entities -- <code>switch_as_x</code> wrappers whose source
 entity is no longer hidden, so both rows show up in dashboards, voice
 assistants, and entity pickers</li>
+<li>Detect script YAML-key drift -- YAML scripts whose <code>scripts.yaml</code> block key
+(the registered service name <code>script.&lt;key&gt;</code>) no longer matches their renamed
+entity id, so the script answers to two names</li>
 <li>Per-device persistent notifications with auto-clear on drift resolution;
 single aggregate notification for deviceless entities</li>
 <li>Selectable drift checks (device entity ID, device entity name, deviceless
-ID, visible aliased entity, or any combination)</li>
+ID, visible aliased entity, script YAML-key, or any combination)</li>
 <li>Include/exclude integration filtering</li>
 <li>Regex-based device and entity exclusion filters</li>
 <li>Notification cap to limit per-device notifications</li>
@@ -101,7 +104,7 @@ device name + ID drift)</li>
 <tbody>
 <tr>
 <td>Drift checks</td>
-<td>Which checks to run: <code>device-entity-id</code>, <code>device-entity-name</code>, <code>entity-id</code> (deviceless), <code>visible-aliased-entity</code>, or any combination. Empty means all.</td>
+<td>Which checks to run: <code>device-entity-id</code>, <code>device-entity-name</code>, <code>entity-id</code> (deviceless), <code>visible-aliased-entity</code>, <code>script-yaml-key</code>, or any combination. Empty means all.</td>
 </tr>
 <tr>
 <td>Include integrations</td>
@@ -137,7 +140,7 @@ device name + ID drift)</li>
 </tr>
 <tr>
 <td>Create repairs for fixable findings</td>
-<td>Default on. Routes entity-ID drift and entity-name drift findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Other findings keep using notifications. See <strong>Repairs</strong> below.</td>
+<td>Default on. Routes entity-ID drift, entity-name drift, visible-aliased, and script YAML-key findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Script YAML-key drift surfaces ONLY when this is on. See <strong>Repairs</strong> below.</td>
 </tr>
 <tr>
 <td>Max repairs</td>
@@ -297,6 +300,25 @@ switch_as_x wrapper, whereas an integration-managed hide would be cleaned up
 when the wrapper goes away. For most users the difference is moot; if you need
 the integration-managed behavior, remove and re-add the switch_as_x config
 entry instead (the integration reapplies its hide on creation).</p>
+<h3>Script YAML-key drift</h3>
+<p>A script defined in <code>scripts.yaml</code> under the block key <code>K</code> registers with
+<code>unique_id = K</code> and the service name <code>script.K</code>. If you later rename the
+script's entity id to <code>script.&lt;slug&gt;</code> (where <code>&lt;slug&gt;</code> differs from <code>K</code>), the
+script ends up with two names: it still answers to the service <code>script.K</code> (the
+YAML block key never changed) while its entity id and friendly-name slug say
+<code>script.&lt;slug&gt;</code>. Calls, references, and the UI disagree about what the script
+is called.</p>
+<p>This check is <strong>repair-only</strong>: it does nothing unless <strong>Create repairs for
+fixable findings</strong> is on. There is no notification fallback -- the only
+sensible resolution is the automated rename, so when repairs are off the
+finding is suppressed entirely. When repairs are on, each drifted script
+surfaces as a one-click Repair. Submitting it renames the <code>scripts.yaml</code> block
+key to match the entity-id slug (writing a timestamped <code>scripts.yaml.*.bak</code>
+backup first, then reloading scripts), so the service name and entity id
+converge on <code>&lt;slug&gt;</code>.</p>
+<p>After the rename, any automation or script still calling the old
+<code>service: script.&lt;old_key&gt;</code> becomes a stale reference. The Reference Watchdog
+flags those so you can update the callers -- that hand-off is intentional.</p>
 <h3>Notification panel ordering</h3>
 <p>The order of notifications in the HA notification panel may change between
 evaluation runs. This is because each run re-creates all active notifications
@@ -330,7 +352,7 @@ scan.</p>
 <h3>Repairs</h3>
 <p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each drift
 finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
-button instead of as a persistent notification. Three finding categories
+button instead of as a persistent notification. Four finding categories
 convert:</p>
 <ul>
 <li><strong>Entity-ID drift</strong> -- &quot;rename <code>&lt;entity_id&gt;</code> to <code>&lt;default_entity_id&gt;</code>&quot;.
@@ -342,6 +364,12 @@ flagged <code>switch_as_x</code> source whose row is still visible; Submit sets
 <code>hidden_by=integration</code> on the source, restoring the original wrapper
 behaviour. With the toggle off, these instead surface as the single
 aggregate visible-aliased notification.</li>
+<li><strong>Script YAML-key drift</strong> -- &quot;rename the <code>scripts.yaml</code> block key
+<code>&lt;old_key&gt;</code> to <code>&lt;new_slug&gt;</code>&quot;. One repair per drifted YAML script; Submit
+rewrites the block key (with a timestamped backup) and reloads scripts so
+the service name matches the entity id. Unlike the other categories this is
+repair-only: with the toggle off it surfaces on no surface at all (see
+<strong>Script YAML-key drift</strong> above).</li>
 </ul>
 <p>Each Fix dialog leads with the same attribution header the notifications carry
 -- the automation that emitted it, plus the device's integration(s) and a link
@@ -391,6 +419,9 @@ stale-suffix cases)</li>
 or defensive checks (entry disabled, malformed options, wrapper entity
 missing, source disabled, source already hidden)</li>
 <li><code>visible_aliased_flagged</code>: Visible-aliased findings emitted this run</li>
+<li><code>script_yaml_key_flagged</code>: Scripts flagged for YAML-key drift this run (set
+whether or not <strong>Create repairs</strong> is on, even though the finding only
+surfaces as a repair)</li>
 <li><code>unmatched_directives</code>: Include / exclude directives that bound to zero live
 candidates this run (zero unless <strong>Validate include / exclude directives</strong>
 surfaced something)</li>

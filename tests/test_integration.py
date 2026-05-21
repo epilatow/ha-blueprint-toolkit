@@ -256,6 +256,7 @@ class TestSetupEntry:
             "fix_edw_device_entity_id_drift",
             "fix_edw_device_entity_name_drift",
             "fix_edw_visible_aliased_entity",
+            "fix_edw_script_yaml_key",
             "fix_dw_device_disabled_diagnostics",
         }
         registered = set(hass.services.async_services().get(DOMAIN, {}))

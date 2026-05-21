@@ -30,6 +30,8 @@ blueprint:
               value: entity-id
             - label: Visible aliased entity
               value: visible-aliased-entity
+            - label: Script YAML-key drift
+              value: script-yaml-key
 
     include_integrations:
       name: Include integrations
@@ -131,10 +133,13 @@ blueprint:
       name: Create repairs for fixable findings
       description: >
         When enabled, findings with a deterministic fix
-        (entity-ID drift, entity-name drift) surface as
-        Home Assistant Repairs with a one-click Fix
-        button instead of as persistent notifications.
-        Other findings keep surfacing as notifications.
+        (entity-ID drift, entity-name drift, visible
+        aliased sources, and script YAML-key drift)
+        surface as Home Assistant Repairs with a one-click
+        Fix button instead of as persistent notifications.
+        Script YAML-key drift is repair-only -- with this
+        off it is not reported at all; the other findings
+        keep surfacing as notifications.
       default: true
       selector:
         boolean: {}

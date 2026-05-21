@@ -17,12 +17,13 @@ are standalone -- self-contained YAML blueprints with no service handler.
   notifications + repairs auto-clear when devices recover.
 
 - [Entity Defaults Watchdog](docs/entity_defaults_watchdog.md) - Detects
-  entity IDs and names that have drifted from their defaults, plus switch_as_x
-  source entities left visible. Per-device notifications carry repair
-  instructions; entity-ID drift, entity-name drift, and visible aliased
-  sources additionally surface as one-click HA Repairs (rename / reset the
-  entity, or re-hide the source). Notifications + repairs auto-clear when the
-  finding is resolved.
+  entity IDs and names that have drifted from their defaults, switch_as_x
+  source entities left visible, and scripts whose YAML block key no longer
+  matches their entity id. Per-device notifications carry repair instructions;
+  entity-ID drift, entity-name drift, visible aliased sources, and script
+  YAML-key drift additionally surface as one-click HA Repairs (rename / reset
+  the entity, re-hide the source, or rename the script block key). Most
+  notifications + repairs auto-clear when the finding is resolved.
 
 - [Trigger Entity Controller](docs/trigger_entity_controller.md) - Controls
   entities (lights, switches, fans, etc.) with optional trigger-based

@@ -63,6 +63,7 @@ class HomeAssistantStubs:
     config_entries: types.ModuleType
     const: types.ModuleType
     core: types.ModuleType
+    exceptions: types.ModuleType
     helpers: types.ModuleType
     helpers_cv: types.ModuleType
     helpers_dr: types.ModuleType
@@ -153,6 +154,11 @@ def install_homeassistant_stubs(
         lambda d: bool(_valid_domain_re.match(str(d)))
     )
 
+    exceptions = types.ModuleType("homeassistant.exceptions")
+    exceptions.HomeAssistantError = type(  # type: ignore[attr-defined]
+        "HomeAssistantError", (Exception,), {}
+    )
+
     helpers = types.ModuleType("homeassistant.helpers")
     helpers_cv = types.ModuleType(
         "homeassistant.helpers.config_validation",
@@ -199,6 +205,7 @@ def install_homeassistant_stubs(
     sys.modules["homeassistant.config_entries"] = config_entries
     sys.modules["homeassistant.const"] = const
     sys.modules["homeassistant.core"] = core
+    sys.modules["homeassistant.exceptions"] = exceptions
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.config_validation"] = helpers_cv
     sys.modules["homeassistant.helpers.device_registry"] = helpers_dr
@@ -213,6 +220,7 @@ def install_homeassistant_stubs(
         config_entries=config_entries,
         const=const,
         core=core,
+        exceptions=exceptions,
         helpers=helpers,
         helpers_cv=helpers_cv,
         helpers_dr=helpers_dr,

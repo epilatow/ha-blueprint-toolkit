@@ -26,6 +26,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     CHECK_ALL,
     DRIFT_CHECK_DEVICE_ENTITY_ID,
     DRIFT_CHECK_DEVICE_ENTITY_NAME,
+    DRIFT_CHECK_SCRIPT_YAML_KEY,
     DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
     Config,
     DeviceEntityIdDriftRepair,
@@ -39,11 +40,15 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     EdwRepair,
     EntityDriftInfo,
     FixServices,
+    ScriptInfo,
+    ScriptYamlKeyDriftFinding,
+    ScriptYamlKeyDriftRepair,
     VisibleAliasedCandidate,
     VisibleAliasedEntityFinding,
     VisibleAliasedEntityRepair,
     _build_device_notification_message,
     _build_device_repair_specs,
+    _build_script_yaml_key_repair_specs,
     _build_visible_aliased_notification_message,
     _build_visible_aliased_repair_specs,
     _check_entity_drift,
@@ -52,11 +57,13 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     _compute_recommended_override,
     _evaluate_device,
     _evaluate_deviceless,
+    _evaluate_script_yaml_key_drift,
     _evaluate_visible_aliased_entities,
     _is_excluded,
     _matches_with_collision_suffix,
     _validate_edw_directives,
     evaluate_devices,
+    rename_top_level_yaml_key,
     run_evaluation,
 )
 
@@ -2184,6 +2191,326 @@ class TestVisibleAliasedRepairBranch:
         assert not any(
             isinstance(p, VisibleAliasedEntityRepair) for p in repairs.values()
         )
+
+
+class TestRenameTopLevelYamlKey:
+    """rename_top_level_yaml_key: rewrite one column-0 block
+    key, preserving the rest of the file verbatim.
+    """
+
+    def test_renames_the_one_key(self) -> None:
+        text = (
+            "old_key:\n"
+            "  alias: My Script\n"
+            "  sequence:\n"
+            "    - delay: 1\n"
+            "other_key:\n"
+            "  alias: Other\n"
+        )
+        out = rename_top_level_yaml_key(text, "old_key", "new_slug")
+        assert out == (
+            "new_slug:\n"
+            "  alias: My Script\n"
+            "  sequence:\n"
+            "    - delay: 1\n"
+            "other_key:\n"
+            "  alias: Other\n"
+        )
+
+    def test_does_not_touch_indented_or_value_occurrences(self) -> None:
+        # An ``old_key:`` that appears indented (a nested
+        # mapping key) or in a value must not be rewritten --
+        # only the column-0 block key is.
+        text = (
+            "old_key:\n"
+            "  alias: old_key reference in value\n"
+            "  nested:\n"
+            "    old_key: keep\n"
+        )
+        out = rename_top_level_yaml_key(text, "old_key", "new_slug")
+        assert out == (
+            "new_slug:\n"
+            "  alias: old_key reference in value\n"
+            "  nested:\n"
+            "    old_key: keep\n"
+        )
+
+    def test_raises_when_key_absent(self) -> None:
+        with pytest.raises(ValueError, match="not found exactly once"):
+            rename_top_level_yaml_key("foo:\n  bar: 1\n", "missing", "x")
+
+    def test_raises_when_key_appears_twice(self) -> None:
+        text = "dup:\n  a: 1\ndup:\n  b: 2\n"
+        with pytest.raises(ValueError, match="not found exactly once"):
+            rename_top_level_yaml_key(text, "dup", "x")
+
+
+def _script_info(
+    entity_id: str = "script.bath_fan",
+    unique_id: str = "bath_fan",
+    friendly_name: str = "Bath Fan",
+) -> ScriptInfo:
+    return ScriptInfo(
+        entity_id=entity_id,
+        unique_id=unique_id,
+        friendly_name=friendly_name,
+    )
+
+
+class TestEvaluateScriptYamlKeyDrift:
+    """_evaluate_script_yaml_key_drift: flag scripts whose YAML
+    block key no longer matches the entity-id slug, with the
+    UI-script false-positive guard.
+    """
+
+    def test_drift_flagged_when_key_differs_from_slug(self) -> None:
+        cfg = _config()
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bathroom", unique_id="bath_fan")],
+        )
+        assert len(findings) == 1
+        f = findings[0]
+        assert isinstance(f, ScriptYamlKeyDriftFinding)
+        assert f.entity_id == "script.bathroom"
+        assert f.old_key == "bath_fan"
+        assert f.new_slug == "bathroom"
+        assert f.friendly_name == "Bath Fan"
+
+    def test_no_drift_when_key_equals_slug(self) -> None:
+        cfg = _config()
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bath_fan", unique_id="bath_fan")],
+        )
+        assert findings == []
+
+    def test_drift_flagged_regardless_of_key_shape(self) -> None:
+        # No readable-slug guard: any script whose unique_id
+        # (the block key / service name) differs from the
+        # entity-id slug is flagged, whatever the key's shape.
+        cfg = _config()
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bathroom", unique_id="1700000000")],
+        )
+        assert len(findings) == 1
+        assert findings[0].old_key == "1700000000"
+        assert findings[0].new_slug == "bathroom"
+
+    def test_empty_unique_id_skipped(self) -> None:
+        cfg = _config()
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bathroom", unique_id="")],
+        )
+        assert findings == []
+
+    def test_excluded_entity_skipped(self) -> None:
+        cfg = _config(exclude_entity_ids=["script.bathroom"])
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bathroom", unique_id="bath_fan")],
+        )
+        assert findings == []
+
+
+class TestBuildScriptYamlKeyRepairSpecs:
+    """_build_script_yaml_key_repair_specs: one block-key-rename
+    repair per finding.
+    """
+
+    def test_no_findings_no_specs(self) -> None:
+        specs, repairs = _build_script_yaml_key_repair_specs(
+            _config(create_repairs=True),
+            [],
+        )
+        assert specs == []
+        assert repairs == {}
+
+    def test_one_finding_one_spec(self) -> None:
+        cfg = _config(create_repairs=True)
+        finding = ScriptYamlKeyDriftFinding(
+            entity_id="script.bathroom",
+            old_key="bath_fan",
+            new_slug="bathroom",
+            friendly_name="Bath Fan",
+        )
+        specs, repairs = _build_script_yaml_key_repair_specs(cfg, [finding])
+        assert len(specs) == 1
+        spec = specs[0]
+        expected_id = helpers.repair_notification_id(
+            cfg.notification_prefix,
+            FixServices.SCRIPT_YAML_KEY_DRIFT,
+            "bathroom",
+        )
+        assert spec.notification_id == expected_id
+        assert "__repair_" in spec.notification_id
+        assert spec.translation_key == "edw_script_yaml_key_drift"
+        assert spec.translation_placeholders == {
+            "entity_id": "script.bathroom",
+            "old_key": "bath_fan",
+            "new_slug": "bathroom",
+        }
+        assert spec.repair_callback is not None
+        assert spec.repair_callback.service_name == (
+            FixServices.SCRIPT_YAML_KEY_DRIFT.value
+        )
+        assert spec.repair_callback.notification_id == expected_id
+        payload = repairs[expected_id]
+        assert isinstance(payload, ScriptYamlKeyDriftRepair)
+        assert payload.old_key == "bath_fan"
+        assert payload.new_slug == "bathroom"
+        assert payload.entity_id == "script.bathroom"
+
+    def test_each_finding_gets_its_own_spec(self) -> None:
+        cfg = _config(create_repairs=True)
+        findings = [
+            ScriptYamlKeyDriftFinding(
+                entity_id="script.one",
+                old_key="key_one",
+                new_slug="one",
+                friendly_name="One",
+            ),
+            ScriptYamlKeyDriftFinding(
+                entity_id="script.two",
+                old_key="key_two",
+                new_slug="two",
+                friendly_name="Two",
+            ),
+        ]
+        specs, repairs = _build_script_yaml_key_repair_specs(cfg, findings)
+        assert len(specs) == 2
+        assert len(repairs) == 2
+        slugs = {
+            p.new_slug
+            for p in repairs.values()
+            if isinstance(p, ScriptYamlKeyDriftRepair)
+        }
+        assert slugs == {"one", "two"}
+
+
+class TestScriptYamlKeyRepairBranch:
+    """run_evaluation routes script-yaml-key findings to the
+    repairs surface only -- there is no notification fallback.
+    """
+
+    def _run(
+        self,
+        cfg: Config,
+        *,
+        unique_id: str = "bath_fan",
+    ) -> tuple[list[helpers.PersistentNotification], dict[str, EdwRepair]]:
+        ev = run_evaluation(
+            cfg,
+            devices=[],
+            deviceless_entities=[],
+            peers_by_domain={},
+            all_integrations=[],
+            max_notifications=100,
+            script_infos=[
+                _script_info(
+                    entity_id="script.bathroom",
+                    unique_id=unique_id,
+                ),
+            ],
+        )
+        return ev.notifications, ev.repairs
+
+    def _repair_specs(
+        self,
+        notifications: list[helpers.PersistentNotification],
+    ) -> list[helpers.PersistentNotification]:
+        out: list[helpers.PersistentNotification] = []
+        for n in notifications:
+            cb = n.repair_callback
+            if cb is not None and cb.service_name == (
+                FixServices.SCRIPT_YAML_KEY_DRIFT.value
+            ):
+                out.append(n)
+        return out
+
+    def test_repairs_on_emits_repair_and_payload(self) -> None:
+        notifications, repairs = self._run(_config(create_repairs=True))
+        repair_specs = self._repair_specs(notifications)
+        assert len(repair_specs) == 1
+        assert any(
+            isinstance(p, ScriptYamlKeyDriftRepair) for p in repairs.values()
+        )
+
+    def test_repairs_on_emits_no_plain_notification(self) -> None:
+        # The finding must surface only on the repairs surface
+        # -- no extra notification spec carrying the script.
+        notifications, _ = self._run(_config(create_repairs=True))
+        non_repair = [
+            n
+            for n in notifications
+            if n.repair_callback is None
+            and "bathroom" in (n.message or n.notification_id)
+        ]
+        assert non_repair == []
+
+    def test_repairs_off_emits_nothing(self) -> None:
+        notifications, repairs = self._run(_config(create_repairs=False))
+        assert self._repair_specs(notifications) == []
+        assert not any(
+            isinstance(p, ScriptYamlKeyDriftRepair) for p in repairs.values()
+        )
+        # No notification fallback either -- silent by design.
+        non_repair = [
+            n
+            for n in notifications
+            if n.repair_callback is None
+            and "bathroom" in (n.message or n.notification_id)
+        ]
+        assert non_repair == []
+
+    def test_check_disabled_emits_neither_and_stat_zero(self) -> None:
+        cfg = _config(
+            create_repairs=True,
+            drift_checks=frozenset({DRIFT_CHECK_DEVICE_ENTITY_ID}),
+        )
+        ev = run_evaluation(
+            cfg,
+            devices=[],
+            deviceless_entities=[],
+            peers_by_domain={},
+            all_integrations=[],
+            max_notifications=100,
+            script_infos=[_script_info(unique_id="bath_fan")],
+        )
+        assert self._repair_specs(ev.notifications) == []
+        assert not any(
+            isinstance(p, ScriptYamlKeyDriftRepair) for p in ev.repairs.values()
+        )
+        assert ev.stat_script_yaml_key_flagged == 0
+
+    def test_stat_always_set_when_check_enabled(self) -> None:
+        # Stat is set regardless of create_repairs.
+        cfg = _config(create_repairs=False)
+        ev = run_evaluation(
+            cfg,
+            devices=[],
+            deviceless_entities=[],
+            peers_by_domain={},
+            all_integrations=[],
+            max_notifications=100,
+            script_infos=[
+                _script_info(
+                    entity_id="script.bathroom",
+                    unique_id="bath_fan",
+                ),
+            ],
+        )
+        assert ev.stat_script_yaml_key_flagged == 1
+
+
+class TestScriptYamlKeyDriftCheckConstant:
+    def test_constant_value(self) -> None:
+        assert DRIFT_CHECK_SCRIPT_YAML_KEY == "script-yaml-key"
+
+    def test_in_check_all(self) -> None:
+        assert DRIFT_CHECK_SCRIPT_YAML_KEY in CHECK_ALL
 
 
 if __name__ == "__main__":
