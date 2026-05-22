@@ -307,8 +307,8 @@ Notifications:
 - `attribution_lines(...)` / `integration_attribution_link(name)` -- the
   dispatcher-side renderers for the shared header; handlers set the spec
   fields above rather than calling these. `integration_attribution_link`
-  routes `script` / `template` to better list-all surfaces than their
-  per-integration config page.
+  routes `script` / `automation` / `template` to better list-all surfaces than
+  their (empty or misleading) per-integration config page.
 - `FixService` (frozen dataclass) -- the wire payload a repair-marked
   `PersistentNotification` carries: `service_name` (the HA service the fix
   flow dispatches to) + `notification_id` (the repair-issue id the fix service

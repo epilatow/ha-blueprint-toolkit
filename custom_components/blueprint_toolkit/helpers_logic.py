@@ -231,8 +231,14 @@ def md_escape(s: str) -> str:
 #       per-integration page.
 # - ``/config/automation/edit/<id>``
 #       automation editor.
+# - ``/config/automation/dashboard``
+#       automation-list page (the ``automation`` per-
+#       integration page is empty -- built-in domain).
 # - ``/config/script/edit/<unique_id>``
 #       script editor.
+# - ``/config/script/dashboard``
+#       script-list page (the ``script`` per-integration
+#       page is empty -- built-in domain).
 # - ``/core_configurator/?loadfile=<path>``
 #       file-editor add-on (HA OS / Supervised), opens the
 #       named file at the top. ``<path>`` is filesystem-
@@ -408,15 +414,29 @@ def script_dashboard_link(name: str) -> str:
     return f"[{md_escape(name)}](/config/script/dashboard)"
 
 
+def automation_dashboard_link(name: str) -> str:
+    """Markdown link to the automation-list dashboard.
+
+    HA's per-integration page for ``automation``
+    (``/config/integrations/integration/automation``) is empty
+    because ``automation`` is a built-in domain rather than a
+    config-flow integration. ``/config/automation/dashboard``
+    is the actual list-all-automations page.
+    """
+    return f"[{md_escape(name)}](/config/automation/dashboard)"
+
+
 def integration_attribution_link(name: str) -> str:
     """Markdown link for one integration in the attribution header.
 
     Most integrations link to their per-integration config page.
-    Two built-in domains route there but the page is empty or
+    A few built-in domains route there but the page is empty or
     misleading, so they get a more useful list-all surface:
 
     - ``script`` -- the per-integration page is empty (no config
       flow); link to the script-list dashboard.
+    - ``automation`` -- likewise empty (built-in domain, no
+      config flow); link to the automation-list dashboard.
     - ``template`` -- the per-integration page only lists
       UI-managed template helpers, not YAML-defined templates;
       link to the entities table filtered to the ``template``
@@ -428,6 +448,8 @@ def integration_attribution_link(name: str) -> str:
     """
     if name == "script":
         return script_dashboard_link(name)
+    if name == "automation":
+        return automation_dashboard_link(name)
     if name == "template":
         return domain_entities_link(name, "template")
     return integration_link(name, name)
@@ -1440,6 +1462,7 @@ __all__ = [
     "PersistentNotification",
     "TypedServiceResponse",
     "UnmatchedDirective",
+    "automation_dashboard_link",
     "automation_edit_link",
     "automation_edit_url",
     "config_entry_link",
