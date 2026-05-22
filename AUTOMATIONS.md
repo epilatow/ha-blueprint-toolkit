@@ -220,6 +220,14 @@ Cross-handler accessors:
 - `resolve_target_integrations(all, include, exclude)` -- apply include /
   exclude filters; empty `include` means "all" (matches the watchdog
   blueprints' documented behaviour).
+- `filter_on_entities(hass, entities)` -- the order-preserving subset of
+  `entities` currently in state `"on"`. The entity-controller handlers (STEC,
+  TEC) use it to resolve the actually-on subset so a turn-off targets and
+  reports only the entities it changes.
+- `entity_friendly_names(hass, entities)` -- map each entity to its
+  `friendly_name` attribute when set (entities missing from the state machine
+  or carrying no friendly name are omitted; callers fall back to the raw
+  entity_id). Feeds the controller notification bodies' name rendering.
 - `file_editor_addon_ingress_url(hass)` -- returns the per-installation
   ingress URL prefix for the `core_configurator` add-on
   (`/api/hassio_ingress/<uuid>/`) when installed; empty string otherwise.

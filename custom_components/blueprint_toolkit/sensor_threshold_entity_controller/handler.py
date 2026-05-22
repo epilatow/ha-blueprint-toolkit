@@ -70,7 +70,9 @@ from ..helpers import (
     BlueprintHandlerSpec,
     TypedServiceResponse,
     automation_friendly_name,
+    entity_friendly_names,
     entry_for_domain,
+    filter_on_entities,
     instance_state_entity_id,
     make_emit_config_error,
     make_lifecycle_mutators,
@@ -339,8 +341,8 @@ async def _async_service_layer(
     # (order-preserving, so a turn-OFF body lists entities
     # in the user's configured order) and friendly names
     # for the notification body.
-    controlled_on_entities = _filter_on(hass, controlled_entities)
-    friendly_names = _friendly_names(hass, controlled_entities)
+    controlled_on_entities = filter_on_entities(hass, controlled_entities)
+    friendly_names = entity_friendly_names(hass, controlled_entities)
 
     # Pure-function controller call -- no HA dependencies.
     result = logic.handle_service_call(
@@ -439,37 +441,6 @@ async def _async_service_layer(
     return TypedServiceResponse(
         notification_message=result.notification or "",
     )
-
-
-# --------------------------------------------------------
-# Controlled-entity state helpers
-# --------------------------------------------------------
-
-
-def _filter_on(hass: HomeAssistant, entities: list[str]) -> list[str]:
-    """Return the subset of ``entities`` whose state is ``"on"``.
-
-    Order-preserving so a turn-OFF notification body lists
-    entities in the user's configured order.
-    """
-    return [
-        eid
-        for eid in entities
-        if (s := hass.states.get(eid)) is not None and s.state == "on"
-    ]
-
-
-def _friendly_names(hass: HomeAssistant, entities: list[str]) -> dict[str, str]:
-    """Map each controlled entity to its friendly name (when set)."""
-    out: dict[str, str] = {}
-    for eid in entities:
-        state = hass.states.get(eid)
-        if state is None:
-            continue
-        name = state.attributes.get("friendly_name") or ""
-        if name:
-            out[eid] = name
-    return out
 
 
 # --------------------------------------------------------

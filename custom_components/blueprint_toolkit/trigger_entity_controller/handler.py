@@ -74,6 +74,8 @@ from ..helpers import (
     BlueprintHandlerSpec,
     TypedServiceResponse,
     automation_friendly_name,
+    entity_friendly_names,
+    filter_on_entities,
     format_notification,
     make_emit_config_error,
     make_lifecycle_mutators,
@@ -395,36 +397,11 @@ async def _async_argparse(
 # --------------------------------------------------------
 
 
-def _filter_on(hass: HomeAssistant, entities: list[str]) -> list[str]:
-    """Return the subset of ``entities`` whose state is ``"on"``.
-
-    Order-preserving so the auto-off notification body
-    lists entities in the user's configured order.
-    """
-    return [
-        eid
-        for eid in entities
-        if (s := hass.states.get(eid)) is not None and s.state == "on"
-    ]
-
-
 def _any_on(hass: HomeAssistant, entities: list[str]) -> bool:
     return any(
         (s := hass.states.get(eid)) is not None and s.state == "on"
         for eid in entities
     )
-
-
-def _friendly_names(hass: HomeAssistant, entities: list[str]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for eid in entities:
-        state = hass.states.get(eid)
-        if state is None:
-            continue
-        name = state.attributes.get("friendly_name") or ""
-        if name:
-            out[eid] = name
-    return out
 
 
 def _is_day_time(hass: HomeAssistant) -> bool:
@@ -476,12 +453,18 @@ async def _async_service_layer(
         event_type=event_type,
         changed_entity=trigger_entity_id,
         triggers_on=_any_on(hass, config.trigger_entities),
-        controlled_on_entities=_filter_on(hass, config.controlled_entities),
+        controlled_on_entities=filter_on_entities(
+            hass,
+            config.controlled_entities,
+        ),
         is_day_time=_is_day_time(hass),
         triggers_disabled=_any_on(hass, config.trigger_disabling_entities),
         auto_off_disabled=_any_on(hass, config.auto_off_disabling_entities),
         auto_off_at=state.auto_off_at,
-        friendly_names=_friendly_names(hass, config.controlled_entities),
+        friendly_names=entity_friendly_names(
+            hass,
+            config.controlled_entities,
+        ),
     )
 
     result = logic.evaluate(config, inputs)

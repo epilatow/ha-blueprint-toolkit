@@ -68,6 +68,45 @@ def entry_for_domain(hass: HomeAssistant) -> ConfigEntry | None:
     return entries[0] if entries else None
 
 
+def filter_on_entities(
+    hass: HomeAssistant,
+    entities: list[str],
+) -> list[str]:
+    """Return the subset of ``entities`` currently in state ``"on"``.
+
+    Order-preserving. Used by the entity-controller handlers to
+    resolve the "actually on" subset so a turn-off targets and
+    reports only the entities it changes, not the full configured
+    list.
+    """
+    return [
+        eid
+        for eid in entities
+        if (s := hass.states.get(eid)) is not None and s.state == "on"
+    ]
+
+
+def entity_friendly_names(
+    hass: HomeAssistant,
+    entities: list[str],
+) -> dict[str, str]:
+    """Map each entity to its ``friendly_name`` attribute when set.
+
+    Entities missing from the state machine, or carrying no
+    friendly name, are omitted; callers fall back to the raw
+    entity_id for those.
+    """
+    out: dict[str, str] = {}
+    for eid in entities:
+        state = hass.states.get(eid)
+        if state is None:
+            continue
+        name = state.attributes.get("friendly_name") or ""
+        if name:
+            out[eid] = name
+    return out
+
+
 def _instance_link_inputs(
     hass: HomeAssistant,
     instance_id: str,
@@ -1061,7 +1100,9 @@ __all__ = [
     "dismiss_fix_service_crash_notification",
     "emit_config_error",
     "emit_fix_service_crash_notification",
+    "entity_friendly_names",
     "entry_for_domain",
+    "filter_on_entities",
     "make_periodic_trigger_callback",
     "prepare_notifications",
     "process_persistent_notifications",
