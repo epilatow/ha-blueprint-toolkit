@@ -58,7 +58,7 @@ EXPECTED_BLUEPRINTS = frozenset(
         "blueprint_toolkit/device_watchdog.yaml",
         "blueprint_toolkit/entity_defaults_watchdog.yaml",
         "blueprint_toolkit/reference_watchdog.yaml",
-        "blueprint_toolkit/sensor_threshold_switch_controller.yaml",
+        "blueprint_toolkit/sensor_threshold_entity_controller.yaml",
         "blueprint_toolkit/trigger_entity_controller.yaml",
         "blueprint_toolkit/zwave_route_manager.yaml",
     },

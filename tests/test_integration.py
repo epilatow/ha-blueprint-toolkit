@@ -247,7 +247,7 @@ class TestSetupEntry:
             "reference_watchdog",
             "entity_defaults_watchdog",
             "device_watchdog",
-            "sensor_threshold_switch_controller",
+            "sensor_threshold_entity_controller",
             # Per-device repair fix services. Listed
             # explicitly so a future refactor that drops
             # one from ``async_register_fix_services`` is

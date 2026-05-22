@@ -7,7 +7,7 @@ are standalone -- self-contained YAML blueprints with no service handler.
 
 ## Automations
 
-- [Sensor Threshold Switch Controller][stsc] - Controls a switch based on
+- [Sensor Threshold Entity Controller][stec] - Controls a switch based on
   sensor value spikes (e.g., humidity for a bathroom fan). Includes manual
   override protection, double-off disable, and auto-off timer.
 
@@ -103,5 +103,5 @@ automations. Live in the bundled payload and run from the HA host.
 See [Development Guide](DEVELOPMENT.md) for architecture, coding conventions,
 and testing instructions.
 
-[stsc]: docs/sensor_threshold_switch_controller.md
+[stec]: docs/sensor_threshold_entity_controller.md
 [zni]: custom_components/blueprint_toolkit/bundled/cli/zwave_network_info.py

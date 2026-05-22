@@ -1,12 +1,12 @@
 blueprint:
-  name: Sensor Threshold Switch Controller
+  name: Sensor Threshold Entity Controller
   description: >
     Controls a switch based on sensor value spikes (e.g., humidity for a
     bathroom fan). Turns switch ON when sensor readings spike above a
     trigger threshold, OFF when they drop below a release threshold.
     Includes manual override protection, double-off disable, auto-off
     timer for manual activation, and optional notifications.
-    [Full documentation](/local/blueprint_toolkit/docs/sensor_threshold_switch_controller.html).
+    [Full documentation](/local/blueprint_toolkit/docs/sensor_threshold_entity_controller.html).
   domain: automation
   author: epilatow
 
@@ -112,7 +112,7 @@ blueprint:
       description: >
         Text prepended to notifications. Supports timestamp
         tokens: YYYY, YY, MM, DD, HH, mm, ss.
-      default: "STSC: "
+      default: "STEC: "
       selector:
         text:
 
@@ -152,7 +152,7 @@ triggers:
     entity_id: !input target_switch_entity
 
 actions:
-  - action: blueprint_toolkit.sensor_threshold_switch_controller
+  - action: blueprint_toolkit.sensor_threshold_entity_controller
     # Synthetic invocations from the integration
     # (periodic timer, restart-recovery + reload-recovery
     # kicks) pass ``trigger_id`` + ``trigger_entity`` as

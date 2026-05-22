@@ -1236,7 +1236,7 @@ class IssueNotification:
 def instance_state_entity_id(service_tag: str, instance_id: str) -> str:
     """Build the ``blueprint_toolkit.<service_tag>_<slug>_state`` entity_id.
 
-    ``service_tag`` is the per-handler short tag (``STSC`` /
+    ``service_tag`` is the per-handler short tag (``STEC`` /
     ``TEC`` / ``EDW`` / ``DW`` / ``RW`` / ``ZRM``); HA entity
     IDs require lowercase, so the helper lowercases it
     internally -- callers can pass the uppercase
@@ -1351,7 +1351,7 @@ class BlueprintHandlerSpec:
             (or ``ONLY``) when the handler returns a
             ``ServiceResponse`` mapping that the calling
             blueprint captures via ``response_variable``.
-            STSC + TEC use this to hand the user-built
+            STEC + TEC use this to hand the user-built
             notification message back to the blueprint
             runner, which then invokes the user-supplied
             ``notify_action`` step. Watchdog handlers

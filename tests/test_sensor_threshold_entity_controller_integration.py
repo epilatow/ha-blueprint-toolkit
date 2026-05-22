@@ -9,10 +9,10 @@
 # ]
 # ///
 # This is AI generated code
-"""Integration-level tests for the STSC handler.
+"""Integration-level tests for the STEC handler.
 
 Exercises the parts the in-process unit tests
-(``tests/test_sensor_threshold_switch_controller_handler.py``)
+(``tests/test_sensor_threshold_entity_controller_handler.py``)
 deliberately don't cover: the live ``vol.Schema`` argparse,
 the cross-field check against ``hass.states`` for
 ``target_switch_entity``, the full
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     )
 
 DOMAIN = "blueprint_toolkit"
-SERVICE = "sensor_threshold_switch_controller"
+SERVICE = "sensor_threshold_entity_controller"
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +96,7 @@ async def _setup_integration(hass: Any) -> Any:
 def _seed_target_switch(hass: Any, entity_id: str = "switch.fan") -> None:
     """Plant a fake switch entity in the state machine.
 
-    STSC's argparse cross-field check requires the
+    STEC's argparse cross-field check requires the
     ``target_switch_entity`` to exist as a known state;
     we only need it visible to ``hass.states.get`` so we
     can drive the service-call path through to the
@@ -107,7 +107,7 @@ def _seed_target_switch(hass: Any, entity_id: str = "switch.fan") -> None:
 
 def _valid_payload(
     *,
-    instance_id: str = "automation.stsc_test",
+    instance_id: str = "automation.stec_test",
     target_switch_entity: str = "switch.fan",
     sensor_value: str = "55.0",
     switch_state: str = "off",
@@ -115,7 +115,7 @@ def _valid_payload(
     trigger_threshold: float = 70.0,
     release_threshold: float = 60.0,
 ) -> dict[str, Any]:
-    """Build a fully-populated STSC service-call payload."""
+    """Build a fully-populated STEC service-call payload."""
     return {
         "instance_id": instance_id,
         "trigger_id": "manual",
@@ -149,7 +149,7 @@ class TestArgparseEmitsConfigErrorNotification:
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
-            {"instance_id": "automation.stsc_bad_call"},
+            {"instance_id": "automation.stec_bad_call"},
             blocking=True,
         )
 
@@ -159,8 +159,8 @@ class TestArgparseEmitsConfigErrorNotification:
 
         notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
         notif_id = (
-            "blueprint_toolkit_sensor_threshold_switch_controller"
-            "__automation.stsc_bad_call__config_error"
+            "blueprint_toolkit_sensor_threshold_entity_controller"
+            "__automation.stec_bad_call__config_error"
         )
         assert notif_id in notifs, "config-error notification was not emitted"
         assert "schema:" in notifs[notif_id]["message"]
@@ -174,7 +174,7 @@ class TestArgparseEmitsConfigErrorNotification:
         # No ``_seed_target_switch`` -- the entity doesn't
         # exist; the cross-field check should reject.
         payload = _valid_payload(
-            instance_id="automation.stsc_bad_switch",
+            instance_id="automation.stec_bad_switch",
             target_switch_entity="switch.does_not_exist",
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
@@ -185,8 +185,8 @@ class TestArgparseEmitsConfigErrorNotification:
 
         notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
         notif_id = (
-            "blueprint_toolkit_sensor_threshold_switch_controller"
-            "__automation.stsc_bad_switch__config_error"
+            "blueprint_toolkit_sensor_threshold_entity_controller"
+            "__automation.stec_bad_switch__config_error"
         )
         assert notif_id in notifs
         msg: str = notifs[notif_id]["message"]
@@ -217,7 +217,7 @@ class TestArgparseEmitsConfigErrorNotification:
         turn_on_calls = async_mock_service(hass, "homeassistant", "turn_on")
 
         payload = _valid_payload(
-            instance_id="automation.stsc_bad_domain",
+            instance_id="automation.stec_bad_domain",
             target_switch_entity="sensor.humidity",
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
@@ -229,8 +229,8 @@ class TestArgparseEmitsConfigErrorNotification:
 
         notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
         notif_id = (
-            "blueprint_toolkit_sensor_threshold_switch_controller"
-            "__automation.stsc_bad_domain__config_error"
+            "blueprint_toolkit_sensor_threshold_entity_controller"
+            "__automation.stec_bad_domain__config_error"
         )
         assert notif_id in notifs
         msg: str = notifs[notif_id]["message"]
@@ -246,14 +246,14 @@ class TestArgparseEmitsConfigErrorNotification:
     ) -> None:
         await _setup_integration(hass)
         hass.states.async_set(
-            "automation.stsc_link",
+            "automation.stec_link",
             "on",
-            {"friendly_name": "STSC: Linked", "id": "1234"},
+            {"friendly_name": "STEC: Linked", "id": "1234"},
         )
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
-            {"instance_id": "automation.stsc_link"},
+            {"instance_id": "automation.stec_link"},
             blocking=True,
         )
 
@@ -263,13 +263,13 @@ class TestArgparseEmitsConfigErrorNotification:
 
         notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
         notif_id = (
-            "blueprint_toolkit_sensor_threshold_switch_controller"
-            "__automation.stsc_link__config_error"
+            "blueprint_toolkit_sensor_threshold_entity_controller"
+            "__automation.stec_link__config_error"
         )
         assert notif_id in notifs
         body: str = notifs[notif_id]["message"]
         assert body.startswith(
-            "Automation: [STSC: Linked](/config/automation/edit/1234)\n",
+            "Automation: [STEC: Linked](/config/automation/edit/1234)\n",
         )
 
     async def test_successful_call_dismisses_prior_notification(
@@ -283,14 +283,14 @@ class TestArgparseEmitsConfigErrorNotification:
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
-            {"instance_id": "automation.stsc_dismiss"},
+            {"instance_id": "automation.stec_dismiss"},
             blocking=True,
         )
         # Good call with the same instance_id.
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
-            _valid_payload(instance_id="automation.stsc_dismiss"),
+            _valid_payload(instance_id="automation.stec_dismiss"),
             blocking=True,
         )
 
@@ -300,8 +300,8 @@ class TestArgparseEmitsConfigErrorNotification:
 
         notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
         notif_id = (
-            "blueprint_toolkit_sensor_threshold_switch_controller"
-            "__automation.stsc_dismiss__config_error"
+            "blueprint_toolkit_sensor_threshold_entity_controller"
+            "__automation.stec_dismiss__config_error"
         )
         assert notif_id not in notifs
 
@@ -318,7 +318,7 @@ class TestServiceLayerScan:
     ) -> None:
         """A successful call populates the diagnostic state
         entity with the standard attrs (``instance_id``,
-        ``last_run``, ``runtime``, ``state``) plus the STSC
+        ``last_run``, ``runtime``, ``state``) plus the STEC
         decision-context extras + the ``data`` blob.
         """
         await _setup_integration(hass)
@@ -327,21 +327,21 @@ class TestServiceLayerScan:
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
-            _valid_payload(instance_id="automation.stsc_scan"),
+            _valid_payload(instance_id="automation.stec_scan"),
             blocking=True,
         )
         await hass.async_block_till_done()
 
         state = hass.states.get(
-            "blueprint_toolkit.stsc_stsc_scan_state",
+            "blueprint_toolkit.stec_stec_scan_state",
         )
         assert state is not None, "diagnostic state entity not created"
         attrs = state.attributes
         # Common attrs.
-        assert attrs["instance_id"] == "automation.stsc_scan"
+        assert attrs["instance_id"] == "automation.stec_scan"
         assert "last_run" in attrs
         assert "runtime" in attrs
-        # STSC-specific decision-context extras.
+        # STEC-specific decision-context extras.
         for key in (
             "last_trigger",
             "last_event",
@@ -383,7 +383,7 @@ class TestServiceLayerScan:
             DOMAIN,
             SERVICE,
             _valid_payload(
-                instance_id="automation.stsc_persist",
+                instance_id="automation.stec_persist",
                 sensor_value="50.0",
             ),
             blocking=True,
@@ -391,7 +391,7 @@ class TestServiceLayerScan:
         await hass.async_block_till_done()
 
         state = hass.states.get(
-            "blueprint_toolkit.stsc_stsc_persist_state",
+            "blueprint_toolkit.stec_stec_persist_state",
         )
         assert state is not None
         import json
@@ -413,7 +413,7 @@ def _spike_payload(
     instance_id: str,
     sensor_value: str,
 ) -> dict[str, Any]:
-    """Spike-tuned STSC payload.
+    """Spike-tuned STEC payload.
 
     The default ``trigger_threshold`` of 5.0 keeps the
     spike-detection bar low so a 55 -> 65 sensor swing in
@@ -463,7 +463,7 @@ class TestActionDispatch:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_spike",
+                instance_id="automation.stec_spike",
                 sensor_value="55.0",
             ),
             blocking=True,
@@ -477,7 +477,7 @@ class TestActionDispatch:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_spike",
+                instance_id="automation.stec_spike",
                 sensor_value="65.0",
             ),
             blocking=True,
@@ -512,7 +512,7 @@ class TestActionDispatch:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_steady",
+                instance_id="automation.stec_steady",
                 sensor_value="55.0",
             ),
             blocking=True,
@@ -551,7 +551,7 @@ class TestServiceResponseShape:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_resp",
+                instance_id="automation.stec_resp",
                 sensor_value="55.0",
             ),
             blocking=True,
@@ -561,7 +561,7 @@ class TestServiceResponseShape:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_resp",
+                instance_id="automation.stec_resp",
                 sensor_value="65.0",
             ),
             blocking=True,
@@ -595,7 +595,7 @@ class TestServiceResponseShape:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_noop_resp",
+                instance_id="automation.stec_noop_resp",
                 sensor_value="55.0",
             ),
             blocking=True,
@@ -645,8 +645,8 @@ class TestStateSavedBeforeResponseReturned:
             async_mock_service,
         )
 
-        from custom_components.blueprint_toolkit.sensor_threshold_switch_controller import (  # noqa: E501
-            handler as stsc_handler,
+        from custom_components.blueprint_toolkit.sensor_threshold_entity_controller import (  # noqa: E501
+            handler as stec_handler,
         )
 
         await _setup_integration(hass)
@@ -655,14 +655,14 @@ class TestStateSavedBeforeResponseReturned:
 
         call_order: list[str] = []
 
-        real_update = stsc_handler.update_instance_state
+        real_update = stec_handler.update_instance_state
 
         def _spy_update(*args: Any, **kwargs: Any) -> None:
             call_order.append("state")
             real_update(*args, **kwargs)
 
         monkeypatch.setattr(
-            stsc_handler,
+            stec_handler,
             "update_instance_state",
             _spy_update,
         )
@@ -672,7 +672,7 @@ class TestStateSavedBeforeResponseReturned:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_order",
+                instance_id="automation.stec_order",
                 sensor_value="55.0",
             ),
             blocking=True,
@@ -682,7 +682,7 @@ class TestStateSavedBeforeResponseReturned:
             DOMAIN,
             SERVICE,
             _spike_payload(
-                instance_id="automation.stsc_order",
+                instance_id="automation.stec_order",
                 sensor_value="65.0",
             ),
             blocking=True,
@@ -730,7 +730,7 @@ class TestLoadStateBlobMalformed:
         # diagnostic state entity that the handler will
         # try to load.
         hass.states.async_set(
-            "blueprint_toolkit.stsc_stsc_malformed_state",
+            "blueprint_toolkit.stec_stec_malformed_state",
             "NONE",
             {"data": "{not valid json"},
         )
@@ -741,7 +741,7 @@ class TestLoadStateBlobMalformed:
             DOMAIN,
             SERVICE,
             _valid_payload(
-                instance_id="automation.stsc_malformed",
+                instance_id="automation.stec_malformed",
                 sensor_value="55.0",
                 trigger_entity="sensor.humidity",
             ),
@@ -750,7 +750,7 @@ class TestLoadStateBlobMalformed:
         await hass.async_block_till_done()
 
         state = hass.states.get(
-            "blueprint_toolkit.stsc_stsc_malformed_state",
+            "blueprint_toolkit.stec_stec_malformed_state",
         )
         assert state is not None
         # Blob was rewritten cleanly -- valid JSON now.
@@ -786,7 +786,7 @@ class TestLoadStateBlobMalformed:
         # serializes through JSON so anything that JSON can
         # represent is allowed in attributes).
         hass.states.async_set(
-            "blueprint_toolkit.stsc_stsc_nonstring_state",
+            "blueprint_toolkit.stec_stec_nonstring_state",
             "NONE",
             {"data": {"not": "a string"}},
         )
@@ -795,7 +795,7 @@ class TestLoadStateBlobMalformed:
             DOMAIN,
             SERVICE,
             _valid_payload(
-                instance_id="automation.stsc_nonstring",
+                instance_id="automation.stec_nonstring",
                 sensor_value="55.0",
                 trigger_entity="sensor.humidity",
             ),
@@ -804,7 +804,7 @@ class TestLoadStateBlobMalformed:
         await hass.async_block_till_done()
 
         state = hass.states.get(
-            "blueprint_toolkit.stsc_stsc_nonstring_state",
+            "blueprint_toolkit.stec_stec_nonstring_state",
         )
         assert state is not None
         # Bootstrap rewrote the blob with a valid JSON
@@ -815,7 +815,7 @@ class TestLoadStateBlobMalformed:
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
-    service_tag = "STSC"
+    service_tag = "STEC"
     setup_integration = staticmethod(_setup_integration)
 
 

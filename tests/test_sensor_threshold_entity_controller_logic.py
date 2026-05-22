@@ -9,7 +9,7 @@
 # ]
 # ///
 # This is AI generated code
-"""Tests for sensor_threshold_switch_controller module."""
+"""Tests for sensor_threshold_entity_controller module."""
 
 import json
 import sys
@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 
-from custom_components.blueprint_toolkit.sensor_threshold_switch_controller.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.sensor_threshold_entity_controller.logic import (  # noqa: E402, E501
     Action,
     Config,
     Controller,

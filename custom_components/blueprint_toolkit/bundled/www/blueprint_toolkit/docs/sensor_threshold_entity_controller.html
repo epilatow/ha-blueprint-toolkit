@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sensor Threshold Switch Controller</title>
+<title>Sensor Threshold Entity Controller</title>
 <style>
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -48,7 +48,7 @@ a { color: #0366d6; }
 </style>
 </head>
 <body>
-<h1>Sensor Threshold Switch Controller</h1>
+<h1>Sensor Threshold Entity Controller</h1>
 <h2>Summary</h2>
 <p>Controls a switch-like entity based on sensor value spikes, with manual
 override protection, auto-off functionality, and notification support.</p>
@@ -70,7 +70,7 @@ a <code>{{ message }}</code> variable inside the chain.</li>
 <h2>Usage</h2>
 <ol>
 <li>Go to <strong>Settings &gt; Automations &amp; Scenes &gt; Blueprints</strong>.</li>
-<li>Find <strong>Sensor Threshold Switch Controller</strong> and click <strong>Create
+<li>Find <strong>Sensor Threshold Entity Controller</strong> and click <strong>Create
 Automation</strong>.</li>
 <li>Configure the required and optional parameters.</li>
 <li>Save.</li>
@@ -137,7 +137,7 @@ entities.</p>
 </tr>
 <tr>
 <td><strong>Notification Prefix</strong></td>
-<td><code>'STSC: '</code></td>
+<td><code>'STEC: '</code></td>
 <td>Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.</td>
 </tr>
 <tr>
@@ -172,7 +172,7 @@ humidity spike), it turns off automatically after 30 minutes.</p>
 without requiring ad-hoc instrumentation.</p>
 <h3>Entity attributes (always on)</h3>
 <p>After every invocation, the automation writes decision metadata to a
-<code>blueprint_toolkit.stsc_&lt;slug&gt;_state</code> entity as attributes (where <code>&lt;slug&gt;</code>
+<code>blueprint_toolkit.stec_&lt;slug&gt;_state</code> entity as attributes (where <code>&lt;slug&gt;</code>
 derives from the automation entity_id). These are visible in <strong>Developer Tools
 &gt; States</strong> with no configuration.</p>
 <p>The diagnostic entity's state value is the same as <code>last_action</code> (<code>TURN_ON</code>,
@@ -227,7 +227,7 @@ the state value mirror the action.</p>
 <p>To view:</p>
 <ol>
 <li>Go to <strong>Developer Tools &gt; States</strong>.</li>
-<li>Search for <code>blueprint_toolkit.stsc_*_state</code> and find your instance's
+<li>Search for <code>blueprint_toolkit.stec_*_state</code> and find your instance's
 entity.</li>
 <li>Expand the attributes to see the latest decision context.</li>
 </ol>
@@ -245,11 +245,11 @@ on every invocation.</p>
 <p>To view logs:</p>
 <ul>
 <li><strong>Settings &gt; System &gt; Logs</strong> -- search for
-<code>sensor_threshold_switch_controller</code>.</li>
+<code>sensor_threshold_entity_controller</code>.</li>
 <li>Or via SSH: <code>ha core logs 2&gt;&amp;1 | grep sensor_threshold</code>.</li>
 </ul>
 <p>Example output for an automation named &quot;Main Bath Fan Controller&quot;:</p>
-<pre><code class="language-text">[STSC: Main Bath Fan Controller] event=TIMER sw=on baseline=None
+<pre><code class="language-text">[STEC: Main Bath Fan Controller] event=TIMER sw=on baseline=None
   auto_off=2026-02-21T15:19:00 samples=5 -&gt; TURN_OFF
   &quot;Auto-off after 1 minute(s)&quot;
 </code></pre>
@@ -262,8 +262,8 @@ editing <code>configuration.yaml</code>.</p>
 <pre><code class="language-yaml">logger:
   default: warning
   logs:
-    custom_components.blueprint_toolkit.sensor_threshold_switch_controller: info
+    custom_components.blueprint_toolkit.sensor_threshold_entity_controller: info
 </code></pre>
-<p>This enables <code>log.info</code> level messages from the STSC handler.</p>
+<p>This enables <code>log.info</code> level messages from the STEC handler.</p>
 </body>
 </html>

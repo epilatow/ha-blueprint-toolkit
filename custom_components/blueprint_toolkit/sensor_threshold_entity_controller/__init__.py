@@ -1,5 +1,5 @@
 # This is AI generated code
-"""Sensor Threshold Switch Controller subpackage."""
+"""Sensor Threshold Entity Controller subpackage."""
 
 from __future__ import annotations
 

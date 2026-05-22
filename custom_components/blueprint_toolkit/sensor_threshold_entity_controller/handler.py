@@ -1,7 +1,7 @@
 # This is AI generated code
-"""HA wiring for sensor_threshold_switch_controller.
+"""HA wiring for sensor_threshold_entity_controller.
 
-STSC-specific shape on top of the standard three-layer
+STEC-specific shape on top of the standard three-layer
 dispatch (see ``DEVELOPMENT.md`` for the universal
 pattern):
 
@@ -37,7 +37,7 @@ pattern):
 - Single notification slot for argparse / config
   errors via the shared
   ``helpers.make_config_error_notification`` /
-  ``emit_config_error`` path. STSC has no per-event
+  ``emit_config_error`` path. STEC has no per-event
   persistent-notification stream of its own; the
   per-instance sweep dismisses stale config-error
   entries on every successful run.
@@ -83,8 +83,8 @@ from ..helpers import (
     validate_payload_or_emit_config_error,
 )
 
-# STSC takes a user-supplied ``notification_prefix`` string
-# (the per-instance body prefix, e.g. ``"STSC: "``) as a
+# STEC takes a user-supplied ``notification_prefix`` string
+# (the per-instance body prefix, e.g. ``"STEC: "``) as a
 # blueprint input. Alias the helper that builds the per-
 # instance notification-ID prefix so the two don't collide
 # inside the service layer.
@@ -93,10 +93,10 @@ from . import logic
 
 _LOGGER = logging.getLogger(__name__)
 
-_SERVICE = "sensor_threshold_switch_controller"
-_SERVICE_TAG = "STSC"
-_SERVICE_NAME = "Sensor Threshold Switch Controller"
-BLUEPRINT_PATH = "blueprint_toolkit/sensor_threshold_switch_controller.yaml"
+_SERVICE = "sensor_threshold_entity_controller"
+_SERVICE_TAG = "STEC"
+_SERVICE_NAME = "Sensor Threshold Entity Controller"
+BLUEPRINT_PATH = "blueprint_toolkit/sensor_threshold_entity_controller.yaml"
 
 # The integration-owned periodic tick fires every minute.
 # Hardcoded rather than a blueprint input -- the cadence
@@ -118,8 +118,8 @@ _TIMER_TRIGGER_ENTITY = "timer"
 
 
 @dataclass
-class StscInstanceState:
-    """In-memory state for one STSC automation instance.
+class StecInstanceState:
+    """In-memory state for one STEC automation instance.
 
     Lost on HA restart; the periodic timer + the
     blueprint's reactive triggers re-bootstrap the
@@ -167,13 +167,13 @@ _SCHEMA = vol.Schema(
 # --------------------------------------------------------
 
 
-def _instances(hass: HomeAssistant) -> dict[str, StscInstanceState]:
+def _instances(hass: HomeAssistant) -> dict[str, StecInstanceState]:
     """Per-instance state map under our service's bucket."""
     entries = hass.config_entries.async_entries(DOMAIN)
     if not entries:
         return {}
     bucket = spec_bucket(entries[0], _SERVICE)
-    instances: dict[str, StscInstanceState] = bucket.setdefault("instances", {})
+    instances: dict[str, StecInstanceState] = bucket.setdefault("instances", {})
     return instances
 
 
@@ -313,7 +313,7 @@ async def _async_service_layer(
     """
     state = _instances(hass).setdefault(
         instance_id,
-        StscInstanceState(instance_id=instance_id),
+        StecInstanceState(instance_id=instance_id),
     )
 
     # Make sure the periodic timer is armed (idempotent;
@@ -357,7 +357,7 @@ async def _async_service_layer(
         notification_suffix=notification_suffix,
     )
 
-    # STSC has no persistent-finding stream of its own; the
+    # STEC has no persistent-finding stream of its own; the
     # sweep just cleans up stale config-error notifications
     # left over from a prior bad config.
     await process_persistent_notifications_with_sweep(
@@ -480,7 +480,7 @@ def _load_state_blob(
 def _ensure_timer(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    state: StscInstanceState,
+    state: StecInstanceState,
 ) -> None:
     """Arm the periodic minute-tick timer if not yet armed.
 
@@ -561,7 +561,7 @@ async def async_register(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> None:
-    """Register STSC's service + lifecycle via the shared helper."""
+    """Register STEC's service + lifecycle via the shared helper."""
     await register_blueprint_handler(hass, entry, _SPEC)
 
 
@@ -569,13 +569,13 @@ async def async_unregister(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> None:
-    """Tear down STSC's service + lifecycle via the shared helper."""
+    """Tear down STEC's service + lifecycle via the shared helper."""
     await unregister_blueprint_handler(hass, entry, _SPEC)
 
 
 __all__ = [
     "BLUEPRINT_PATH",
-    "StscInstanceState",
+    "StecInstanceState",
     "async_register",
     "async_unregister",
 ]

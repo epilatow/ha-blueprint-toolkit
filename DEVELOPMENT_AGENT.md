@@ -395,7 +395,7 @@ are user-visible-behavior validation against the pre-deploy baselines.
 
    - Watchdog handlers (DW, EDW, RW, ZRM): `state="ok"` with non-zero
      `runtime`.
-   - Trigger-driven handlers (STSC, TEC): `state` is one of the handler's
+   - Trigger-driven handlers (STEC, TEC): `state` is one of the handler's
      `Action` enum values (`NONE`, `TURN_ON`, `TURN_OFF`, ...); `runtime` may
      be `0.0` for no-op evaluations.
 
@@ -439,7 +439,7 @@ are user-visible-behavior validation against the pre-deploy baselines.
        sources (the audit-style change).
      - ZRM's `routes_applied` increments by 1 -> a deploy that fixed a
        reconcile bug AND a route was successfully applied this run.
-   - **For trigger-driven handlers** (STSC, TEC): only compare `last_run` and
+   - **For trigger-driven handlers** (STEC, TEC): only compare `last_run` and
      `runtime`. Their state attributes (`switch_state`, `auto_off_at`,
      `controlled_on`, etc.) change naturally on every trigger and aren't a
      regression signal across a deploy.
@@ -466,7 +466,7 @@ vice versa.
   for DW; rename an entity to drift it for EDW; introduce a broken reference
   in a YAML file for RW), then verify the expected notification fires with the
   right ID and body.
-- **STSC / TEC**: trigger the sensor or state change that should fire the
+- **STEC / TEC**: trigger the sensor or state change that should fire the
   controller, then verify the right action (`turn_on` / `turn_off` / no-op)
   ran and the diagnostic state entity reflects the decision.
 

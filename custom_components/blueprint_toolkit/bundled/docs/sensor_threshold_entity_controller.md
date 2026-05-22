@@ -1,4 +1,4 @@
-# Sensor Threshold Switch Controller
+# Sensor Threshold Entity Controller
 
 ## Summary
 
@@ -23,7 +23,7 @@ override protection, auto-off functionality, and notification support.
 ## Usage
 
 1. Go to **Settings > Automations & Scenes > Blueprints**.
-2. Find **Sensor Threshold Switch Controller** and click **Create
+2. Find **Sensor Threshold Entity Controller** and click **Create
    Automation**.
 3. Configure the required and optional parameters.
 4. Save.
@@ -50,7 +50,7 @@ entities.
 | **Disable Window**      | 10s                         | Time window for double-off detection. Two manual switch-off operations within this window disable the sensor override. Set to 0 to disable. |
 | **Auto-Off Timeout**    | 30m                         | Minutes before auto-off after manual switch activation. Set to 0 to disable.                                                                |
 | **Notification Action** | *(empty)*                   | Action(s) to run on a notification (e.g. `notify.mobile_app_*`, a notify group, a script call). Receives the message via `{{ message }}`    |
-| **Notification Prefix** | `'STSC: '`                  | Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.                      |
+| **Notification Prefix** | `'STEC: '`                  | Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.                      |
 | **Notification Suffix** | `' at YYYY-MM-DD HH:mm:ss'` | Text appended to notifications. Supports timestamp tokens (see below). Quotes show the leading space in the default.                        |
 
 ### Timestamp Tokens
@@ -89,7 +89,7 @@ without requiring ad-hoc instrumentation.
 ### Entity attributes (always on)
 
 After every invocation, the automation writes decision metadata to a
-`blueprint_toolkit.stsc_<slug>_state` entity as attributes (where `<slug>`
+`blueprint_toolkit.stec_<slug>_state` entity as attributes (where `<slug>`
 derives from the automation entity_id). These are visible in **Developer Tools
 \> States** with no configuration.
 
@@ -112,7 +112,7 @@ the state value mirror the action.
 To view:
 
 1. Go to **Developer Tools > States**.
-2. Search for `blueprint_toolkit.stsc_*_state` and find your instance's
+2. Search for `blueprint_toolkit.stec_*_state` and find your instance's
    entity.
 3. Expand the attributes to see the latest decision context.
 
@@ -132,13 +132,13 @@ To enable:
 To view logs:
 
 - **Settings > System > Logs** -- search for
-  `sensor_threshold_switch_controller`.
+  `sensor_threshold_entity_controller`.
 - Or via SSH: `ha core logs 2>&1 | grep sensor_threshold`.
 
 Example output for an automation named "Main Bath Fan Controller":
 
 ```text
-[STSC: Main Bath Fan Controller] event=TIMER sw=on baseline=None
+[STEC: Main Bath Fan Controller] event=TIMER sw=on baseline=None
   auto_off=2026-02-21T15:19:00 samples=5 -> TURN_OFF
   "Auto-off after 1 minute(s)"
 ```
@@ -156,7 +156,7 @@ For more verbose handler output without the debug flag, add the following to
 logger:
   default: warning
   logs:
-    custom_components.blueprint_toolkit.sensor_threshold_switch_controller: info
+    custom_components.blueprint_toolkit.sensor_threshold_entity_controller: info
 ```
 
-This enables `log.info` level messages from the STSC handler.
+This enables `log.info` level messages from the STEC handler.

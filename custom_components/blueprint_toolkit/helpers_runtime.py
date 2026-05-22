@@ -980,7 +980,7 @@ def make_periodic_trigger_callback(
     next tick fires anyway), and surfacing the exception
     would knock the timer task down. ``service_tag`` and
     ``logger`` parameterize the log line so each handler's
-    operator sees ``[STSC] periodic automation.trigger
+    operator sees ``[STEC] periodic automation.trigger
     failed for <entity>`` (or its ``[DW]`` / ``[EDW]`` /
     etc. equivalent).
     """

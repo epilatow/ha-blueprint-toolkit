@@ -540,7 +540,7 @@ across the integration is:
    per-instance `debug_logging` toggle, summarising the decision. One line, at
    the end -- not interleaved through the scan.
 5. **Return ServiceResponse.** Handlers that opt into `supports_response`
-   (STSC + TEC today) return a mapping carrying `notification_message` -- the
+   (STEC + TEC today) return a mapping carrying `notification_message` -- the
    blueprint captures it via `response_variable` and runs the user-supplied
    `notify_action` step against it. Watchdog handlers return `None` from this
    slot (the dispatcher's wrapper returns whatever the handler hands back).
@@ -563,7 +563,7 @@ This is the canonical choice for any handler whose notification surface is
 "call the user's notify endpoint with a pre-built body". It moves the choice
 of notify endpoint (notify group, mobile_app target, script, any combination)
 entirely into the blueprint UI's action picker -- the handler stays out of
-HA-specific dispatch entirely. STSC + TEC use it; watchdog handlers (DW, EDW,
+HA-specific dispatch entirely. STEC + TEC use it; watchdog handlers (DW, EDW,
 RW, ZRM) do not because their notification surface is
 `persistent_notification` (an HA-side render, not a user-side notify call) and
 is therefore handler-owned.
@@ -575,7 +575,7 @@ Use `entry.async_create_background_task(hass, coro, name)` so HA cancels
 in-flight work on entry unload; never `hass.async_create_task(coro)` (which
 leaves work running detached against a torn-down service registration).
 
-Every native handler with a periodic timer (DW, EDW, RW, STSC, ZRM) arms it
+Every native handler with a periodic timer (DW, EDW, RW, STEC, ZRM) arms it
 via `helpers.schedule_periodic_with_jitter`, which both wraps each tick in
 `entry.async_create_background_task` (so an entry unload mid-tick cancels the
 in-flight call) and adds per-instance jitter (so multiple instances on the
@@ -890,7 +890,7 @@ volatile across HA restarts. The mutator callbacks (`_on_reload`,
 The diagnostic state entity (`update_instance_state`) is for
 **observability**, not authoritative state. Operators read it to confirm a run
 completed (`last_run`, `runtime`) and to see the latest decision context. Its
-`data` attribute is sometimes used to round-trip state across calls (STSC's
+`data` attribute is sometimes used to round-trip state across calls (STEC's
 controller-state JSON blob is the example), but most handlers treat it as
 write-only.
 
@@ -900,7 +900,7 @@ re-bootstrap on the next call. The bootstrap path should:
 1. Recognise the lost-state condition (typically the instance isn't in
    `_instances(hass)`, or the persisted blob in the diagnostic entity is
    `None` / malformed).
-2. Re-arm any safety-relevant timers (e.g. STSC's auto-off bootstrap-arm: if
+2. Re-arm any safety-relevant timers (e.g. STEC's auto-off bootstrap-arm: if
    the controlled entity is currently `on` and auto-off is enabled, arm
    `auto_off_started_at` immediately so the device doesn't get stuck on
    indefinitely).

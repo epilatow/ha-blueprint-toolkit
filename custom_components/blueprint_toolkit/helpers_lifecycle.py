@@ -386,7 +386,7 @@ def make_lifecycle_mutators(
     for handlers whose ``_ensure_timer`` re-arm decision
     compares against this field (DW / EDW / RW / ZRM) and
     leave ``False`` for handlers with no such field
-    (STSC / TEC).
+    (STEC / TEC).
     """
     from homeassistant.core import callback  # noqa: PLC0415
 

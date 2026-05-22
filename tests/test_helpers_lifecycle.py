@@ -643,17 +643,17 @@ class TestValidateControlledEntityDomains:
         assert any("'binary_sensor.bad'" in b for b in bullets)
 
     def test_field_name_reflected_in_bullet(self) -> None:
-        # STSC + TEC pass different field names; the
+        # STEC + TEC pass different field names; the
         # attribution prefix in each bullet keeps the
         # config-error notification readable when both
         # handlers fire on the same upgrade-day.
-        stsc = helpers.validate_controlled_entity_domains(
+        stec = helpers.validate_controlled_entity_domains(
             ["sensor.foo"], "target_switch_entity"
         )
         tec = helpers.validate_controlled_entity_domains(
             ["sensor.foo"], "controlled_entities"
         )
-        assert stsc[0].startswith("target_switch_entity:")
+        assert stec[0].startswith("target_switch_entity:")
         assert tec[0].startswith("controlled_entities:")
 
     def test_no_per_handler_constants_remain(self) -> None:
@@ -1382,7 +1382,7 @@ class TestRegisterBlueprintHandler:
         return value via ``response_variable``. When unset,
         the dispatcher omits the kwarg so HA's default (no
         response) applies. This locks down the plumbing for
-        STSC + TEC's notify-action handoff: the handler
+        STEC + TEC's notify-action handoff: the handler
         returns ``{"notification_message": "..."}`` and the
         blueprint then runs the user's notify action with
         that message.

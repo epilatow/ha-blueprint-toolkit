@@ -291,7 +291,7 @@ async def async_setup_entry(
     from .device_watchdog import handler as dw_handler
     from .entity_defaults_watchdog import handler as edw_handler
     from .reference_watchdog import handler as rw_handler
-    from .sensor_threshold_switch_controller import handler as stsc_handler
+    from .sensor_threshold_entity_controller import handler as stec_handler
     from .trigger_entity_controller import handler as tec_handler
     from .zwave_route_manager import handler as zrm_handler
 
@@ -300,7 +300,7 @@ async def async_setup_entry(
     await rw_handler.async_register(hass, entry)
     await edw_handler.async_register(hass, entry)
     await dw_handler.async_register(hass, entry)
-    await stsc_handler.async_register(hass, entry)
+    await stec_handler.async_register(hass, entry)
 
     # Per-handler repair fix services. Each watchdog owns
     # its own ``FixServices`` enum + the backing
@@ -331,7 +331,7 @@ async def async_unload_entry(
     from .device_watchdog import handler as dw_handler
     from .entity_defaults_watchdog import handler as edw_handler
     from .reference_watchdog import handler as rw_handler
-    from .sensor_threshold_switch_controller import handler as stsc_handler
+    from .sensor_threshold_entity_controller import handler as stec_handler
     from .trigger_entity_controller import handler as tec_handler
     from .zwave_route_manager import handler as zrm_handler
 
@@ -340,7 +340,7 @@ async def async_unload_entry(
     await rw_handler.async_unregister(hass, entry)
     await edw_handler.async_unregister(hass, entry)
     await dw_handler.async_unregister(hass, entry)
-    await stsc_handler.async_unregister(hass, entry)
+    await stec_handler.async_unregister(hass, entry)
     for service in (
         *edw_handler.FIX_SERVICES,
         *dw_handler.FIX_SERVICES,

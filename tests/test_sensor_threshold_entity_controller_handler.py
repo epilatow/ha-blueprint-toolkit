@@ -12,7 +12,7 @@
 # ]
 # ///
 # This is AI generated code
-"""Unit tests for ``sensor_threshold_switch_controller.handler``.
+"""Unit tests for ``sensor_threshold_entity_controller.handler``.
 
 Covers the parts that don't require booting HA: mutator
 callbacks, ``_ensure_timer`` arming, ``_async_kick_for_recovery``
@@ -24,7 +24,7 @@ The argparse cross-field check on
 ``target_switch_entity`` existence + the service layer's
 full state-load / action-dispatch / response-shape loop
 are exercised in
-``test_sensor_threshold_switch_controller_integration.py``
+``test_sensor_threshold_entity_controller_integration.py``
 against the pytest-HACC harness.
 """
 
@@ -56,28 +56,28 @@ from conftest import (  # noqa: E402
 
 _stubs = install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
-from custom_components.blueprint_toolkit.sensor_threshold_switch_controller import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.sensor_threshold_entity_controller import (  # noqa: E402, E501
     handler,
 )
 
 
 def _make_state(
-    instance_id: str = "automation.stsc_test",
+    instance_id: str = "automation.stec_test",
     *,
     cancel_timer: Callable[[], None] | None = None,
-) -> handler.StscInstanceState:
-    return handler.StscInstanceState(
+) -> handler.StecInstanceState:
+    return handler.StecInstanceState(
         instance_id=instance_id,
         cancel_timer=cancel_timer,
     )
 
 
 def _hass_with_instances(
-    instances: dict[str, handler.StscInstanceState],
+    instances: dict[str, handler.StecInstanceState],
 ) -> MockHass:
     h = MockHass()
     entry = MockEntry()
-    entry.runtime_data.handlers["sensor_threshold_switch_controller"] = {
+    entry.runtime_data.handlers["sensor_threshold_entity_controller"] = {
         "instances": instances,
         "unsubs": [],
     }
@@ -107,7 +107,7 @@ class TestOnReload:
         assert s1.cancel_timer is None
         assert s2.cancel_timer is None
         bucket = h.config_entries.entries[0].runtime_data.handlers[
-            "sensor_threshold_switch_controller"
+            "sensor_threshold_entity_controller"
         ]
         assert set(bucket["instances"]) == {"automation.a", "automation.b"}
 
@@ -127,7 +127,7 @@ class TestOnEntityRemove:
 
         assert canceled == [1]
         bucket = h.config_entries.entries[0].runtime_data.handlers[
-            "sensor_threshold_switch_controller"
+            "sensor_threshold_entity_controller"
         ]
         assert set(bucket["instances"]) == {"automation.b"}
 
@@ -144,7 +144,7 @@ class TestOnEntityRename:
         handler._on_entity_rename(h, "automation.old", "automation.new")
 
         bucket = h.config_entries.entries[0].runtime_data.handlers[
-            "sensor_threshold_switch_controller"
+            "sensor_threshold_entity_controller"
         ]
         assert "automation.old" not in bucket["instances"]
         assert bucket["instances"]["automation.new"] is s
@@ -170,7 +170,7 @@ class TestOnTeardown:
 
         assert sorted(canceled) == [1, 2]
         bucket = h.config_entries.entries[0].runtime_data.handlers[
-            "sensor_threshold_switch_controller"
+            "sensor_threshold_entity_controller"
         ]
         assert bucket["instances"] == {}
 
@@ -211,22 +211,22 @@ class TestEnsureTimer:
 
     def test_first_call_arms_minute_interval(self) -> None:
         h = _hass_with_instances({})
-        s = _make_state("automation.stsc")
+        s = _make_state("automation.stec")
         e = object()
 
         handler._ensure_timer(h, e, s)  # type: ignore[arg-type]
 
         assert len(self.calls) == 1
         assert self.calls[0]["entry"] is e
-        # STSC's interval is fixed at 1 minute; no
+        # STEC's interval is fixed at 1 minute; no
         # blueprint input controls it.
         assert self.calls[0]["interval"] == timedelta(minutes=1)
-        assert self.calls[0]["instance_id"] == "automation.stsc"
+        assert self.calls[0]["instance_id"] == "automation.stec"
         assert s.cancel_timer is not None
 
     def test_subsequent_calls_are_noop(self) -> None:
         h = _hass_with_instances({})
-        s = _make_state("automation.stsc")
+        s = _make_state("automation.stec")
         e = object()
         handler._ensure_timer(h, e, s)  # type: ignore[arg-type]
         handler._ensure_timer(h, e, s)  # type: ignore[arg-type]
@@ -246,7 +246,7 @@ class TestEnsureTimer:
 def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
     """Return a schema-valid raw payload with optional overrides."""
     payload = {
-        "instance_id": "automation.stsc_test",
+        "instance_id": "automation.stec_test",
         "trigger_id": "manual",
         "target_switch_entity": "switch.fan",
         "sensor_value": "55.0",
@@ -361,7 +361,7 @@ class TestArgparseSchemaRejection(_ArgparseHarness):
 
 class TestKickWiring:
     def test_spec_kick_variables_match(self) -> None:
-        # STSC's kick payload includes ``trigger_entity``
+        # STEC's kick payload includes ``trigger_entity``
         # because the blueprint's reactive triggers don't
         # carry a default; the synthetic kick supplies the
         # "timer" sentinel so the logic module's
@@ -381,16 +381,16 @@ class TestBlueprintSchemaDrift(BlueprintSchemaDriftBase):
     """The blueprint's ``data:`` keys must match the schema."""
 
     handler = handler
-    blueprint_filename = "sensor_threshold_switch_controller.yaml"
+    blueprint_filename = "sensor_threshold_entity_controller.yaml"
 
 
 class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
     """Blueprint input defaults must satisfy the schema."""
 
     handler = handler
-    blueprint_filename = "sensor_threshold_switch_controller.yaml"
+    blueprint_filename = "sensor_threshold_entity_controller.yaml"
     template_defaults = {
-        "instance_id": "automation.stsc_default_check",
+        "instance_id": "automation.stec_default_check",
         "trigger_id": "manual",
         "target_switch_entity": "switch.fan",
         "sensor_value": "0",
@@ -403,7 +403,7 @@ class TestArgparseGuards(HandlerArgparseGuardsBase):
     """Schema rejection must short-circuit argparse.
 
     The unregistered-notify-service guard auto-skips
-    because STSC's schema no longer carries a
+    because STEC's schema no longer carries a
     ``notification_service`` field -- notify dispatch is
     owned by the blueprint via ``response_variable`` /
     ``notify_action`` rather than by the handler.
