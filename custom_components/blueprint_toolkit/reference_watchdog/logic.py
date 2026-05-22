@@ -16,8 +16,9 @@ tree:
 1. **Structural walk.** Recursive walk over dict/list
    structures. When a key matches ``_ENTITY_KEYS``
    (``entity``, ``entity_id``, ``entities``,
-   ``entity_ids``, ``source``, ``target_entity``, ...)
-   its value is emitted as an entity reference. When a
+   ``entity_ids``, ``source``, ``target_entity``,
+   ``device_trackers``, ...) its value is emitted as an
+   entity reference. When a
    key matches ``_DEVICE_KEYS`` its value is checked
    against ``_DEVICE_ID_RE`` (32-char lowercase hex) and
    emitted as a device reference. This handles the
@@ -149,7 +150,6 @@ from ..helpers import (
     domain_entities_url,
     entities_dashboard_url,
     file_editor_link,
-    integration_link,
     matches_pattern,
     md_escape,
     prepare_notifications,
@@ -256,6 +256,12 @@ _ENTITY_KEYS: frozenset[str] = frozenset(
         "source_entity_id",
         "target_entity",
         "target_entity_id",
+        # Person config (.storage/person + YAML ``person:``)
+        # binds device-tracker entity IDs under this key. The
+        # values are validated like any other entity ref;
+        # non-entity-shaped values at the key are skipped by
+        # ``_emit_refs``.
+        "device_trackers",
     ]
 )
 
@@ -772,6 +778,15 @@ class OwnerResult:
             title=self.notification_title,
             message=self.notification_message,
             instance_id=self.instance_id,
+            # The dispatcher renders the owner's integration as
+            # the shared ``Integrations:`` attribution header
+            # (routed through ``integration_attribution_link``,
+            # so built-in domains like ``person`` reach their
+            # management page). ``None`` for generic-YAML owners
+            # with no known integration.
+            integrations=(
+                (self.owner.integration,) if self.owner.integration else ()
+            ),
         )
 
 
@@ -1086,6 +1101,16 @@ def _is_entity_excluded(
 #   view). Name / URL pulled from the
 #   ``lovelace_dashboards`` index via
 #   ``SourceInput.extra``. Integration = ``lovelace``.
+#
+# - **.storage/person** (_scan_person): one owner per
+#   person in ``data.items``. Name = the person's
+#   ``name`` (falling back to the person ``id``). No
+#   entity_id / url_path (UI-managed, so no ``(YAML-only)``
+#   tag); the ``person`` integration label renders as the
+#   ``Integrations:`` attribution header, which routes to
+#   ``/config/person``. The ``device_trackers`` list under
+#   each person is validated by the structural walk
+#   (``device_trackers`` is a ``_ENTITY_KEYS`` member).
 #
 # - **generic_yaml** (_scan_generic_yaml): catch-all for
 #   YAML files without dedicated adapters. Uses
@@ -1448,6 +1473,62 @@ def _scan_lovelace(
     return [(owner, config_tree)]
 
 
+def _scan_person(
+    source: SourceInput,
+    truth_set: TruthSet,
+) -> list[tuple[Owner, object]]:
+    """Owner per person in ``.storage/person``.
+
+    HA's person UI stores one entry per person under
+    ``data.items``, each carrying a ``device_trackers`` list
+    of the device-tracker entity IDs bound to that person.
+    ``device_trackers`` is a ``_ENTITY_KEYS`` member, so the
+    structural walk validates each bound tracker; a person
+    pointing at a deleted device_tracker surfaces as a broken
+    reference.
+
+    Like ``.storage/lovelace``, this is a UI-managed JSON
+    source: the owner gets a ``friendly_name`` (the person's
+    name) but no ``entity_id`` / ``yaml_only`` flag (the
+    ``(YAML-only)`` nag is wrong for a UI-edited person). The
+    ``person`` integration label routes the notification's
+    ``Integration:`` line to ``/config/person`` via
+    ``integration_attribution_link``.
+    """
+    parsed = source.parsed
+    if not isinstance(parsed, dict):
+        return []
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        return []
+    items = data.get("items")
+    if not isinstance(items, list):
+        return []
+
+    owners: list[tuple[Owner, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # Name is always set in practice; fall back to the
+        # person ``id`` so a nameless entry still gets a
+        # disambiguating label rather than the bare filename.
+        name_raw = item.get("name")
+        item_id = item.get("id")
+        if name_raw:
+            friendly: str | None = str(name_raw)
+        elif item_id:
+            friendly = str(item_id)
+        else:
+            friendly = None
+        owner = Owner(
+            source_file=source.path,
+            integration="person",
+            friendly_name=friendly,
+        )
+        owners.append((owner, item))
+    return owners
+
+
 def _scan_generic_yaml(
     source: SourceInput,
     truth_set: TruthSet,
@@ -1734,7 +1815,6 @@ def _build_notification_body(
         Owner: <block-path> - <friendly-name>    (or variants;
                                                   see _owner_display_name)
         Entity: `<eid>` [(YAML-only)]
-        Integration: <integration>               (omitted when None)
         Source: `<path>`                         (or markdown link to
                                                   the file-editor add-on
                                                   when present and the
@@ -1747,12 +1827,6 @@ def _build_notification_body(
         Disabled-but-existing references (M):
         - `<value>` *(disabled)* -- <context>
         ...
-
-    ``Integration:`` is always omitted when
-    ``owner.integration is None`` so the notification
-    body reflects what ``exclude_integrations`` can
-    filter -- users should never see an integration
-    name they can't paste into the blueprint input.
 
     The ``(YAML-only)`` tag is suppressed whenever the
     owner has a ``url_path`` -- in that case the
@@ -1790,15 +1864,6 @@ def _build_notification_body(
         lines.append(entity_line)
     elif show_yaml_note:
         lines.append("(YAML-only)")
-
-    if owner.integration:
-        # URL target doesn't render markdown, so the
-        # raw integration name is fine there; escape
-        # only the link-text portion.
-        lines.append(
-            "Integration: "
-            + integration_link(owner.integration, owner.integration)
-        )
 
     rendered_source = file_editor_link(
         owner.source_file,
@@ -1919,6 +1984,7 @@ _ADAPTERS: dict[str, _AdapterFn] = {
     "customize": _scan_customize,
     "config_entries": _scan_config_entries,
     "lovelace": _scan_lovelace,
+    "person": _scan_person,
     "generic_yaml": _scan_generic_yaml,
 }
 
@@ -3465,7 +3531,8 @@ def _build_extended_reference_set(
 def _enumerate_json_sources(
     config_dir: str,
 ) -> list[SourceInput]:
-    """Enumerate JSON storage sources (config entries, lovelace)."""
+    """Enumerate JSON storage sources (config entries, lovelace,
+    person)."""
     import os
 
     sources: list[SourceInput] = []
@@ -3543,6 +3610,19 @@ def _enumerate_json_sources(
                 extra=extra,
             ),
         )
+
+    # .storage/person -- person -> device_tracker bindings.
+    person_path = os.path.join(storage_dir, "person")
+    if os.path.isfile(person_path):
+        parsed = _read_json_file(person_path)
+        if parsed is not None:
+            sources.append(
+                SourceInput(
+                    source_type="person",
+                    path=".storage/person",
+                    parsed=parsed,
+                ),
+            )
 
     return sources
 

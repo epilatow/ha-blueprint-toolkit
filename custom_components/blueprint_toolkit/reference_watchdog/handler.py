@@ -85,7 +85,7 @@ BLUEPRINT_PATH = "blueprint_toolkit/reference_watchdog.yaml"
 # picking ``customize`` from the dropdown doesn't fire a
 # false unmatched-directives notification.
 _RW_SYNTHETIC_INTEGRATIONS: frozenset[str] = frozenset(
-    {"automation", "script", "template", "customize", "lovelace"},
+    {"automation", "script", "template", "customize", "lovelace", "person"},
 )
 
 

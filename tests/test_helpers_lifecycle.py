@@ -684,10 +684,10 @@ class TestIntegrationAttributionLink:
 
     Routing is purely a function of the integration name, so
     every attribution caller (device or deviceless) gets the
-    right target. ``script`` / ``automation`` / ``template`` are
-    built-in domains whose per-integration config page is empty /
-    misleading and route to a more useful list-all surface
-    instead."""
+    right target. ``script`` / ``automation`` / ``template`` /
+    ``person`` are built-in domains whose per-integration config
+    page is empty / misleading and route to a more useful
+    list-all surface instead."""
 
     def test_default_links_to_integration_page(self) -> None:
         assert helpers.integration_attribution_link("zwave_js") == (
@@ -707,6 +707,11 @@ class TestIntegrationAttributionLink:
     def test_template_links_to_domain_filter(self) -> None:
         assert helpers.integration_attribution_link("template") == (
             "[template](/config/entities/?domain=template)"
+        )
+
+    def test_person_links_to_person_page(self) -> None:
+        assert helpers.integration_attribution_link("person") == (
+            "[person](/config/person)"
         )
 
     def test_name_is_escaped(self) -> None:

@@ -460,6 +460,16 @@ class TestServiceLayerScan:
         assert body.startswith(
             "Automation: [RW: Finding](/config/automation/edit/9999)\n",
         ), f"missing automation-link prefix; body was: {body[:200]!r}"
+        # The owner's integration rides the shared
+        # ``Integrations:`` attribution header (rendered by the
+        # dispatcher from the spec's ``integrations`` field),
+        # not an inline body line. ``template`` routes to the
+        # entities-domain filter via integration_attribution_link.
+        assert (
+            "Integrations: [template](/config/entities/?domain=template)"
+            in body
+        )
+        assert "Integration: " not in body
 
     async def test_broken_service_call_surfaces_in_owner_notification(
         self,

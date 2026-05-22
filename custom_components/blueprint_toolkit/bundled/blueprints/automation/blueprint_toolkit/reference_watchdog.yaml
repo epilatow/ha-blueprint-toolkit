@@ -47,7 +47,7 @@ blueprint:
         anything that renders an integration there can
         be silenced here. Built-in adapters are listed
         as quick-picks below (automation, script,
-        template, customize, lovelace). To filter a
+        template, customize, lovelace, person). To filter a
         config-entry integration (the `domain` field of
         a `.storage/core.config_entries` entry -- e.g.
         `group`, `homekit`, or whatever HA integrations
@@ -65,6 +65,7 @@ blueprint:
             - template
             - customize
             - lovelace
+            - person
 
     exclude_entities:
       name: Exclude entities

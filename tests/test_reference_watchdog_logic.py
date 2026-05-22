@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     DeviceRef,
+    PersistentNotification,
 )
 from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # noqa: E402, E501
     _UNUSED_DEVICE_SKIP_INTEGRATIONS,
@@ -39,6 +40,7 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
     SEED_DOMAINS,
     Config,
     DeviceRecord,
+    DirectiveInputs,
     Finding,
     Owner,
     OwnerResult,
@@ -80,12 +82,14 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
     _scan_exposed_entities,
     _scan_generic_yaml,
     _scan_lovelace,
+    _scan_person,
     _scan_person_storage,
     _scan_scripts,
     _scan_template,
     _scan_unused_deviceless_entities,
     _scan_unused_devices,
     _source_orphans_notification_id,
+    _validate_rw_directives,
     _walk_tree,
     run_evaluation,
 )
@@ -330,6 +334,23 @@ class TestWalkTree:
         refs = list(_walk_tree(tree, [], {"light"}))
         values = sorted(r.value for r in refs)
         assert values == ["light.a", "light.b"]
+
+    def test_structural_device_trackers_key(self) -> None:
+        # ``device_trackers`` (person config) is a
+        # _ENTITY_KEYS member: its list values emit as
+        # structural entity refs, not via the sniff path.
+        tree: dict[str, object] = {
+            "device_trackers": [
+                "device_tracker.a",
+                "device_tracker.b",
+            ],
+        }
+        refs = list(_walk_tree(tree, [], {"device_tracker"}))
+        values = sorted(r.value for r in refs)
+        assert values == ["device_tracker.a", "device_tracker.b"]
+        for r in refs:
+            assert r.kind == "entity"
+            assert not r.context.startswith("sniff:")
 
     def test_nested_target_block(self) -> None:
         # Sniff IS enabled under `action:` -- so the
@@ -880,6 +901,110 @@ class TestScanLovelace:
         assert owner.url_path == "/doors"
 
 
+class TestScanPerson:
+    def _parsed(self) -> dict[str, object]:
+        return {
+            "data": {
+                "items": [
+                    {
+                        "id": "abc",
+                        "name": "Edward",
+                        "device_trackers": [
+                            "device_tracker.gone",
+                            "device_tracker.here",
+                        ],
+                    },
+                    {
+                        "id": "def",
+                        "name": "Ronda",
+                        "device_trackers": ["device_tracker.here"],
+                    },
+                ],
+            },
+        }
+
+    def test_owner_per_person(self) -> None:
+        source = _source("person", ".storage/person", self._parsed())
+        owners = _scan_person(source, _ts())
+        assert len(owners) == 2
+        first, _ = owners[0]
+        assert first.integration == "person"
+        assert first.friendly_name == "Edward"
+        # UI-managed source: no block path, no entity_id, no
+        # YAML-only tag (the link routes via the Integration
+        # line to /config/person).
+        assert first.block_path is None
+        assert first.entity_id is None
+        assert first.yaml_only is False
+        assert first.url_path is None
+
+    def test_broken_tracker_surfaces_valid_one_does_not(self) -> None:
+        source = _source("person", ".storage/person", self._parsed())
+        ts = _ts(entity_ids={"device_tracker.here"})
+        owners = _scan_person(source, ts)
+        edward, edward_tree = owners[0]
+        findings, _ = _collect_findings(_config(), edward, edward_tree, ts)
+        values = [f.ref.value for f in findings]
+        assert values == ["device_tracker.gone"]
+
+    def test_non_dict_parsed_yields_no_owners(self) -> None:
+        source = _source("person", ".storage/person", ["not", "a", "dict"])
+        assert _scan_person(source, _ts()) == []
+
+    def test_missing_items_yields_no_owners(self) -> None:
+        source = _source("person", ".storage/person", {"data": {}})
+        assert _scan_person(source, _ts()) == []
+
+    def test_nameless_person_falls_back_to_id(self) -> None:
+        parsed = {
+            "data": {"items": [{"id": "xyz", "device_trackers": []}]},
+        }
+        source = _source("person", ".storage/person", parsed)
+        owner, _ = _scan_person(source, _ts())[0]
+        assert owner.friendly_name == "xyz"
+
+
+class TestValidateRwDirectives:
+    def _inputs(self, exclude_integrations: list[str]) -> DirectiveInputs:
+        # ``person`` is a synthetic owner integration (no
+        # entity-registry platform when no person is
+        # registered), so the handler seeds it into the
+        # candidate set; excluding it must not false-flag.
+        return DirectiveInputs(
+            enabled=True,
+            integration_candidates=frozenset(
+                {"automation", "person", "shelly"},
+            ),
+            device_name_candidates=frozenset(),
+            exclude_integrations=exclude_integrations,
+            exclude_entities=[],
+            exclude_entity_id_regex_lines=[],
+            exclude_device_name_regex_lines=[],
+        )
+
+    def test_candidate_integration_accepted(self) -> None:
+        unmatched = _validate_rw_directives(
+            self._inputs(["person"]),
+            _ts(),
+            [],
+        )
+        assert unmatched == []
+
+    def test_unknown_integration_flagged(self) -> None:
+        unmatched = _validate_rw_directives(
+            self._inputs(["person", "typoed_integration"]),
+            _ts(),
+            [],
+        )
+        values = [u.value for u in unmatched]
+        assert values == ["typoed_integration"]
+
+    def test_disabled_skips_validation(self) -> None:
+        inputs = self._inputs(["typoed_integration"])
+        inputs.enabled = False
+        assert _validate_rw_directives(inputs, _ts(), []) == []
+
+
 class TestScanGenericYaml:
     def test_dict_top_level_one_owner_per_key(self) -> None:
         parsed = {
@@ -1395,7 +1520,11 @@ class TestNotificationBody:
         # they don't form a bogus markdown link.
         assert "Owner: config-block\\[2\\] - My Motion Lights" in body
 
-    def test_integration_line_present_when_set(self) -> None:
+    def test_body_never_renders_integration_line(self) -> None:
+        # The owner's integration is carried on the spec's
+        # ``integrations`` field (rendered as the shared
+        # ``Integrations:`` attribution header by the
+        # dispatcher), never inline in the body.
         owner = Owner(
             source_file="automations.yaml",
             integration="automation",
@@ -1403,21 +1532,7 @@ class TestNotificationBody:
             friendly_name="X",
         )
         body = _build_notification_body(owner, [])
-        assert "Integration: [automation]" in body
-        assert "/config/integrations/integration/automation" in body
-
-    def test_integration_line_omitted_when_none(self) -> None:
-        # Generic YAML owners have integration=None.
-        # Their notification must not advertise an
-        # Integration: line -- exclude_integrations can't
-        # filter these.
-        owner = Owner(
-            source_file="plants.yaml",
-            block_path="config-block[0]",
-            friendly_name="plant_01",
-        )
-        body = _build_notification_body(owner, [])
-        assert "Integration:" not in body
+        assert "Integration" not in body
 
     def test_disabled_section_rendered(self) -> None:
         owner = Owner(
@@ -1497,25 +1612,6 @@ class TestNotificationBody:
         body = _build_notification_body(owner, [])
         assert "Owner: [Lights \\[zone 1\\]](" in body
         assert "Owner: [Lights [zone 1]](" not in body
-
-    def test_integration_name_escaped_in_link_text(self) -> None:
-        # Integration IDs are slug-style under HA's current
-        # charset, but the notification body interpolates
-        # them as link text -- escape so a future HA release
-        # loosening the charset can't corrupt the rendered
-        # link. URL target keeps the raw value (URL targets
-        # don't render markdown).
-        owner = Owner(
-            source_file="automations.yaml",
-            integration="bad[plat]",
-            friendly_name="X",
-            url_path="/config/automation/edit/abc",
-        )
-        body = _build_notification_body(owner, [])
-        assert (
-            "Integration: [bad\\[plat\\]]"
-            "(/config/integrations/integration/bad[plat])" in body
-        )
 
     def test_no_url_path_renders_plain_text(self) -> None:
         owner = Owner(
@@ -1898,6 +1994,48 @@ class TestOwnerResultNotification:
         )
         notif = result.to_notification(suppress=True)
         assert notif.active is False
+
+    def test_to_notification_carries_owner_integration(self) -> None:
+        result = OwnerResult(
+            owner=Owner(
+                source_file="automations.yaml",
+                integration="automation",
+                friendly_name="t",
+            ),
+            has_issue=True,
+            notification_id="id",
+            notification_title="title",
+            notification_message="msg",
+            findings=[],
+            refs_total=0,
+            refs_structural=0,
+            refs_jinja=0,
+            refs_sniff=0,
+            refs_valid=0,
+            refs_disabled=0,
+            refs_broken=0,
+            refs_service_skipped=0,
+        )
+        assert result.to_notification().integrations == ("automation",)
+
+    def test_to_notification_no_integration_empty_tuple(self) -> None:
+        result = OwnerResult(
+            owner=Owner(source_file="plants.yaml", friendly_name="t"),
+            has_issue=True,
+            notification_id="id",
+            notification_title="title",
+            notification_message="msg",
+            findings=[],
+            refs_total=0,
+            refs_structural=0,
+            refs_jinja=0,
+            refs_sniff=0,
+            refs_valid=0,
+            refs_disabled=0,
+            refs_broken=0,
+            refs_service_skipped=0,
+        )
+        assert result.to_notification().integrations == ()
 
 
 # -- Sanitize notification ID --------------------------
@@ -2534,6 +2672,18 @@ class TestEnumerateJsonSources:
         assert lv[0].extra["title"] == "My Dash"
         assert lv[0].extra["url_path"] == "/my-dash"
 
+    def test_finds_person(self, tmp_path: Path) -> None:
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "person").write_text(
+            '{"data": {"items": [{"id": "a", "name": "Ed",'
+            ' "device_trackers": ["device_tracker.x"]}]}}'
+        )
+        result = _enumerate_json_sources(str(tmp_path))
+        person = [s for s in result if s.source_type == "person"]
+        assert len(person) == 1
+        assert person[0].path == ".storage/person"
+
     def test_no_storage_dir(self, tmp_path: Path) -> None:
         result = _enumerate_json_sources(str(tmp_path))
         assert result == []
@@ -2592,6 +2742,60 @@ class TestRunEvaluation:
             f.ref.value == "sensor.does_not_exist" for f in issue.findings
         )
         assert ev.broken_entity_count == 1
+
+    def test_end_to_end_surfaces_broken_person_tracker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        (tmp_path / "configuration.yaml").write_text("{}\n")
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "person").write_text(
+            '{"data": {"items": [{"id": "a", "name": "Ed",'
+            ' "device_trackers": ["device_tracker.gone",'
+            ' "device_tracker.here"]}]}}'
+        )
+        ev = run_evaluation(
+            str(tmp_path),
+            _config(),
+            _ts(entity_ids={"device_tracker.here"}),
+            0,
+        )
+        issue_owners = [r for r in ev.results if r.has_issue]
+        assert len(issue_owners) == 1
+        issue = issue_owners[0]
+        assert issue.owner.friendly_name == "Ed"
+        values = [f.ref.value for f in issue.findings]
+        assert values == ["device_tracker.gone"]
+        assert ev.broken_entity_count == 1
+        # The integration is attributed via the spec's
+        # ``integrations`` field; the dispatcher renders it as
+        # the ``Integrations:`` header, routing person to
+        # /config/person through integration_attribution_link.
+        assert issue.to_notification().integrations == ("person",)
+
+    def test_exclude_integrations_person_silences_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # ``person`` is offered as an exclude_integrations
+        # quick-pick; selecting it must silence the person
+        # owner's findings even though the tracker is broken.
+        (tmp_path / "configuration.yaml").write_text("{}\n")
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "person").write_text(
+            '{"data": {"items": [{"id": "a", "name": "Ed",'
+            ' "device_trackers": ["device_tracker.gone"]}]}}'
+        )
+        ev = run_evaluation(
+            str(tmp_path),
+            _config(exclude_integrations=["person"]),
+            _ts(),
+            0,
+        )
+        assert [r for r in ev.results if r.has_issue] == []
+        assert ev.broken_entity_count == 0
 
 
 class TestFindSourceOrphans:
@@ -3153,41 +3357,60 @@ class TestRunEvaluationOrphans:
 
 
 class TestIntegrationUxInvariant:
-    """UX contract: rendered Integration: <=> filterable.
+    """UX contract: attributed integration <=> filterable.
 
-    Every owner whose notification body shows an
-    ``Integration:`` line must have ``owner.integration``
-    set to the same value -- and that value must be what
-    the user would paste into the blueprint's
-    ``exclude_integrations`` input to suppress the owner.
+    Every owner whose notification carries an
+    ``Integrations:`` attribution header must have
+    ``owner.integration`` set to the same value -- and that
+    value must be what the user would paste into the
+    blueprint's ``exclude_integrations`` input to suppress
+    the owner. The header is the spec's ``integrations``
+    tuple, populated by ``OwnerResult.to_notification``.
     """
 
-    def test_render_presence_matches_exclude_filter(self) -> None:
-        # An owner with integration=None has no
-        # Integration: line and can't be filtered.
+    def _notif(self, owner: Owner) -> PersistentNotification:
+        result = OwnerResult(
+            owner=owner,
+            has_issue=True,
+            notification_id="id",
+            notification_title="t",
+            notification_message="m",
+            findings=[],
+            refs_total=0,
+            refs_structural=0,
+            refs_jinja=0,
+            refs_sniff=0,
+            refs_valid=0,
+            refs_disabled=0,
+            refs_broken=0,
+            refs_service_skipped=0,
+        )
+        return result.to_notification()
+
+    def test_attribution_presence_matches_exclude_filter(self) -> None:
+        # An owner with integration=None has no attributed
+        # integration and can't be filtered.
         no_int = Owner(
             source_file="plants.yaml",
             block_path="config-block[0]",
             friendly_name="plant_01",
         )
-        body = _build_notification_body(no_int, [])
-        assert "Integration:" not in body
+        assert self._notif(no_int).integrations == ()
         assert not _is_integration_excluded(
             no_int.integration,
             ["anything"],
         )
 
-        # An owner with integration="automation" shows
-        # the Integration: line AND is filtered when
-        # "automation" is in exclude_integrations.
+        # An owner with integration="automation" attributes
+        # it AND is filtered when "automation" is in
+        # exclude_integrations.
         has_int = Owner(
             source_file="automations.yaml",
             integration="automation",
             block_path="config-block[0]",
             friendly_name="X",
         )
-        body = _build_notification_body(has_int, [])
-        assert "Integration: [automation]" in body
+        assert self._notif(has_int).integrations == ("automation",)
         assert _is_integration_excluded(
             has_int.integration,
             ["automation"],
@@ -3203,8 +3426,7 @@ class TestIntegrationUxInvariant:
             block_path="config-block[0]",
             friendly_name="sensor.dead",
         )
-        body = _build_notification_body(owner, [])
-        assert "Integration: [customize]" in body
+        assert self._notif(owner).integrations == ("customize",)
         assert _is_integration_excluded(
             owner.integration,
             ["customize"],

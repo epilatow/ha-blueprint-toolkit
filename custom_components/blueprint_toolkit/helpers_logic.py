@@ -426,6 +426,20 @@ def automation_dashboard_link(name: str) -> str:
     return f"[{md_escape(name)}](/config/automation/dashboard)"
 
 
+def _person_link(name: str) -> str:
+    """Markdown link to the person-management page.
+
+    ``person`` is a built-in domain whose per-integration page
+    (``/config/integrations/integration/person``) is empty;
+    ``/config/person`` is the list-all-persons management page
+    where each person's device-tracker bindings are edited.
+    Internal to this module (consumed only by
+    ``integration_attribution_link``); not part of the public
+    helper surface.
+    """
+    return f"[{md_escape(name)}](/config/person)"
+
+
 def integration_attribution_link(name: str) -> str:
     """Markdown link for one integration in the attribution header.
 
@@ -441,6 +455,9 @@ def integration_attribution_link(name: str) -> str:
       UI-managed template helpers, not YAML-defined templates;
       link to the entities table filtered to the ``template``
       domain so every template entity shows in one place.
+    - ``person`` -- the per-integration page is empty (built-in
+      domain); link to the person-management page where
+      device-tracker bindings are edited.
 
     Routing is purely a function of the integration name, so
     every attribution caller (device or deviceless) gets the
@@ -452,6 +469,8 @@ def integration_attribution_link(name: str) -> str:
         return automation_dashboard_link(name)
     if name == "template":
         return domain_entities_link(name, "template")
+    if name == "person":
+        return _person_link(name)
     return integration_link(name, name)
 
 

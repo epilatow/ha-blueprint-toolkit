@@ -69,7 +69,7 @@ add-on the same bodies show the filename as a plain `code-spanned` path. See
 
 | Parameter                             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Exclude integrations                  | Integrations to skip. Matches the integration shown in each notification's header. Built-in adapters (`automation`, `script`, `template`, `customize`, `lovelace`) are listed as quick-picks in the blueprint UI; config-entry integration domains (e.g. `group`, `homekit`, or whatever is installed in HA) can be added as custom values. Also silences unused-devices and unused-deviceless-entities for the named integrations.                                         |
+| Exclude integrations                  | Integrations to skip. Matches the integration shown in each notification's header. Built-in adapters (`automation`, `script`, `template`, `customize`, `lovelace`, `person`) are listed as quick-picks in the blueprint UI; config-entry integration domains (e.g. `group`, `homekit`, or whatever is installed in HA) can be added as custom values. Also silences unused-devices and unused-deviceless-entities for the named integrations.                               |
 | Exclude entities                      | Entities to exclude, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                                                                                                |
 | Exclude entity regex                  | Multi-line regex, matched against entity and device reference values, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                                               |
 | Enabled checks                        | Subset of `broken-references`, `source-orphans`, `unused-devices`, `unused-deviceless-entities`. Default set is `broken-references` + `source-orphans`. The two `unused-*` checks are noisier prune-cleanup signals and require explicit opt-in. An empty selection means "all checks" (DW-style empty-means-all).                                                                                                                                                          |
@@ -105,11 +105,16 @@ reference. Notifications are one per owner with a header that includes:
 
 - An `Owner:` line identifying the owner by `config-block[N][.subkey[M]?]`
   position in its file, optionally suffixed with `- <friendly-name>` when a
-  human name is available
+  human name is available. When the owner has a UI edit page (automations,
+  scripts, dashboards, config-entry helpers) the line is a clickable link to
+  it; UI-managed `.storage` sources and file-only owners (template entities,
+  generic YAML, plants, utility meters) render as plain text and you edit the
+  file shown on the `Source:` line
 - An `Entity:` line with the registered entity ID when one exists
-- An `Integration:` line when the owner belongs to an adapter that knows its
-  integration (automation, script, template, customize, lovelace, or a config
-  entry domain)
+- An `Integrations:` attribution header when the owner belongs to an adapter
+  that knows its integration (automation, script, template, customize,
+  lovelace, person, or a config entry domain) -- this is the same value you
+  paste into **Exclude integrations** to silence the owner
 - A `Source:` line with the source path
 
 Block-path format:
@@ -125,16 +130,6 @@ Block-path format:
   `config-block[N].variables`
 - JSON-backed sources (`.storage/*`): no block path -- these aren't
   hand-edited
-
-Owner type -> URL target:
-
-| Owner                                                                               | URL                                         |
-| ----------------------------------------------------------------------------------- | ------------------------------------------- |
-| Automation                                                                          | `/config/automation/edit/<id>`              |
-| Script                                                                              | `/config/script/edit/<id>`                  |
-| Config entry                                                                        | `/config/entities/?config_entry=<entry_id>` |
-| Dashboard                                                                           | `/<url_path>` from the dashboards index     |
-| Template entities & blocks, customize entries, generic YAML, plants, utility meters | **no URL** -- edit the file directly        |
 
 ### YAML-only helpers
 
@@ -181,13 +176,10 @@ by `platform` (e.g. `utility_meter`, `input_boolean`, `automation`); larger
 groups are shown first. Disabled entities are tagged *(disabled)* next to the
 link.
 
-Each orphan links to `/config/entities/?domain=<platform>` -- HA's entities
-page filtered to that integration's rows. Find your orphan in the narrowed
-list, click it to open the settings dialog, and click Delete.
-
-HA's entities page doesn't support filtering to a single `entity_id` via URL
-params (`?search=` isn't wired up) and there's no direct entity-settings URL,
-so the integration filter is the closest one-click landing available today.
+Each orphan links to its integration's filtered entities page (HA has no
+single-entity deep link, so the integration filter is the closest one-click
+landing). Find your orphan in the narrowed list, click it to open the settings
+dialog, and click Delete.
 
 The detector restricts to registry entries with `config_entry_id = null` --
 entries managed via the HA config flow are never flagged. The `pyscript`
@@ -294,25 +286,10 @@ entity plus its source. Grouping by integration (rather than by entity domain)
 makes the next action obvious -- if an entire rollup is noise for you, add the
 integration name to **Exclude integrations**.
 
-The `Integrations:` link points to HA's per-integration config page by default
-(e.g. `/config/integrations/integration/utility_meter`). Two built-in domains
-override this because the per-integration page isn't a useful target for them:
-
-- `script` -- the per-integration page is empty (script is a built-in domain,
-  not a config-flow integration). Links to `/config/script/dashboard` instead.
-- `template` -- the per-integration page lists UI-managed template helpers
-  only and undercounts. Links to `/config/entities/?domain=template` instead
-  so the user sees every template entity in one place.
-
-Each entity in the rollup body is rendered as a clickable link when HA's
-frontend supports a useful URL form for it: `automation.*` entries link to the
-automation editor, `script.*` entries link to the script editor, and any
-deviceless entity whose registry row carries a `config_entry_id` (UI helpers,
-`utility_meter`, `template` helpers, etc.) links to the entities page filtered
-to that helper's config entry. Pure YAML-only deviceless entities (no
-`config_entry_id`) stay as bare code-spanned entity_ids -- HA has no
-per-entity URL filter for those, and the `Source:` label already points at the
-YAML file.
+Each entity in the rollup body is a clickable link where HA exposes a usable
+landing page for it (automation / script editors, a helper's config-entry
+entities page); YAML-only entities that HA can't deep-link stay as plain
+code-spanned entity_ids, and the `Source:` label points at the file to edit.
 
 Skip-lists baked in regardless of opt-in (these platforms / domains are
 user-interactive surfaces or voice-pipeline plumbing, not consumed by other
@@ -348,6 +325,15 @@ Toggle **Exclude voice exposure** to disable that scan. With the toggle off,
 voice-only entities flip to flagged. The other extended sources
 (`.storage/energy`, `.storage/person`) always run -- they're authoritative
 config the user controls directly.
+
+`.storage/person` plays a second, independent role: it is also scanned as a
+broken-references owner source (one owner per person), so a person whose
+`device_trackers` binding points at a deleted `device_tracker` surfaces as a
+broken reference attributed to that person (with the person-management page as
+its `Integrations:` link). The extended-reference-set role above (rescuing a
+still-valid bound tracker from the unused-\* checks) and this
+broken-references role are separate: a valid binding rescues, a dangling one
+is flagged.
 
 ### Notification panel ordering
 
@@ -414,10 +400,12 @@ the strategy in detail; the summary below is for quickly sanity-checking the
 stat attributes.
 
 1. **Structural walk.** Dict keys in `_ENTITY_KEYS` (`entity`, `entity_id`,
-   `entities`, `source`, `target_entity`, ...) emit entity references
-   directly. Dict keys in `_DEVICE_KEYS` emit device references, validated
-   against a 32-char-lowercase-hex regex to filter non-HA device identifiers
-   (mobile-app UDIDs, DLNA UPnP UUIDs, `/dev/` serial paths).
+   `entities`, `source`, `target_entity`, `device_trackers`, ...) emit entity
+   references directly (`device_trackers` is how person config binds its
+   trackers, so a person pointing at a deleted `device_tracker` surfaces as a
+   broken reference). Dict keys in `_DEVICE_KEYS` emit device references,
+   validated against a 32-char-lowercase-hex regex to filter non-HA device
+   identifiers (mobile-app UDIDs, DLNA UPnP UUIDs, `/dev/` serial paths).
 2. **Jinja AST extraction.** Any string leaf containing `{{` or `{%` is parsed
    as a Jinja template. Constant string literals (`states('sensor.foo')`) and
    attribute chains (`states.sensor.foo`) are extracted and validated.
