@@ -50,19 +50,25 @@ a { color: #0366d6; }
 <body>
 <h1>Sensor Threshold Entity Controller</h1>
 <h2>Summary</h2>
-<p>Controls a switch-like entity based on sensor value spikes, with manual
-override protection, auto-off functionality, and notification support.</p>
+<p>Controls one or more switch-like entities based on sensor value spikes, with
+manual override protection, auto-off functionality, and notification support.
+The controlled entities are driven on and off together as a single unit.</p>
 <h2>Features</h2>
 <ul>
-<li><strong>Threshold-based Control</strong>: Turns a switch ON when sensor values spike
-above a trigger threshold, OFF when they drop below a release threshold.</li>
-<li><strong>Manual Override Protection</strong>: Re-activates the switch if it is manually
-turned off while sensor thresholds are still exceeded. Turning the switch
+<li><strong>Threshold-based Control</strong>: Turns the controlled entities ON when sensor
+values spike above a trigger threshold, OFF when they drop below a release
+threshold.</li>
+<li><strong>Multi-Entity Control</strong>: Drives one or more entities together. A turn-on
+targets every configured entity; a turn-off targets only the entities that
+are currently on, so the action and its notification name exactly the
+entities affected.</li>
+<li><strong>Manual Override Protection</strong>: Re-activates the controlled entities if any
+is manually turned off while sensor thresholds are still exceeded. Turning
 off twice within a configurable window disables this behavior.</li>
-<li><strong>Auto-Off Timer</strong>: Automatically turns the switch off after a configurable
-duration when manually activated.</li>
-<li><strong>Startup Recovery</strong>: If Home Assistant restarts with the switch already ON,
-starts the auto-off timer.</li>
+<li><strong>Auto-Off Timer</strong>: Automatically turns the controlled entities off after a
+configurable duration when manually activated.</li>
+<li><strong>Startup Recovery</strong>: If Home Assistant restarts with any controlled entity
+already ON, starts the auto-off timer.</li>
 <li><strong>Notifications</strong>: Optionally runs a user-supplied action chain (one or more
 &quot;Call service&quot; steps) on every action, with the pre-built message exposed as
 a <code>{{ message }}</code> variable inside the chain.</li>
@@ -75,8 +81,8 @@ Automation</strong>.</li>
 <li>Configure the required and optional parameters.</li>
 <li>Save.</li>
 </ol>
-<p>The automation will appear in the <strong>Used By</strong> list for all sensor and switch
-entities.</p>
+<p>The automation will appear in the <strong>Used By</strong> list for all sensor and
+controlled entities.</p>
 <h2>Configuration</h2>
 <h3>Required</h3>
 <table>
@@ -88,20 +94,20 @@ entities.</p>
 </thead>
 <tbody>
 <tr>
-<td><strong>Target Switch Entity</strong></td>
-<td>The switch, fan, light, or input_boolean entity to control (e.g., <code>switch.bathroom_fan</code>).</td>
+<td><strong>Controlled Entities</strong></td>
+<td>One or more switch, fan, light, or input_boolean entities to control (e.g., <code>switch.bathroom_fan</code>). Driven on and off together as a unit.</td>
 </tr>
 <tr>
 <td><strong>Sensor Entities</strong></td>
-<td>One or more sensors to monitor (e.g., <code>sensor.bathroom_humidity</code>). All sensors feed into a shared sampling window. Any sensor spike triggers the switch; all must settle to release.</td>
+<td>One or more sensors to monitor (e.g., <code>sensor.bathroom_humidity</code>). All sensors feed into a shared sampling window. Any sensor spike triggers the entities; all must settle to release.</td>
 </tr>
 <tr>
 <td><strong>Trigger Threshold</strong></td>
-<td>Spike amount (max - min in sampling window) to turn the switch ON. Must be positive.</td>
+<td>Spike amount (max - min in sampling window) to turn the entities ON. Must be positive.</td>
 </tr>
 <tr>
 <td><strong>Release Threshold</strong></td>
-<td>Amount above baseline to keep the switch ON. Must be &lt;= trigger threshold.</td>
+<td>Amount above baseline to keep the entities ON. Must be &lt;= trigger threshold.</td>
 </tr>
 </tbody>
 </table>
@@ -153,7 +159,7 @@ with the current time when the notification is sent:</p>
 <p><code>YYYY</code>, <code>YY</code>, <code>MM</code>, <code>DD</code>, <code>HH</code>, <code>mm</code>, <code>ss</code></p>
 <h2>Usage notes</h2>
 <h3>Example: Bathroom Fan Control</h3>
-<pre><code class="language-text">Target Switch Entity:  switch.bathroom_fan
+<pre><code class="language-text">Controlled Entities:   switch.bathroom_fan
 Sensor Entities:       sensor.bathroom_humidity
                        sensor.bathroom_vent_humidity
 Trigger Threshold:     10
@@ -161,12 +167,14 @@ Release Threshold:     5
 Sampling Window:       300 seconds (5 minutes)
 Auto-Off Timeout:      30 minutes
 </code></pre>
-<p>When someone showers, humidity spikes on one or both sensors and the fan turns
-ON. When humidity returns to normal across all sensors, the fan turns OFF. If
-someone manually turns off the fan while humidity is still high, it turns back
-on. If they manually turn off the fan twice in a row (within 10 seconds), the
-sensor override is disabled. If they turn the fan on manually (with no
-humidity spike), it turns off automatically after 30 minutes.</p>
+<p>When someone showers, humidity spikes on one or both sensors and the
+controlled entities turn ON. When humidity returns to normal across all
+sensors, the entities turn OFF. If someone manually turns off the fan while
+humidity is still high, it turns back on. If they manually turn off the fan
+twice in a row (within 10 seconds), the sensor override is disabled. If they
+turn the fan on manually (with no humidity spike), it turns off automatically
+after 30 minutes. When more than one entity is controlled, a turn-off targets
+only the entities that are currently on.</p>
 <h2>Developer notes</h2>
 <p>Three complementary layers provide visibility into the automation's decisions
 without requiring ad-hoc instrumentation.</p>
@@ -215,6 +223,14 @@ the state value mirror the action.</p>
 <td>Trigger ID (<code>sensor_change</code>, <code>switch_change</code>, <code>periodic</code>, <code>manual</code>)</td>
 </tr>
 <tr>
+<td><code>controlled_entities</code></td>
+<td>The configured controlled-entity list</td>
+</tr>
+<tr>
+<td><code>controlled_on</code></td>
+<td><code>true</code> if any controlled entity was on at evaluation time</td>
+</tr>
+<tr>
 <td><code>runtime</code></td>
 <td>Service-call duration in seconds</td>
 </tr>
@@ -249,8 +265,8 @@ on every invocation.</p>
 <li>Or via SSH: <code>ha core logs 2&gt;&amp;1 | grep sensor_threshold</code>.</li>
 </ul>
 <p>Example output for an automation named &quot;Main Bath Fan Controller&quot;:</p>
-<pre><code class="language-text">[STEC: Main Bath Fan Controller] event=TIMER sw=on baseline=None
-  auto_off=2026-02-21T15:19:00 samples=5 -&gt; TURN_OFF
+<pre><code class="language-text">[STEC: Main Bath Fan Controller] event=TIMER controlled_on=True
+  baseline=None auto_off=2026-02-21T15:19:00 samples=5 -&gt; TURN_OFF
   &quot;Auto-off after 1 minute(s)&quot;
 </code></pre>
 <p>Uses <code>log.warning</code> (not <code>log.info</code>) because HA's default log level for custom

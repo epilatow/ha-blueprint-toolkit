@@ -440,7 +440,7 @@ are user-visible-behavior validation against the pre-deploy baselines.
      - ZRM's `routes_applied` increments by 1 -> a deploy that fixed a
        reconcile bug AND a route was successfully applied this run.
    - **For trigger-driven handlers** (STEC, TEC): only compare `last_run` and
-     `runtime`. Their state attributes (`switch_state`, `auto_off_at`,
+     `runtime`. Their state attributes (`controlled_entities`, `auto_off_at`,
      `controlled_on`, etc.) change naturally on every trigger and aren't a
      regression signal across a deploy.
 

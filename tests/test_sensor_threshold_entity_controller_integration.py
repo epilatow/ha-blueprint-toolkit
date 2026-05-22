@@ -15,9 +15,10 @@ Exercises the parts the in-process unit tests
 (``tests/test_sensor_threshold_entity_controller_handler.py``)
 deliberately don't cover: the live ``vol.Schema`` argparse,
 the cross-field check against ``hass.states`` for
-``target_switch_entity``, the full
-``_async_service_layer`` state-load / action-dispatch /
-response-shape loop, and the diagnostic-state attrs.
+``controlled_entities``, the full ``_async_service_layer``
+state-load / action-dispatch / response-shape loop (including
+the multi-entity turn-OFF on-subset targeting), and the
+diagnostic-state attrs.
 """
 
 from __future__ import annotations
@@ -93,24 +94,31 @@ async def _setup_integration(hass: Any) -> Any:
     return entry
 
 
-def _seed_target_switch(hass: Any, entity_id: str = "switch.fan") -> None:
-    """Plant a fake switch entity in the state machine.
+def _seed_controlled(
+    hass: Any,
+    entity_id: str = "switch.fan",
+    *,
+    state: str = "off",
+    friendly_name: str = "Test Fan",
+) -> None:
+    """Plant a fake controlled entity in the state machine.
 
-    STEC's argparse cross-field check requires the
-    ``target_switch_entity`` to exist as a known state;
-    we only need it visible to ``hass.states.get`` so we
-    can drive the service-call path through to the
-    service layer without a real switch integration.
+    STEC's argparse cross-field check requires each
+    controlled entity to exist as a known state; the
+    service layer also reads the live state to build the
+    on-subset / friendly-name maps. We only need them
+    visible to ``hass.states.get`` so we can drive the
+    service-call path through to the service layer without
+    a real switch integration.
     """
-    hass.states.async_set(entity_id, "off", {"friendly_name": "Test Fan"})
+    hass.states.async_set(entity_id, state, {"friendly_name": friendly_name})
 
 
 def _valid_payload(
     *,
     instance_id: str = "automation.stec_test",
-    target_switch_entity: str = "switch.fan",
+    controlled_entities: list[str] | None = None,
     sensor_value: str = "55.0",
-    switch_state: str = "off",
     trigger_entity: str = "sensor.humidity",
     trigger_threshold: float = 70.0,
     release_threshold: float = 60.0,
@@ -119,9 +127,12 @@ def _valid_payload(
     return {
         "instance_id": instance_id,
         "trigger_id": "manual",
-        "target_switch_entity": target_switch_entity,
+        "controlled_entities_raw": (
+            ["switch.fan"]
+            if controlled_entities is None
+            else controlled_entities
+        ),
         "sensor_value": sensor_value,
-        "switch_state": switch_state,
         "trigger_entity": trigger_entity,
         "trigger_threshold_raw": trigger_threshold,
         "release_threshold_raw": release_threshold,
@@ -165,17 +176,47 @@ class TestArgparseEmitsConfigErrorNotification:
         assert notif_id in notifs, "config-error notification was not emitted"
         assert "schema:" in notifs[notif_id]["message"]
 
-    async def test_unknown_target_switch_entity_creates_notification(
+    async def test_empty_controlled_entities_creates_notification(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """An empty controlled set has nothing to drive; the
+        cross-field check rejects it so a YAML edit that
+        clears the list doesn't silently no-op forever.
+        """
+        await _setup_integration(hass)
+
+        payload = _valid_payload(
+            instance_id="automation.stec_empty",
+            controlled_entities=[],
+        )
+        await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notif_id = (
+            "blueprint_toolkit_sensor_threshold_entity_controller"
+            "__automation.stec_empty__config_error"
+        )
+        assert notif_id in notifs
+        msg: str = notifs[notif_id]["message"]
+        assert "controlled_entities" in msg
+        assert "at least one entity is required" in msg
+
+    async def test_unknown_controlled_entity_creates_notification(
         self,
         hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
 
-        # No ``_seed_target_switch`` -- the entity doesn't
+        # No ``_seed_controlled`` -- the entity doesn't
         # exist; the cross-field check should reject.
         payload = _valid_payload(
             instance_id="automation.stec_bad_switch",
-            target_switch_entity="switch.does_not_exist",
+            controlled_entities=["switch.does_not_exist"],
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
@@ -190,21 +231,22 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         assert notif_id in notifs
         msg: str = notifs[notif_id]["message"]
-        assert "target_switch_entity" in msg
+        assert "controlled_entities" in msg
         assert "switch.does_not_exist" in msg
 
-    async def test_non_controllable_target_switch_creates_notification(
+    async def test_non_controllable_controlled_entity_creates_notification(
         self,
         hass: HomeAssistant,
     ) -> None:
-        """Cross-field guard: ``target_switch_entity`` must
+        """Cross-field guard: each controlled entity must
         live in a domain that responds to
         ``homeassistant.turn_on`` / ``turn_off``. The
         blueprint selector restricts the input to
         ``switch / fan / light / input_boolean``, but a
         hand-edited YAML automation can bypass the
-        selector. Argparse rejects it before the service
-        layer dispatches a silent no-op.
+        selector. Argparse rejects it (with the per-entity
+        bullet) before the service layer dispatches a
+        silent no-op.
         """
         await _setup_integration(hass)
         # Existing entity, wrong domain (sensors don't
@@ -218,7 +260,7 @@ class TestArgparseEmitsConfigErrorNotification:
 
         payload = _valid_payload(
             instance_id="automation.stec_bad_domain",
-            target_switch_entity="sensor.humidity",
+            controlled_entities=["sensor.humidity"],
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
         await hass.async_block_till_done()
@@ -234,7 +276,8 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         assert notif_id in notifs
         msg: str = notifs[notif_id]["message"]
-        assert "target_switch_entity" in msg
+        assert "controlled_entities" in msg
+        assert "'sensor.humidity'" in msg
         assert "does not support on/off" in msg
         # Argparse rejected; service layer must not have
         # dispatched a turn_on against the bad entity.
@@ -277,7 +320,7 @@ class TestArgparseEmitsConfigErrorNotification:
         hass: HomeAssistant,
     ) -> None:
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
 
         # Bad call first.
         await hass.services.async_call(
@@ -322,7 +365,7 @@ class TestServiceLayerScan:
         decision-context extras + the ``data`` blob.
         """
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
 
         await hass.services.async_call(
             DOMAIN,
@@ -348,9 +391,14 @@ class TestServiceLayerScan:
             "last_action",
             "last_reason",
             "last_sensor",
+            "controlled_entities",
+            "controlled_on",
             "data",
         ):
             assert key in attrs, f"missing diagnostic attr: {key}"
+        assert attrs["controlled_entities"] == ["switch.fan"]
+        # Seeded switch is off -> controlled_on is False.
+        assert attrs["controlled_on"] is False
         # ``data`` is the JSON-encoded controller state
         # blob the next tick re-loads.
         import json
@@ -375,7 +423,7 @@ class TestServiceLayerScan:
         length 1.
         """
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
 
         # First call: sensor reading well below threshold.
         # Triggers the sensor sample-window path.
@@ -412,6 +460,7 @@ def _spike_payload(
     *,
     instance_id: str,
     sensor_value: str,
+    controlled_entities: list[str] | None = None,
 ) -> dict[str, Any]:
     """Spike-tuned STEC payload.
 
@@ -422,8 +471,8 @@ def _spike_payload(
     """
     return _valid_payload(
         instance_id=instance_id,
+        controlled_entities=controlled_entities,
         sensor_value=sensor_value,
-        switch_state="off",
         trigger_entity="sensor.humidity",
         trigger_threshold=5.0,
         release_threshold=2.0,
@@ -436,9 +485,9 @@ class TestActionDispatch:
         hass: HomeAssistant,
     ) -> None:
         """End-to-end: a sensor spike should provoke a
-        ``homeassistant.turn_on`` against
-        ``target_switch_entity``. Without this test the
-        dispatch is opaque to the test surface (the
+        single ``homeassistant.turn_on`` against the
+        controlled set (a list ``entity_id``). Without this
+        test the dispatch is opaque to the test surface (the
         logic suite tests the action enum, not the HA
         service call).
 
@@ -455,7 +504,7 @@ class TestActionDispatch:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         turn_on_calls = async_mock_service(hass, "homeassistant", "turn_on")
 
         # First call seeds a baseline-low sample.
@@ -486,7 +535,8 @@ class TestActionDispatch:
         await hass.async_block_till_done()
 
         assert len(turn_on_calls) == 1
-        assert turn_on_calls[0].data["entity_id"] == "switch.fan"
+        # A turn-ON targets the full configured list.
+        assert turn_on_calls[0].data["entity_id"] == ["switch.fan"]
         # Context propagation: the dispatched ``turn_on``
         # should carry the spike call's context, not a
         # fresh-from-HA one.
@@ -504,7 +554,7 @@ class TestActionDispatch:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         turn_on_calls = async_mock_service(hass, "homeassistant", "turn_on")
         turn_off_calls = async_mock_service(hass, "homeassistant", "turn_off")
 
@@ -521,6 +571,127 @@ class TestActionDispatch:
 
         assert turn_on_calls == []
         assert turn_off_calls == []
+
+
+class TestMultiEntityDispatch:
+    """Multi-entity action dispatch: a turn-ON targets the
+    full configured set; a turn-OFF (release / auto-off)
+    targets and names only the entities that are currently
+    on."""
+
+    async def test_spike_turns_on_full_list(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """A spike on a two-entity controller dispatches one
+        ``turn_on`` whose ``entity_id`` is both entities."""
+        from pytest_homeassistant_custom_component.common import (
+            async_mock_service,
+        )
+
+        await _setup_integration(hass)
+        _seed_controlled(hass, "switch.fan", friendly_name="Fan One")
+        _seed_controlled(hass, "switch.fan2", friendly_name="Fan Two")
+        turn_on_calls = async_mock_service(hass, "homeassistant", "turn_on")
+
+        controlled = ["switch.fan", "switch.fan2"]
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _spike_payload(
+                instance_id="automation.stec_multi_on",
+                sensor_value="55.0",
+                controlled_entities=controlled,
+            ),
+            blocking=True,
+        )
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _spike_payload(
+                instance_id="automation.stec_multi_on",
+                sensor_value="65.0",
+                controlled_entities=controlled,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert len(turn_on_calls) == 1
+        assert turn_on_calls[0].data["entity_id"] == controlled
+
+    async def test_release_turns_off_only_on_subset(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Two controlled entities, only one on: a sensor
+        release fires ONE ``turn_off`` whose ``entity_id`` is
+        exactly the on-subset (not both), and the response
+        notification names only that subset.
+
+        A baseline is pre-seeded into the diagnostic state's
+        ``data`` blob (with an empty sample window) so the
+        very next sensor reading -- below ``baseline +
+        release`` -- triggers the release path without the
+        spike sample lingering in the rolling window.
+        """
+        import json
+
+        from pytest_homeassistant_custom_component.common import (
+            async_mock_service,
+        )
+
+        from custom_components.blueprint_toolkit.sensor_threshold_entity_controller.logic import (  # noqa: E501
+            State,
+        )
+
+        await _setup_integration(hass)
+        # fan is OFF, fan2 is ON -> the on-subset is [fan2].
+        _seed_controlled(
+            hass, "switch.fan", state="off", friendly_name="Fan One"
+        )
+        _seed_controlled(
+            hass, "switch.fan2", state="on", friendly_name="Fan Two"
+        )
+        async_mock_service(hass, "homeassistant", "turn_on")
+        turn_off_calls = async_mock_service(hass, "homeassistant", "turn_off")
+
+        instance_id = "automation.stec_multi_off"
+        controlled = ["switch.fan", "switch.fan2"]
+
+        # Pre-seed an active baseline with an empty sample
+        # window so the next reading drives the release path.
+        seeded = State(baseline=60.0, initialized=True)
+        hass.states.async_set(
+            "blueprint_toolkit.stec_stec_multi_off_state",
+            "NONE",
+            {"data": json.dumps(seeded.to_dict())},
+        )
+
+        # Reading at 61 <= baseline(60) + release(2) -> release.
+        response = await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _spike_payload(
+                instance_id=instance_id,
+                sensor_value="61.0",
+                controlled_entities=controlled,
+            ),
+            blocking=True,
+            return_response=True,
+        )
+        await hass.async_block_till_done()
+
+        assert len(turn_off_calls) == 1
+        # The turn-OFF targets ONLY the on-subset, never the
+        # full configured list.
+        assert turn_off_calls[0].data["entity_id"] == ["switch.fan2"]
+        # The notification body names only the on-subset.
+        assert response is not None
+        body = response["notification_message"]
+        assert isinstance(body, str)
+        assert "Fan Two" in body
+        assert "Fan One" not in body
 
 
 class TestServiceResponseShape:
@@ -541,7 +712,7 @@ class TestServiceResponseShape:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
 
         # First call seeds a baseline-low sample; second
@@ -588,7 +759,7 @@ class TestServiceResponseShape:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
 
         response = await hass.services.async_call(
@@ -650,7 +821,7 @@ class TestStateSavedBeforeResponseReturned:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
 
         call_order: list[str] = []
@@ -723,7 +894,7 @@ class TestLoadStateBlobMalformed:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
 
         # Plant a malformed ``data`` blob in the
@@ -779,7 +950,7 @@ class TestLoadStateBlobMalformed:
         )
 
         await _setup_integration(hass)
-        _seed_target_switch(hass)
+        _seed_controlled(hass)
         async_mock_service(hass, "homeassistant", "turn_on")
 
         # Plant a non-string ``data`` value (HA states API

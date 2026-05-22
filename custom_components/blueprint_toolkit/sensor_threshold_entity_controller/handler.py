@@ -6,7 +6,7 @@ dispatch (see ``DEVELOPMENT.md`` for the universal
 pattern):
 
 - Three input event types: SENSOR (sensor entity state
-  change), SWITCH (target switch state change), TIMER
+  change), SWITCH (controlled-entity state change), TIMER
   (periodic minute tick). Reactive triggers stay in
   the blueprint (a state-change trigger per watched
   entity); the periodic tick is integration-owned via
@@ -17,11 +17,13 @@ pattern):
   JSON blob. Volatile across HA restarts; the periodic
   + reactive triggers re-bootstrap state on the next
   invocation, and ``handle_service_call`` arms auto-off
-  at bootstrap if the switch is currently on.
-- Action: ``homeassistant.turn_on`` /
-  ``homeassistant.turn_off`` against the target
-  switch entity, with the caller's ``context``
-  propagated so logbook attribution is correct.
+  at bootstrap if any controlled entity is currently on.
+- Action: a single ``homeassistant.turn_on`` /
+  ``homeassistant.turn_off`` against the result's
+  ``target_entities`` set (the full configured list on a
+  turn-ON, the on-subset on a turn-OFF), with the
+  caller's ``context`` propagated so logbook attribution
+  is correct.
 - Notification dispatch is owned by the blueprint, not
   the handler. The service registers with
   ``SupportsResponse.OPTIONAL`` and returns a
@@ -139,9 +141,10 @@ _SCHEMA = vol.Schema(
     {
         vol.Required("instance_id"): cv.entity_id,
         vol.Required("trigger_id"): vol.Coerce(str),
-        vol.Required("target_switch_entity"): cv.entity_id,
+        vol.Required("controlled_entities_raw"): vol.All(
+            cv.ensure_list, [cv.entity_id]
+        ),
         vol.Required("sensor_value"): vol.Coerce(str),
-        vol.Required("switch_state"): vol.Coerce(str),
         vol.Required("trigger_entity"): vol.Coerce(str),
         vol.Required("trigger_threshold_raw"): vol.Coerce(float),
         vol.Required("release_threshold_raw"): vol.Coerce(float),
@@ -230,25 +233,29 @@ async def _async_argparse(
     instance_id: str = data["instance_id"]
     errors: list[str] = []
 
-    # Cross-field: target_switch_entity must exist as a
-    # state in HA today and must live in a domain that
-    # responds to ``homeassistant.turn_on`` /
-    # ``turn_off``. Catches typos AND selector-bypassing
-    # YAML edits before the service layer dispatches a
-    # silent no-op against an unsupported entity.
-    target_switch_entity: str = data["target_switch_entity"]
-    if hass.states.get(target_switch_entity) is None:
+    # Cross-field: the controlled set must be non-empty,
+    # every entity must exist as a state in HA today, and
+    # each must live in a domain that responds to
+    # ``homeassistant.turn_on`` / ``turn_off``. Catches
+    # typos AND selector-bypassing YAML edits before the
+    # service layer dispatches a silent no-op against an
+    # unsupported entity.
+    controlled_entities: list[str] = list(data["controlled_entities_raw"])
+    if not controlled_entities:
         errors.append(
-            f"target_switch_entity: {target_switch_entity!r}"
-            " is not a known entity",
+            "controlled_entities: at least one entity is required",
         )
-    else:
-        errors.extend(
-            validate_controlled_entity_domains(
-                [target_switch_entity],
-                "target_switch_entity",
-            ),
-        )
+    for eid in controlled_entities:
+        if hass.states.get(eid) is None:
+            errors.append(
+                f"controlled_entities: {eid!r} is not a known entity",
+            )
+    errors.extend(
+        validate_controlled_entity_domains(
+            sorted(controlled_entities),
+            "controlled_entities",
+        ),
+    )
 
     # Argparse complete; emit accumulated errors (or
     # dismiss any prior config_error notification).
@@ -262,9 +269,8 @@ async def _async_argparse(
         now=now,
         instance_id=instance_id,
         trigger_id=data["trigger_id"],
-        target_switch_entity=target_switch_entity,
+        controlled_entities=controlled_entities,
         sensor_value=data["sensor_value"],
-        switch_state=data["switch_state"],
         trigger_entity=data["trigger_entity"],
         trigger_threshold=data["trigger_threshold_raw"],
         release_threshold=data["release_threshold_raw"],
@@ -289,9 +295,8 @@ async def _async_service_layer(
     now: datetime,
     instance_id: str,
     trigger_id: str,
-    target_switch_entity: str,
+    controlled_entities: list[str],
     sensor_value: str,
-    switch_state: str,
     trigger_entity: str,
     trigger_threshold: float,
     release_threshold: float,
@@ -330,23 +335,21 @@ async def _async_service_layer(
     # is fine -- the logic module bootstraps fresh state.
     state_data = _load_state_blob(hass, instance_id)
 
-    # Resolve the switch's friendly name for the
-    # notification body.
-    switch_st = hass.states.get(target_switch_entity)
-    switch_name = (
-        switch_st.attributes.get("friendly_name", target_switch_entity)
-        if switch_st is not None
-        else target_switch_entity
-    )
+    # Read the live controlled-entity states: the on-subset
+    # (order-preserving, so a turn-OFF body lists entities
+    # in the user's configured order) and friendly names
+    # for the notification body.
+    controlled_on_entities = _filter_on(hass, controlled_entities)
+    friendly_names = _friendly_names(hass, controlled_entities)
 
     # Pure-function controller call -- no HA dependencies.
     result = logic.handle_service_call(
         state_data=state_data,
-        switch_name=str(switch_name),
         current_time=now,
-        target_switch_entity=target_switch_entity,
+        controlled_entities=controlled_entities,
+        controlled_on_entities=controlled_on_entities,
+        friendly_names=friendly_names,
         sensor_value=sensor_value,
-        switch_state=switch_state,
         trigger_entity=trigger_entity,
         trigger_threshold=trigger_threshold,
         release_threshold=release_threshold,
@@ -386,6 +389,8 @@ async def _async_service_layer(
                 if result.sensor_value is not None
                 else "n/a"
             ),
+            "controlled_entities": controlled_entities,
+            "controlled_on": bool(controlled_on_entities),
             # JSON-encoded controller state for the next
             # tick's load. Volatile across HA restarts
             # (state machine is cleared); the next periodic
@@ -394,32 +399,36 @@ async def _async_service_layer(
         },
     )
 
+    # Single ``homeassistant.turn_on`` / ``turn_off`` against
+    # the result's ``target_entities`` (full configured set
+    # on a turn-ON, the on-subset on a turn-OFF).
     # ``call.context`` propagates so the logbook attributes
-    # the turn_on/off to the user who triggered the
-    # automation, not to the integration.
-    if result.action == logic.Action.TURN_ON:
+    # the action to the user who triggered the automation,
+    # not to the integration.
+    if result.action == logic.Action.TURN_ON and result.target_entities:
         await hass.services.async_call(
             "homeassistant",
             "turn_on",
-            {"entity_id": target_switch_entity},
+            {"entity_id": result.target_entities},
             context=call.context,
             blocking=False,
         )
-    elif result.action == logic.Action.TURN_OFF:
+    elif result.action == logic.Action.TURN_OFF and result.target_entities:
         await hass.services.async_call(
             "homeassistant",
             "turn_off",
-            {"entity_id": target_switch_entity},
+            {"entity_id": result.target_entities},
             context=call.context,
             blocking=False,
         )
 
     if debug_logging:
         _LOGGER.warning(
-            "%s event=%s sw=%s baseline=%s auto_off=%s samples=%s -> %s %r",
+            "%s event=%s controlled_on=%s baseline=%s"
+            " auto_off=%s samples=%s -> %s %r",
             tag,
             result.event_type,
-            switch_state,
+            bool(controlled_on_entities),
             result.state_dict.get("baseline"),
             result.state_dict.get("auto_off_started_at"),
             len(result.state_dict.get("samples", [])),
@@ -430,6 +439,37 @@ async def _async_service_layer(
     return TypedServiceResponse(
         notification_message=result.notification or "",
     )
+
+
+# --------------------------------------------------------
+# Controlled-entity state helpers
+# --------------------------------------------------------
+
+
+def _filter_on(hass: HomeAssistant, entities: list[str]) -> list[str]:
+    """Return the subset of ``entities`` whose state is ``"on"``.
+
+    Order-preserving so a turn-OFF notification body lists
+    entities in the user's configured order.
+    """
+    return [
+        eid
+        for eid in entities
+        if (s := hass.states.get(eid)) is not None and s.state == "on"
+    ]
+
+
+def _friendly_names(hass: HomeAssistant, entities: list[str]) -> dict[str, str]:
+    """Map each controlled entity to its friendly name (when set)."""
+    out: dict[str, str] = {}
+    for eid in entities:
+        state = hass.states.get(eid)
+        if state is None:
+            continue
+        name = state.attributes.get("friendly_name") or ""
+        if name:
+            out[eid] = name
+    return out
 
 
 # --------------------------------------------------------

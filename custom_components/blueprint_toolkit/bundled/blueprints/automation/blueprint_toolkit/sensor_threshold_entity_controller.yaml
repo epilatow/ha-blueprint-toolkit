@@ -1,20 +1,22 @@
 blueprint:
   name: Sensor Threshold Entity Controller
   description: >
-    Controls a switch based on sensor value spikes (e.g., humidity for a
-    bathroom fan). Turns switch ON when sensor readings spike above a
-    trigger threshold, OFF when they drop below a release threshold.
-    Includes manual override protection, double-off disable, auto-off
-    timer for manual activation, and optional notifications.
+    Controls one or more entities based on sensor value spikes (e.g.,
+    humidity for a bathroom fan). Turns the entities ON when sensor
+    readings spike above a trigger threshold, OFF when they drop below a
+    release threshold. Includes manual override protection, double-off
+    disable, auto-off timer for manual activation, and optional
+    notifications.
     [Full documentation](/local/blueprint_toolkit/docs/sensor_threshold_entity_controller.html).
   domain: automation
   author: epilatow
 
   input:
-    target_switch_entity:
-      name: Target Switch Entity
+    controlled_entities:
+      name: Controlled Entities
       description: >
-        The switch, fan, or light entity to control.
+        One or more switch, fan, light, or input_boolean entities to
+        control. They are driven on and off together as a unit.
       selector:
         entity:
           domain:
@@ -22,6 +24,7 @@ blueprint:
             - fan
             - light
             - input_boolean
+          multiple: true
 
     sensor_entities:
       name: Sensor Entities
@@ -136,20 +139,17 @@ blueprint:
       selector:
         boolean:
 
-variables:
-  target_switch_entity: !input target_switch_entity
-
 triggers:
-  # Reactive triggers only (sensor + switch state
-  # changes); the periodic minute-tick is owned by the
-  # integration's ``schedule_periodic_with_jitter``
+  # Reactive triggers only (sensor + controlled-entity
+  # state changes); the periodic minute-tick is owned by
+  # the integration's ``schedule_periodic_with_jitter``
   # plumbing.
   - id: sensor_change
     trigger: state
     entity_id: !input sensor_entities
   - id: switch_change
     trigger: state
-    entity_id: !input target_switch_entity
+    entity_id: !input controlled_entities
 
 actions:
   - action: blueprint_toolkit.sensor_threshold_entity_controller
@@ -167,13 +167,12 @@ actions:
     # ``EventType.TIMER``.
     data:
       instance_id: "{{ this.entity_id }}"
+      controlled_entities_raw: !input controlled_entities
       trigger_id: "{{ trigger_id | default(trigger.id, true) | default('manual', true) }}"
-      target_switch_entity: "{{ target_switch_entity }}"
       sensor_value: >-
         {{ trigger.to_state.state
            if trigger.to_state is defined
            else '' }}
-      switch_state: "{{ states(target_switch_entity) }}"
       trigger_entity: >-
         {{ trigger_entity | default(trigger.entity_id, true) | default('timer', true) }}
       trigger_threshold_raw: !input trigger_threshold

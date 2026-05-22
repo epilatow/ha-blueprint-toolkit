@@ -2,20 +2,26 @@
 
 ## Summary
 
-Controls a switch-like entity based on sensor value spikes, with manual
-override protection, auto-off functionality, and notification support.
+Controls one or more switch-like entities based on sensor value spikes, with
+manual override protection, auto-off functionality, and notification support.
+The controlled entities are driven on and off together as a single unit.
 
 ## Features
 
-- **Threshold-based Control**: Turns a switch ON when sensor values spike
-  above a trigger threshold, OFF when they drop below a release threshold.
-- **Manual Override Protection**: Re-activates the switch if it is manually
-  turned off while sensor thresholds are still exceeded. Turning the switch
+- **Threshold-based Control**: Turns the controlled entities ON when sensor
+  values spike above a trigger threshold, OFF when they drop below a release
+  threshold.
+- **Multi-Entity Control**: Drives one or more entities together. A turn-on
+  targets every configured entity; a turn-off targets only the entities that
+  are currently on, so the action and its notification name exactly the
+  entities affected.
+- **Manual Override Protection**: Re-activates the controlled entities if any
+  is manually turned off while sensor thresholds are still exceeded. Turning
   off twice within a configurable window disables this behavior.
-- **Auto-Off Timer**: Automatically turns the switch off after a configurable
-  duration when manually activated.
-- **Startup Recovery**: If Home Assistant restarts with the switch already ON,
-  starts the auto-off timer.
+- **Auto-Off Timer**: Automatically turns the controlled entities off after a
+  configurable duration when manually activated.
+- **Startup Recovery**: If Home Assistant restarts with any controlled entity
+  already ON, starts the auto-off timer.
 - **Notifications**: Optionally runs a user-supplied action chain (one or more
   "Call service" steps) on every action, with the pre-built message exposed as
   a `{{ message }}` variable inside the chain.
@@ -28,19 +34,19 @@ override protection, auto-off functionality, and notification support.
 3. Configure the required and optional parameters.
 4. Save.
 
-The automation will appear in the **Used By** list for all sensor and switch
-entities.
+The automation will appear in the **Used By** list for all sensor and
+controlled entities.
 
 ## Configuration
 
 ### Required
 
-| Parameter                | Description                                                                                                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Target Switch Entity** | The switch, fan, light, or input_boolean entity to control (e.g., `switch.bathroom_fan`).                                                                                            |
-| **Sensor Entities**      | One or more sensors to monitor (e.g., `sensor.bathroom_humidity`). All sensors feed into a shared sampling window. Any sensor spike triggers the switch; all must settle to release. |
-| **Trigger Threshold**    | Spike amount (max - min in sampling window) to turn the switch ON. Must be positive.                                                                                                 |
-| **Release Threshold**    | Amount above baseline to keep the switch ON. Must be \<= trigger threshold.                                                                                                          |
+| Parameter               | Description                                                                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Controlled Entities** | One or more switch, fan, light, or input_boolean entities to control (e.g., `switch.bathroom_fan`). Driven on and off together as a unit.                                              |
+| **Sensor Entities**     | One or more sensors to monitor (e.g., `sensor.bathroom_humidity`). All sensors feed into a shared sampling window. Any sensor spike triggers the entities; all must settle to release. |
+| **Trigger Threshold**   | Spike amount (max - min in sampling window) to turn the entities ON. Must be positive.                                                                                                 |
+| **Release Threshold**   | Amount above baseline to keep the entities ON. Must be \<= trigger threshold.                                                                                                          |
 
 ### Optional
 
@@ -65,7 +71,7 @@ with the current time when the notification is sent:
 ### Example: Bathroom Fan Control
 
 ```text
-Target Switch Entity:  switch.bathroom_fan
+Controlled Entities:   switch.bathroom_fan
 Sensor Entities:       sensor.bathroom_humidity
                        sensor.bathroom_vent_humidity
 Trigger Threshold:     10
@@ -74,12 +80,14 @@ Sampling Window:       300 seconds (5 minutes)
 Auto-Off Timeout:      30 minutes
 ```
 
-When someone showers, humidity spikes on one or both sensors and the fan turns
-ON. When humidity returns to normal across all sensors, the fan turns OFF. If
-someone manually turns off the fan while humidity is still high, it turns back
-on. If they manually turn off the fan twice in a row (within 10 seconds), the
-sensor override is disabled. If they turn the fan on manually (with no
-humidity spike), it turns off automatically after 30 minutes.
+When someone showers, humidity spikes on one or both sensors and the
+controlled entities turn ON. When humidity returns to normal across all
+sensors, the entities turn OFF. If someone manually turns off the fan while
+humidity is still high, it turns back on. If they manually turn off the fan
+twice in a row (within 10 seconds), the sensor override is disabled. If they
+turn the fan on manually (with no humidity spike), it turns off automatically
+after 30 minutes. When more than one entity is controlled, a turn-off targets
+only the entities that are currently on.
 
 ## Developer notes
 
@@ -97,17 +105,19 @@ The diagnostic entity's state value is the same as `last_action` (`TURN_ON`,
 `TURN_OFF`, or `NONE`) -- the most recent decision -- so dashboards keying off
 the state value mirror the action.
 
-| Attribute      | Description                                                                                                                                                                                                       |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instance_id`  | Automation entity_id (e.g. `automation.bath_fan`)                                                                                                                                                                 |
-| `last_action`  | `TURN_ON`, `TURN_OFF`, or `NONE`                                                                                                                                                                                  |
-| `last_reason`  | Human-readable reason for the action (or `n/a`)                                                                                                                                                                   |
-| `last_event`   | `SENSOR`, `SWITCH`, or `TIMER`                                                                                                                                                                                    |
-| `last_run`     | ISO timestamp of the invocation                                                                                                                                                                                   |
-| `last_sensor`  | Parsed sensor value (or `n/a` for non-sensor events)                                                                                                                                                              |
-| `last_trigger` | Trigger ID (`sensor_change`, `switch_change`, `periodic`, `manual`)                                                                                                                                               |
-| `runtime`      | Service-call duration in seconds                                                                                                                                                                                  |
-| `data`         | JSON-encoded controller state (samples, baseline, overrides, auto_off_started_at, initialized) -- used to round-trip state across calls; surfacing it in the attrs lets advanced users inspect the rolling window |
+| Attribute             | Description                                                                                                                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance_id`         | Automation entity_id (e.g. `automation.bath_fan`)                                                                                                                                                                 |
+| `last_action`         | `TURN_ON`, `TURN_OFF`, or `NONE`                                                                                                                                                                                  |
+| `last_reason`         | Human-readable reason for the action (or `n/a`)                                                                                                                                                                   |
+| `last_event`          | `SENSOR`, `SWITCH`, or `TIMER`                                                                                                                                                                                    |
+| `last_run`            | ISO timestamp of the invocation                                                                                                                                                                                   |
+| `last_sensor`         | Parsed sensor value (or `n/a` for non-sensor events)                                                                                                                                                              |
+| `last_trigger`        | Trigger ID (`sensor_change`, `switch_change`, `periodic`, `manual`)                                                                                                                                               |
+| `controlled_entities` | The configured controlled-entity list                                                                                                                                                                             |
+| `controlled_on`       | `true` if any controlled entity was on at evaluation time                                                                                                                                                         |
+| `runtime`             | Service-call duration in seconds                                                                                                                                                                                  |
+| `data`                | JSON-encoded controller state (samples, baseline, overrides, auto_off_started_at, initialized) -- used to round-trip state across calls; surfacing it in the attrs lets advanced users inspect the rolling window |
 
 To view:
 
@@ -138,8 +148,8 @@ To view logs:
 Example output for an automation named "Main Bath Fan Controller":
 
 ```text
-[STEC: Main Bath Fan Controller] event=TIMER sw=on baseline=None
-  auto_off=2026-02-21T15:19:00 samples=5 -> TURN_OFF
+[STEC: Main Bath Fan Controller] event=TIMER controlled_on=True
+  baseline=None auto_off=2026-02-21T15:19:00 samples=5 -> TURN_OFF
   "Auto-off after 1 minute(s)"
 ```
 

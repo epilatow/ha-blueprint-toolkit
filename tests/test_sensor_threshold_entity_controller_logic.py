@@ -9,7 +9,15 @@
 # ]
 # ///
 # This is AI generated code
-"""Tests for sensor_threshold_entity_controller module."""
+"""Tests for sensor_threshold_entity_controller logic.
+
+The controlled set is multi-entity. ``ON`` (or ``"on"``)
+helpers build the ``controlled_on_entities`` list; a single
+controlled entity (N=1) is the common case and must behave
+exactly as a single-switch controller did. The N=2 cases lock
+down any-on aggregation plus the turn-OFF "report only the
+on-subset" contract.
+"""
 
 import json
 import sys
@@ -41,48 +49,92 @@ from custom_components.blueprint_toolkit.sensor_threshold_entity_controller.logi
 
 T0 = datetime(2024, 1, 15, 12, 0, 0)
 
+# The single controlled entity used by the N=1 parity tests.
+SW = "switch.fan"
+# Second controlled entity for the N=2 aggregation tests.
+SW2 = "switch.fan2"
+
+
+def _on_list(controlled_on: bool) -> list[str]:
+    """Map a boolean "is on" to the single-entity on-subset."""
+    return [SW] if controlled_on else []
+
 
 def sensor_inputs(
     value: float | None,
-    switch_state: str = "off",
+    controlled_on: bool = False,
     current_time: datetime = T0,
-    switch_name: str = "Test Fan",
+    controlled_on_entities: list[str] | None = None,
+    friendly_names: dict[str, str] | None = None,
 ) -> Inputs:
-    """Build Inputs for a sensor event."""
+    """Build Inputs for a sensor event.
+
+    ``controlled_on`` is the N=1 convenience; pass
+    ``controlled_on_entities`` directly for N>1.
+    """
+    if controlled_on_entities is None:
+        controlled_on_entities = _on_list(controlled_on)
     return Inputs(
         current_time=current_time,
         event_type=EventType.SENSOR,
         sensor_value=value,
-        switch_state=switch_state,
-        switch_name=switch_name,
+        controlled_on_entities=controlled_on_entities,
+        friendly_names=friendly_names or {},
     )
 
 
 def switch_inputs(
-    switch_state: str,
+    controlled_on: bool,
     current_time: datetime = T0,
-    switch_name: str = "Test Fan",
+    controlled_on_entities: list[str] | None = None,
+    friendly_names: dict[str, str] | None = None,
 ) -> Inputs:
-    """Build Inputs for a switch event."""
+    """Build Inputs for a controlled-entity event."""
+    if controlled_on_entities is None:
+        controlled_on_entities = _on_list(controlled_on)
     return Inputs(
         current_time=current_time,
         event_type=EventType.SWITCH,
-        switch_state=switch_state,
-        switch_name=switch_name,
+        controlled_on_entities=controlled_on_entities,
+        friendly_names=friendly_names or {},
     )
 
 
 def timer_inputs(
-    switch_state: str = "on",
+    controlled_on: bool = True,
     current_time: datetime = T0,
-    switch_name: str = "Test Fan",
+    controlled_on_entities: list[str] | None = None,
+    friendly_names: dict[str, str] | None = None,
 ) -> Inputs:
     """Build Inputs for a timer event."""
+    if controlled_on_entities is None:
+        controlled_on_entities = _on_list(controlled_on)
     return Inputs(
         current_time=current_time,
         event_type=EventType.TIMER,
-        switch_state=switch_state,
-        switch_name=switch_name,
+        controlled_on_entities=controlled_on_entities,
+        friendly_names=friendly_names or {},
+    )
+
+
+def _config(
+    *,
+    controlled_entities: list[str] | None = None,
+    trigger_threshold: float = 5.0,
+    release_threshold: float = 2.0,
+    sampling_window_seconds: int = 120,
+    disable_window_seconds: int = 10,
+    auto_off_minutes: int = 1,
+) -> Config:
+    return Config(
+        controlled_entities=(
+            [SW] if controlled_entities is None else controlled_entities
+        ),
+        trigger_threshold=trigger_threshold,
+        release_threshold=release_threshold,
+        sampling_window_seconds=sampling_window_seconds,
+        disable_window_seconds=disable_window_seconds,
+        auto_off_minutes=auto_off_minutes,
     )
 
 
@@ -199,20 +251,23 @@ class TestStateSerialization:
         )
 
 
+class TestInputsControlledOn:
+    def test_empty_list_is_off(self) -> None:
+        assert switch_inputs(False).controlled_on is False
+
+    def test_one_on_is_on(self) -> None:
+        assert switch_inputs(True).controlled_on is True
+
+    def test_any_on_aggregation(self) -> None:
+        """controlled_on is True if ANY entity is on."""
+        i = switch_inputs(True, controlled_on_entities=[SW2])
+        assert i.controlled_on is True
+
+
 class TestSensorSpikeDetection:
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=120,
-            disable_window_seconds=10,
-            auto_off_minutes=1,
-        )
-
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
+    def controller(self) -> Controller:
+        return Controller(_config())
 
     def test_no_action_for_none_sensor_value(
         self, controller: Controller
@@ -224,7 +279,6 @@ class TestSensorSpikeDetection:
 
     def test_no_trigger_below_threshold(self, controller: Controller) -> None:
         state = State()
-        # Two readings with 4-unit spread (< 5 threshold)
         controller.evaluate(state, sensor_inputs(60.0))
         result = controller.evaluate(state, sensor_inputs(64.0))
         assert result.action == Action.NONE
@@ -245,6 +299,7 @@ class TestSensorSpikeDetection:
         controller.evaluate(state, sensor_inputs(60.0))
         result = controller.evaluate(state, sensor_inputs(65.1))
         assert result.action == Action.TURN_ON
+        assert result.target_entities == [SW]
         assert state.baseline == 60.0
         assert "spike" in result.reason.lower()
         assert result.notification != ""
@@ -271,17 +326,17 @@ class TestSensorSpikeDetection:
         assert state.overrides == []
         assert state.auto_off_started_at is None
 
-    def test_spike_when_switch_already_on(self, controller: Controller) -> None:
-        """When switch is already on, set baseline
-        but don't command TURN_ON."""
+    def test_spike_when_already_on(self, controller: Controller) -> None:
+        """When the set is already on, set baseline but
+        don't command TURN_ON."""
         state = State()
         controller.evaluate(
             state,
-            sensor_inputs(60.0, switch_state="on"),
+            sensor_inputs(60.0, controlled_on=True),
         )
         result = controller.evaluate(
             state,
-            sensor_inputs(70.0, switch_state="on"),
+            sensor_inputs(70.0, controlled_on=True),
         )
         assert result.action == Action.NONE
         assert state.baseline == 60.0
@@ -290,24 +345,14 @@ class TestSensorSpikeDetection:
 
 class TestSensorRelease:
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=120,
-            disable_window_seconds=10,
-            auto_off_minutes=30,
-        )
-
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
+    def controller(self) -> Controller:
+        return Controller(_config(auto_off_minutes=30))
 
     def test_no_release_above_threshold(self, controller: Controller) -> None:
         state = State(baseline=60.0)
         result = controller.evaluate(
             state,
-            sensor_inputs(65.0, switch_state="on"),
+            sensor_inputs(65.0, controlled_on=True),
         )
         assert result.action == Action.NONE
         assert state.baseline == 60.0
@@ -319,9 +364,10 @@ class TestSensorRelease:
         state = State(baseline=60.0)
         result = controller.evaluate(
             state,
-            sensor_inputs(62.0, switch_state="on"),
+            sensor_inputs(62.0, controlled_on=True),
         )
         assert result.action == Action.TURN_OFF
+        assert result.target_entities == [SW]
         assert state.baseline is None
         assert "release" in result.reason.lower()
         assert result.notification != ""
@@ -334,19 +380,17 @@ class TestSensorRelease:
         )
         controller.evaluate(
             state,
-            sensor_inputs(61.0, switch_state="on"),
+            sensor_inputs(61.0, controlled_on=True),
         )
         assert state.baseline is None
         assert state.overrides == []
         assert state.auto_off_started_at is None
 
-    def test_release_when_switch_already_off(
-        self, controller: Controller
-    ) -> None:
+    def test_release_when_already_off(self, controller: Controller) -> None:
         state = State(baseline=60.0)
         result = controller.evaluate(
             state,
-            sensor_inputs(62.0, switch_state="off"),
+            sensor_inputs(62.0, controlled_on=False),
         )
         assert result.action == Action.NONE
         assert state.baseline is None
@@ -355,18 +399,8 @@ class TestSensorRelease:
 
 class TestSampleWindow:
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=10,
-            disable_window_seconds=10,
-            auto_off_minutes=30,
-        )
-
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
+    def controller(self) -> Controller:
+        return Controller(_config(sampling_window_seconds=10))
 
     def test_prunes_old_samples(self, controller: Controller) -> None:
         now = T0
@@ -401,18 +435,8 @@ class TestSampleWindow:
 
 class TestManualOverride:
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=10,
-            auto_off_minutes=1,
-        )
-
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
+    def controller(self) -> Controller:
+        return Controller(_config(sampling_window_seconds=300))
 
     def test_re_enables_on_first_manual_off(
         self, controller: Controller
@@ -421,8 +445,9 @@ class TestManualOverride:
             baseline=55.0,
             initialized=True,
         )
-        result = controller.evaluate(state, switch_inputs("off"))
+        result = controller.evaluate(state, switch_inputs(False))
         assert result.action == Action.TURN_ON
+        assert result.target_entities == [SW]
         assert len(state.overrides) == 1
         assert "manual off" in result.reason.lower()
         assert result.notification != ""
@@ -435,7 +460,7 @@ class TestManualOverride:
             initialized=True,
             overrides=[T0 - timedelta(seconds=5)],
         )
-        result = controller.evaluate(state, switch_inputs("off"))
+        result = controller.evaluate(state, switch_inputs(False))
         assert result.action == Action.NONE
         assert state.baseline is None
         assert "override disabled" in result.notification
@@ -448,7 +473,7 @@ class TestManualOverride:
             initialized=True,
             overrides=[T0 - timedelta(seconds=20)],
         )
-        result = controller.evaluate(state, switch_inputs("off"))
+        result = controller.evaluate(state, switch_inputs(False))
         assert result.action == Action.TURN_ON
         assert state.baseline == 55.0
 
@@ -456,20 +481,19 @@ class TestManualOverride:
         self,
     ) -> None:
         """When disable_window=0, always re-enable."""
-        config = Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=0,
-            auto_off_minutes=30,
+        ctrl = Controller(
+            _config(
+                sampling_window_seconds=300,
+                disable_window_seconds=0,
+                auto_off_minutes=30,
+            )
         )
-        ctrl = Controller(config)
         state = State(
             baseline=55.0,
             initialized=True,
             overrides=[T0 - timedelta(seconds=1)],
         )
-        result = ctrl.evaluate(state, switch_inputs("off"))
+        result = ctrl.evaluate(state, switch_inputs(False))
         assert result.action == Action.TURN_ON
         # Previous overrides cleared, only current one
         assert len(state.overrides) == 1
@@ -477,22 +501,12 @@ class TestManualOverride:
 
 class TestAutoOff:
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=10,
-            auto_off_minutes=1,
-        )
-
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
+    def controller(self) -> Controller:
+        return Controller(_config(sampling_window_seconds=300))
 
     def test_schedules_on_manual_on(self, controller: Controller) -> None:
         state = State(initialized=True)
-        controller.evaluate(state, switch_inputs("on"))
+        controller.evaluate(state, switch_inputs(True))
         assert state.auto_off_started_at == T0
 
     def test_timer_fires_after_timeout(self, controller: Controller) -> None:
@@ -505,6 +519,7 @@ class TestAutoOff:
             timer_inputs(current_time=T0 + timedelta(minutes=1)),
         )
         assert result.action == Action.TURN_OFF
+        assert result.target_entities == [SW]
         assert state.auto_off_started_at is None
         assert "auto-off" in result.reason.lower()
         assert result.notification != ""
@@ -538,9 +553,7 @@ class TestAutoOff:
         assert result.action == Action.NONE
         assert state.auto_off_started_at == T0
 
-    def test_timer_ignored_when_switch_off(
-        self, controller: Controller
-    ) -> None:
+    def test_timer_ignored_when_off(self, controller: Controller) -> None:
         state = State(
             auto_off_started_at=T0,
             initialized=True,
@@ -548,7 +561,7 @@ class TestAutoOff:
         result = controller.evaluate(
             state,
             timer_inputs(
-                switch_state="off",
+                controlled_on=False,
                 current_time=T0 + timedelta(minutes=5),
             ),
         )
@@ -564,82 +577,163 @@ class TestAutoOff:
         # Sensor spike: baseline gets set
         controller.evaluate(
             state,
-            sensor_inputs(60.0, switch_state="on"),
+            sensor_inputs(60.0, controlled_on=True),
         )
         controller.evaluate(
             state,
-            sensor_inputs(70.0, switch_state="on"),
+            sensor_inputs(70.0, controlled_on=True),
         )
         assert state.baseline == 60.0
         assert state.auto_off_started_at is None
 
-    def test_cancelled_on_switch_off_no_baseline(
-        self, controller: Controller
-    ) -> None:
+    def test_cancelled_on_off_no_baseline(self, controller: Controller) -> None:
         state = State(
             auto_off_started_at=T0,
             initialized=True,
         )
-        controller.evaluate(state, switch_inputs("off"))
+        controller.evaluate(state, switch_inputs(False))
         assert state.auto_off_started_at is None
 
-    def test_cleared_on_switch_on_with_baseline(
-        self, controller: Controller
-    ) -> None:
-        """When switch turns on while baseline active,
+    def test_cleared_on_on_with_baseline(self, controller: Controller) -> None:
+        """When the set turns on while baseline active,
         auto-off is cancelled."""
         state = State(
             baseline=55.0,
             auto_off_started_at=T0,
             initialized=True,
         )
-        controller.evaluate(state, switch_inputs("on"))
+        controller.evaluate(state, switch_inputs(True))
         assert state.auto_off_started_at is None
 
     def test_auto_off_zero_disables(self) -> None:
         """auto_off_minutes=0 means no auto-off."""
-        config = Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=10,
-            auto_off_minutes=0,
+        ctrl = Controller(
+            _config(sampling_window_seconds=300, auto_off_minutes=0)
         )
-        ctrl = Controller(config)
         state = State(initialized=True)
-        ctrl.evaluate(state, switch_inputs("on"))
+        ctrl.evaluate(state, switch_inputs(True))
         assert state.auto_off_started_at is None
+
+
+class TestMultiEntityAggregation:
+    """N=2 controlled set: any-on aggregation + the turn-OFF
+    "report only the on-subset" contract."""
+
+    @pytest.fixture()
+    def controller(self) -> Controller:
+        return Controller(
+            _config(
+                controlled_entities=[SW, SW2],
+                sampling_window_seconds=300,
+                auto_off_minutes=1,
+            )
+        )
+
+    def test_spike_turns_on_full_list(self, controller: Controller) -> None:
+        """A spike targets every configured entity."""
+        state = State()
+        controller.evaluate(
+            state,
+            sensor_inputs(60.0, controlled_on_entities=[]),
+        )
+        result = controller.evaluate(
+            state,
+            sensor_inputs(70.0, controlled_on_entities=[]),
+        )
+        assert result.action == Action.TURN_ON
+        assert result.target_entities == [SW, SW2]
+
+    def test_release_targets_only_on_subset(
+        self, controller: Controller
+    ) -> None:
+        """Two controlled entities, only one on -> release
+        turns OFF and targets / names just the on-subset."""
+        state = State(baseline=60.0)
+        result = controller.evaluate(
+            state,
+            sensor_inputs(
+                62.0,
+                controlled_on_entities=[SW2],
+                friendly_names={SW: "Fan One", SW2: "Fan Two"},
+            ),
+        )
+        assert result.action == Action.TURN_OFF
+        assert result.target_entities == [SW2]
+        # Notification names only the on-subset.
+        assert "Fan Two" in result.notification
+        assert "Fan One" not in result.notification
+
+    def test_auto_off_targets_only_on_subset(
+        self, controller: Controller
+    ) -> None:
+        """Auto-off expiry turns OFF and names only the
+        subset that is currently on."""
+        state = State(
+            auto_off_started_at=T0,
+            initialized=True,
+        )
+        result = controller.evaluate(
+            state,
+            timer_inputs(
+                current_time=T0 + timedelta(minutes=1),
+                controlled_on_entities=[SW2],
+                friendly_names={SW: "Fan One", SW2: "Fan Two"},
+            ),
+        )
+        assert result.action == Action.TURN_OFF
+        assert result.target_entities == [SW2]
+        assert "Fan Two" in result.notification
+        assert "Fan One" not in result.notification
+
+    def test_release_on_subset_order_preserved(
+        self, controller: Controller
+    ) -> None:
+        """The on-subset preserves the caller's order."""
+        state = State(baseline=60.0)
+        result = controller.evaluate(
+            state,
+            sensor_inputs(
+                62.0,
+                controlled_on_entities=[SW, SW2],
+            ),
+        )
+        assert result.target_entities == [SW, SW2]
+
+    def test_any_on_keeps_baseline_managing(
+        self, controller: Controller
+    ) -> None:
+        """With one entity on, a spike does not re-command
+        TURN_ON (the set is already considered on)."""
+        state = State()
+        controller.evaluate(
+            state,
+            sensor_inputs(60.0, controlled_on_entities=[SW2]),
+        )
+        result = controller.evaluate(
+            state,
+            sensor_inputs(70.0, controlled_on_entities=[SW2]),
+        )
+        assert result.action == Action.NONE
+        assert state.baseline == 60.0
 
 
 class TestStartupRecovery:
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=10,
-            auto_off_minutes=1,
-        )
+    def controller(self) -> Controller:
+        return Controller(_config(sampling_window_seconds=300))
 
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
-
-    def test_startup_switch_on_schedules_auto_off(
+    def test_startup_on_schedules_auto_off(
         self, controller: Controller
     ) -> None:
         state = State(initialized=False)
-        result = controller.evaluate(state, switch_inputs("on"))
+        result = controller.evaluate(state, switch_inputs(True))
         assert result.action == Action.NONE
         assert state.initialized is True
         assert state.auto_off_started_at == T0
 
-    def test_startup_switch_off_no_auto_off(
-        self, controller: Controller
-    ) -> None:
+    def test_startup_off_no_auto_off(self, controller: Controller) -> None:
         state = State(initialized=False)
-        result = controller.evaluate(state, switch_inputs("off"))
+        result = controller.evaluate(state, switch_inputs(False))
         assert result.action == Action.NONE
         assert state.initialized is True
         assert state.auto_off_started_at is None
@@ -650,41 +744,37 @@ class TestStartupRecovery:
         """If baseline is active at startup, no auto-off
         (sensor is managing)."""
         state = State(initialized=False, baseline=55.0)
-        controller.evaluate(state, switch_inputs("on"))
+        controller.evaluate(state, switch_inputs(True))
         assert state.auto_off_started_at is None
 
     def test_startup_returns_no_action(self, controller: Controller) -> None:
         """First switch event always returns NONE."""
         state = State(initialized=False)
-        result = controller.evaluate(state, switch_inputs("on"))
+        result = controller.evaluate(state, switch_inputs(True))
         assert result.action == Action.NONE
 
-    def test_timer_starts_auto_off_when_switch_on_no_state(
+    def test_timer_starts_auto_off_when_on_no_state(
         self, controller: Controller
     ) -> None:
         """After HA restart with lost state, the first timer
-        event should start auto-off if switch is already on."""
+        event should start auto-off if the set is already on."""
         state = State()  # fresh state, no auto_off_started_at
         t = T0
 
-        # Timer fires while switch is on -- should start
-        # auto-off even though no switch event occurred.
-        result = controller.evaluate(state, timer_inputs("on", current_time=t))
+        result = controller.evaluate(state, timer_inputs(True, current_time=t))
         assert result.action == Action.NONE
         assert state.auto_off_started_at == t
 
         # After timeout, timer should turn off.
         t += timedelta(minutes=1, seconds=1)
-        result = controller.evaluate(state, timer_inputs("on", current_time=t))
+        result = controller.evaluate(state, timer_inputs(True, current_time=t))
         assert result.action == Action.TURN_OFF
 
-    def test_timer_no_auto_off_when_switch_off(
-        self, controller: Controller
-    ) -> None:
-        """Timer should not start auto-off if switch is off."""
+    def test_timer_no_auto_off_when_off(self, controller: Controller) -> None:
+        """Timer should not start auto-off if the set is off."""
         state = State()
         result = controller.evaluate(
-            state, timer_inputs("off", current_time=T0)
+            state, timer_inputs(False, current_time=T0)
         )
         assert result.action == Action.NONE
         assert state.auto_off_started_at is None
@@ -693,29 +783,26 @@ class TestStartupRecovery:
         self, controller: Controller
     ) -> None:
         """Timer should not start auto-off if sensor is
-        managing the switch (baseline active)."""
+        managing the set (baseline active)."""
         state = State(baseline=55.0)
-        result = controller.evaluate(state, timer_inputs("on", current_time=T0))
+        result = controller.evaluate(state, timer_inputs(True, current_time=T0))
         assert result.action == Action.NONE
         assert state.auto_off_started_at is None
 
 
 class TestEndToEnd:
-    """Full scenario tests simulating real sequences."""
+    """Full scenario tests simulating real sequences (N=1)."""
 
     @pytest.fixture()
-    def config(self) -> Config:
-        return Config(
-            trigger_threshold=10.0,
-            release_threshold=5.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=10,
-            auto_off_minutes=30,
+    def controller(self) -> Controller:
+        return Controller(
+            _config(
+                trigger_threshold=10.0,
+                release_threshold=5.0,
+                sampling_window_seconds=300,
+                auto_off_minutes=30,
+            )
         )
-
-    @pytest.fixture()
-    def controller(self, config: Config) -> Controller:
-        return Controller(config)
 
     def test_humidity_fan_cycle(self, controller: Controller) -> None:
         """Full cycle: startup -> humidity spike ->
@@ -723,8 +810,8 @@ class TestEndToEnd:
         state = State()
         t = T0
 
-        # Startup: switch is off
-        controller.evaluate(state, switch_inputs("off", current_time=t))
+        # Startup: set is off
+        controller.evaluate(state, switch_inputs(False, current_time=t))
         assert state.initialized is True
 
         # Humidity readings (stable)
@@ -746,6 +833,7 @@ class TestEndToEnd:
             sensor_inputs(62.0, current_time=t),
         )
         assert result.action == Action.TURN_ON
+        assert result.target_entities == [SW]
         assert state.baseline == 50.0
 
         # Humidity stays high, timer ticks
@@ -754,7 +842,7 @@ class TestEndToEnd:
             result = controller.evaluate(
                 state,
                 timer_inputs(
-                    switch_state="on",
+                    controlled_on=True,
                     current_time=t,
                 ),
             )
@@ -766,11 +854,12 @@ class TestEndToEnd:
             state,
             sensor_inputs(
                 54.0,
-                switch_state="on",
+                controlled_on=True,
                 current_time=t,
             ),
         )
         assert result.action == Action.TURN_OFF
+        assert result.target_entities == [SW]
         assert state.baseline is None
 
     def test_manual_on_auto_off_cycle(self, controller: Controller) -> None:
@@ -779,11 +868,11 @@ class TestEndToEnd:
         t = T0
 
         # Startup
-        controller.evaluate(state, switch_inputs("off", current_time=t))
+        controller.evaluate(state, switch_inputs(False, current_time=t))
 
-        # Manual switch on
+        # Manual on
         t += timedelta(seconds=5)
-        controller.evaluate(state, switch_inputs("on", current_time=t))
+        controller.evaluate(state, switch_inputs(True, current_time=t))
         # Rounded up to next minute for time_pattern alignment
         assert state.auto_off_started_at == t.replace(
             second=0,
@@ -817,14 +906,14 @@ class TestEndToEnd:
 
         # First manual off: re-enable
         result = controller.evaluate(
-            state, switch_inputs("off", current_time=t)
+            state, switch_inputs(False, current_time=t)
         )
         assert result.action == Action.TURN_ON
 
         # Second manual off within window: disable
         t += timedelta(seconds=5)
         result = controller.evaluate(
-            state, switch_inputs("off", current_time=t)
+            state, switch_inputs(False, current_time=t)
         )
         assert result.action == Action.NONE
         assert state.baseline is None
@@ -839,6 +928,7 @@ class TestConfigValidation:
 
     def test_custom_config(self) -> None:
         config = Config(
+            controlled_entities=[SW],
             trigger_threshold=10.0,
             release_threshold=3.0,
             sampling_window_seconds=600,
@@ -847,12 +937,14 @@ class TestConfigValidation:
         )
         assert config.trigger_threshold == 10.0
         assert config.auto_off_minutes == 0
+        assert config.controlled_entities == [SW]
 
 
 class TestResultDefaults:
     def test_default_result(self) -> None:
         result = Result()
         assert result.action == Action.NONE
+        assert result.target_entities == []
         assert result.reason == ""
         assert result.notification == ""
 
@@ -862,21 +954,12 @@ class TestUnknownEventType:
         """Controller.evaluate returns NONE for
         unrecognized event types, though all EventType
         values are handled."""
-        config = Config(
-            trigger_threshold=5.0,
-            release_threshold=2.0,
-            sampling_window_seconds=300,
-            disable_window_seconds=10,
-            auto_off_minutes=30,
-        )
-        ctrl = Controller(config)
+        ctrl = Controller(_config(sampling_window_seconds=300))
         state = State()
-        # All defined event types are handled;
-        # this test confirms the fallback path.
         inputs = Inputs(
             current_time=T0,
             event_type=EventType.TIMER,
-            switch_state="off",
+            controlled_on_entities=[],
         )
         result = ctrl.evaluate(state, inputs)
         assert result.action == Action.NONE
@@ -884,39 +967,43 @@ class TestUnknownEventType:
 
 class TestDetermineEventType:
     def test_switch_event(self) -> None:
-        """Trigger entity == output entity -> SWITCH."""
-        assert (
-            determine_event_type("switch.fan", "switch.fan") == EventType.SWITCH
+        """Trigger entity in controlled list -> SWITCH."""
+        assert determine_event_type("switch.fan", ["switch.fan"]) == (
+            EventType.SWITCH
         )
 
+    def test_switch_event_multi(self) -> None:
+        """Any member of the controlled list -> SWITCH."""
+        assert determine_event_type(SW2, [SW, SW2]) == EventType.SWITCH
+
     def test_sensor_event(self) -> None:
-        """Trigger entity differs from output -> SENSOR."""
+        """Trigger entity not in controlled list -> SENSOR."""
         assert (
-            determine_event_type("sensor.humidity", "switch.fan")
+            determine_event_type("sensor.humidity", ["switch.fan"])
             == EventType.SENSOR
         )
 
     def test_timer_empty_string(self) -> None:
-        assert determine_event_type("", "switch.fan") == EventType.TIMER
+        assert determine_event_type("", ["switch.fan"]) == EventType.TIMER
 
     def test_timer_literal_timer(self) -> None:
-        assert determine_event_type("timer", "switch.fan") == EventType.TIMER
+        assert determine_event_type("timer", ["switch.fan"]) == EventType.TIMER
 
     def test_timer_literal_none(self) -> None:
-        assert determine_event_type("None", "switch.fan") == EventType.TIMER
+        assert determine_event_type("None", ["switch.fan"]) == EventType.TIMER
 
     def test_timer_lowercase_none(self) -> None:
-        assert determine_event_type("none", "switch.fan") == EventType.TIMER
+        assert determine_event_type("none", ["switch.fan"]) == EventType.TIMER
 
 
 class _EvalKwargs(TypedDict):
     """The non-``state`` keyword arguments of ``evaluate()``."""
 
     current_time: datetime
-    switch_name: str
-    target_switch_entity: str
+    controlled_entities: list[str]
+    controlled_on_entities: list[str]
+    friendly_names: dict[str, str]
     sensor_value: str
-    switch_state: str
     trigger_entity: str
     trigger_threshold: float
     release_threshold: float
@@ -931,10 +1018,10 @@ class _EvalKwargsOverrides(TypedDict, total=False):
     """Subset of ``_EvalKwargs`` a test may override."""
 
     current_time: datetime
-    switch_name: str
-    target_switch_entity: str
+    controlled_entities: list[str]
+    controlled_on_entities: list[str]
+    friendly_names: dict[str, str]
     sensor_value: str
-    switch_state: str
     trigger_entity: str
     trigger_threshold: float
     release_threshold: float
@@ -955,10 +1042,10 @@ class TestEvaluate:
         """Default kwargs for evaluate(), with optional per-test overrides."""
         defaults: _EvalKwargs = {
             "current_time": T0,
-            "switch_name": "Test Fan",
-            "target_switch_entity": "switch.fan",
+            "controlled_entities": [SW],
+            "controlled_on_entities": [],
+            "friendly_names": {},
             "sensor_value": "",
-            "switch_state": "off",
             "trigger_entity": "timer",
             "trigger_threshold": 5.0,
             "release_threshold": 2.0,
@@ -995,6 +1082,7 @@ class TestEvaluate:
             ),
         )
         assert result.action == Action.TURN_ON
+        assert result.target_entities == [SW]
         assert result.notification.startswith("PRE: ")
         assert result.notification.endswith(" END")
 
@@ -1011,7 +1099,7 @@ class TestEvaluate:
         result = evaluate(
             state=s,
             **self._eval_kwargs(
-                switch_state="on",
+                controlled_on_entities=[SW],
                 trigger_entity="switch.fan",
                 auto_off_minutes=5,
             ),
@@ -1051,11 +1139,11 @@ class _CallKwargs(TypedDict):
     """The keyword arguments of ``handle_service_call()``."""
 
     state_data: dict[str, Any] | None
-    switch_name: str
     current_time: datetime
-    target_switch_entity: str
+    controlled_entities: list[str]
+    controlled_on_entities: list[str]
+    friendly_names: dict[str, str]
     sensor_value: str
-    switch_state: str
     trigger_entity: str
     trigger_threshold: float
     release_threshold: float
@@ -1070,11 +1158,11 @@ class _CallKwargsOverrides(TypedDict, total=False):
     """Subset of ``_CallKwargs`` a test may override."""
 
     state_data: dict[str, Any] | None
-    switch_name: str
     current_time: datetime
-    target_switch_entity: str
+    controlled_entities: list[str]
+    controlled_on_entities: list[str]
+    friendly_names: dict[str, str]
     sensor_value: str
-    switch_state: str
     trigger_entity: str
     trigger_threshold: float
     release_threshold: float
@@ -1096,11 +1184,11 @@ class TestHandleServiceCall:
         """Default kwargs for handle_service_call, with overrides."""
         defaults: _CallKwargs = {
             "state_data": None,
-            "switch_name": "Test Fan",
             "current_time": T0,
-            "target_switch_entity": "switch.fan",
+            "controlled_entities": [SW],
+            "controlled_on_entities": [],
+            "friendly_names": {},
             "sensor_value": "",
-            "switch_state": "off",
             "trigger_entity": "timer",
             "trigger_threshold": 5.0,
             "release_threshold": 2.0,
@@ -1141,9 +1229,11 @@ class TestHandleServiceCall:
             ),
         )
         assert r2.action == Action.TURN_ON
+        assert r2.target_entities == [SW]
 
-    def test_release_returns_turn_off(self) -> None:
-        """Baseline active, sensor drops -> TURN_OFF."""
+    def test_release_returns_turn_off_on_subset(self) -> None:
+        """Baseline active, sensor drops -> TURN_OFF targets
+        only the on-subset."""
         seed = State(
             baseline=60.0,
             samples=[Sample(value=62.0, timestamp=T0)],
@@ -1151,21 +1241,22 @@ class TestHandleServiceCall:
         )
         result = handle_service_call(
             **self._call_kwargs(
+                controlled_entities=[SW, SW2],
+                controlled_on_entities=[SW2],
                 state_data=seed.to_dict(),
                 sensor_value="61.0",
-                switch_state="on",
                 trigger_entity="sensor.humidity",
                 current_time=T0 + timedelta(seconds=30),
             ),
         )
         assert result.action == Action.TURN_OFF
+        assert result.target_entities == [SW2]
 
     def test_notification_message_populated_on_spike(
         self,
     ) -> None:
         """Spike -> ServiceResult.notification carries the
-        formatted spike message regardless of dispatch
-        target (target routing is the bridge's job)."""
+        formatted spike message."""
         r1 = handle_service_call(
             **self._call_kwargs(
                 sensor_value="60.0",
@@ -1243,7 +1334,8 @@ class TestHandleServiceCall:
         assert result.event_type == "SENSOR"
 
     def test_event_type_switch(self) -> None:
-        """ServiceResult.event_type is SWITCH for switch."""
+        """ServiceResult.event_type is SWITCH when the
+        trigger entity is a controlled entity."""
         result = handle_service_call(
             **self._call_kwargs(
                 trigger_entity="switch.fan",
@@ -1268,35 +1360,31 @@ class TestHandleServiceCall:
         )
         assert result.sensor_value is None
 
-    def test_bootstrap_arms_auto_off_when_switch_on(self) -> None:
-        """Stranded-switch protection: state_data=None +
-        switch=on + auto_off_minutes>0 should arm
-        ``auto_off_started_at`` so the device isn't
+    def test_bootstrap_arms_auto_off_when_on(self) -> None:
+        """Stranded-entity protection: state_data=None +
+        any controlled entity on + auto_off_minutes>0 should
+        arm ``auto_off_started_at`` so the device isn't
         stuck on indefinitely after HA restart."""
         result = handle_service_call(
             **self._call_kwargs(
                 state_data=None,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=30,
                 trigger_entity="sensor.humidity",
                 sensor_value="55.0",
                 current_time=T0,
             ),
         )
-        # The serialized state should carry an
-        # auto_off_started_at timestamp.
         assert result.state_dict["auto_off_started_at"] is not None
-        # And it should be the rounded-up minute boundary
-        # of the call time (T0 is already on a minute
-        # boundary, so it stays at T0).
+        # T0 is already on a minute boundary, so it stays at T0.
         assert result.state_dict["auto_off_started_at"] == T0.isoformat()
 
-    def test_bootstrap_no_arm_when_switch_off(self) -> None:
-        """Switch off at bootstrap -> no auto-off armed."""
+    def test_bootstrap_no_arm_when_off(self) -> None:
+        """Set off at bootstrap -> no auto-off armed."""
         result = handle_service_call(
             **self._call_kwargs(
                 state_data=None,
-                switch_state="off",
+                controlled_on_entities=[],
                 auto_off_minutes=30,
             ),
         )
@@ -1308,7 +1396,7 @@ class TestHandleServiceCall:
         result = handle_service_call(
             **self._call_kwargs(
                 state_data=None,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=0,
             ),
         )
@@ -1319,29 +1407,21 @@ class TestHandleServiceCall:
     ) -> None:
         """End-to-end: bootstrap-arm + later TIMER tick
         sees the armed timestamp and turns off when the
-        timeout elapses. Without the bootstrap-arm the
-        TIMER path would arm on its first tick instead --
-        this test locks down the explicit-at-bootstrap
-        behaviour AND ensures the round-trip through
-        ``state_dict`` preserves the timestamp."""
-        # First call: bootstrap (state lost), switch on.
+        timeout elapses."""
         r1 = handle_service_call(
             **self._call_kwargs(
                 state_data=None,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=1,
                 current_time=T0,
             ),
         )
         assert r1.state_dict["auto_off_started_at"] is not None
 
-        # Second call: minute-tick after the auto-off
-        # timeout. The persisted state from r1 is fed
-        # back in.
         r2 = handle_service_call(
             **self._call_kwargs(
                 state_data=r1.state_dict,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=1,
                 current_time=T0 + timedelta(minutes=1, seconds=1),
             ),
@@ -1352,15 +1432,13 @@ class TestHandleServiceCall:
         """The bootstrap-arm formula rounds the call time
         UP to the next minute boundary so the actual auto-
         off delay is never SHORTER than the configured
-        timeout. ``T0`` is already on a boundary, so this
-        test feeds a non-boundary time to exercise the
-        rounding-up half of the formula explicitly.
+        timeout.
         """
         non_boundary = T0 + timedelta(seconds=37)
         result = handle_service_call(
             **self._call_kwargs(
                 state_data=None,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=30,
                 trigger_entity="sensor.humidity",
                 sensor_value="55.0",
@@ -1371,16 +1449,12 @@ class TestHandleServiceCall:
         assert result.state_dict["auto_off_started_at"] == expected
 
     def test_handle_timer_arm_fallback_uses_tick_time(self) -> None:
-        """If the bootstrap-arm path were removed, the
-        ``Controller._handle_timer`` arm-on-first-tick
-        fallback would still arm the auto-off timer. This
-        test pre-seeds a fresh ``state_data`` with
-        ``auto_off_started_at=None`` and a TIMER tick at a
-        non-boundary moment, verifying the persisted arm
+        """The ``Controller._handle_timer`` arm-on-first-tick
+        fallback arms the auto-off timer when a fresh
+        ``state_data`` (``auto_off_started_at=None``) reaches
+        the TIMER branch with the set on. The persisted arm
         timestamp matches the TIMER tick's
-        ``_round_up_to_minute(current_time)`` -- distinct
-        from the bootstrap-arm's "service-call entry time"
-        moment.
+        ``_round_up_to_minute(current_time)``.
         """
         seed_state: dict[str, Any] = {
             "samples": [],
@@ -1389,12 +1463,12 @@ class TestHandleServiceCall:
             "auto_off_started_at": None,
             "initialized": True,
         }
-        # Tick at 10:00:42 -- rounded up should be 10:01:00.
+        # Tick at 12:00:42 -- rounded up should be 12:01:00.
         tick = T0 + timedelta(seconds=42)
         result = handle_service_call(
             **self._call_kwargs(
                 state_data=seed_state,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=30,
                 trigger_entity="timer",
                 sensor_value="",
@@ -1408,14 +1482,12 @@ class TestHandleServiceCall:
         """A blob that fails ``State.from_dict`` (e.g.
         partial-write upgrade leaves a stale shape) is
         treated like a missing blob: fresh ``State`` plus
-        the stranded-switch arm."""
-        # ``samples`` expecting list of dicts; pass a
-        # garbage shape that crashes State.from_dict.
+        the stranded-entity arm."""
         bad_blob = {"samples": [{"value": "not-a-float"}]}
         result = handle_service_call(
             **self._call_kwargs(
                 state_data=bad_blob,
-                switch_state="on",
+                controlled_on_entities=[SW],
                 auto_off_minutes=30,
                 current_time=T0,
             ),

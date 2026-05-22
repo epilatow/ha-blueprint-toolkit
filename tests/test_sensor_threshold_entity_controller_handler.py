@@ -21,7 +21,7 @@ callbacks, ``_ensure_timer`` arming, ``_async_kick_for_recovery``
 ``context=`` propagation), schema-level validation of the
 numeric inputs, and the blueprint <-> schema drift check.
 The argparse cross-field check on
-``target_switch_entity`` existence + the service layer's
+``controlled_entities`` existence + the service layer's
 full state-load / action-dispatch / response-shape loop
 are exercised in
 ``test_sensor_threshold_entity_controller_integration.py``
@@ -248,9 +248,8 @@ def _valid_argparse_payload(**overrides: Any) -> dict[str, Any]:
     payload = {
         "instance_id": "automation.stec_test",
         "trigger_id": "manual",
-        "target_switch_entity": "switch.fan",
+        "controlled_entities_raw": ["switch.fan"],
         "sensor_value": "55.0",
-        "switch_state": "off",
         "trigger_entity": "sensor.humidity",
         "trigger_threshold_raw": 70.0,
         "release_threshold_raw": 60.0,
@@ -392,9 +391,8 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
     template_defaults = {
         "instance_id": "automation.stec_default_check",
         "trigger_id": "manual",
-        "target_switch_entity": "switch.fan",
+        "controlled_entities_raw": ["switch.fan"],
         "sensor_value": "0",
-        "switch_state": "off",
         "trigger_entity": "sensor.humidity",
     }
 
