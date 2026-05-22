@@ -799,6 +799,13 @@ as one-click Fix issues instead of as persistent notifications.
   dispatcher fills the confirm description's `{attribution}` placeholder with
   that header. Every repair's `confirm` description in `strings.json` /
   `translations/en.json` must lead with `{attribution}\n\n`.
+- **Confirm-step titles stay short and static** -- a plain action phrase
+  (`Re-enable diagnostic entities?`, `Rename the scripts.yaml block key?`)
+  with NO `{placeholder}` values. HA renders the fix-flow title in a
+  fixed-height dialog header above a `Warning - Reported by ...` subtitle; a
+  long or interpolated title wraps onto two lines and renders over that
+  subtitle. Per-finding specifics (the entity, the rename target) go in the
+  confirm description, not the title.
 - **Translations.** Each repair spec sets `translation_key=<kind>`; the
   entries in `strings.json` / `translations/en.json` carry the user-visible
   title + description with `{placeholder}` fields filled via

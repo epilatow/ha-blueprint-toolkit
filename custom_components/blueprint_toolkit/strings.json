@@ -90,7 +90,7 @@
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Re-hide {source_entity_id}?",
+            "title": "Re-hide the source entity?",
             "description": "{attribution}\n\nRe-hide the source entity (sets hidden_by=integration), restoring the original switch_as_x behaviour:\n\n{entities}\n\nClick Submit to apply."
           }
         }
@@ -102,7 +102,7 @@
       "fix_flow": {
         "step": {
           "confirm": {
-            "title": "Rename scripts.yaml key to {new_slug}?",
+            "title": "Rename the scripts.yaml block key?",
             "description": "{attribution}\n\nRename the scripts.yaml block key `{old_key}` to `{new_slug}` so the service name and entity id match. A timestamped backup of scripts.yaml is written before the change, and scripts are reloaded afterward.\n\nClick Submit to apply."
           }
         }
