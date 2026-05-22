@@ -792,13 +792,21 @@ as one-click Fix issues instead of as persistent notifications.
   `notification_id` and applies it verbatim (no re-scoping -- the scan that
   built the payload had the user's full filter configuration in scope).
   Per-device grouping: a device with N drifted entities is one Submit, not N
-  (EDW emits up to two, one per drift kind).
+  (EDW emits up to two, one per drift kind). Deviceless findings have no
+  device to group under, so they emit one repair per entity (EDW's deviceless
+  entity-ID drift, visible-aliased sources, script-yaml-key drift). Both
+  shapes share one fix service -- EDW's `fix_edw_entity_id_drift` renames
+  whatever `entity_renames` pairs the payload carries, whether that is a
+  device's grouped set or a single deviceless entity.
 - **Issue ID format.**
-  `blueprint_toolkit_{service}__{instance_id}__repair_{fix_service_name}__{device_id}`
+  `blueprint_toolkit_{service}__{instance_id}__repair_{fix_service_name}__{target}`
   -- the same `__` separator convention as notifications, built via the shared
-  `helpers.repair_notification_id(notification_prefix, fix_service_name, device_id)`.
+  `helpers.repair_notification_id(notification_prefix, fix_service_name, target)`.
+  The final `{target}` is the grouping key: a `device_id` for device-grouped
+  repairs, or the `entity_id` for ungrouped per-entity repairs (EDW's
+  deviceless entity-ID drift, visible-aliased sources, script-yaml-key drift).
   That helper injects the `repair_` token (callers pass their `FixServices`
-  value + device id and stay agnostic of it), so the resulting id carries the
+  value + the target and stay agnostic of it), so the resulting id carries the
   `__repair_` substring that `repairs.async_create_fix_flow` routes on to pick
   the `WatchdogFixFlow` over the install-time `InstallConflictsFlow` /
   `InstallFailureFlow`.

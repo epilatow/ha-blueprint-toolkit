@@ -18,18 +18,21 @@ pattern):
   collision-suffix scan, notification body assembly)
   runs in the executor via
   ``hass.async_add_executor_job(logic.run_evaluation, ...)``.
-- Three finding streams: per-device drift, a single
-  deviceless aggregate, and visible-aliased entities. The
-  logic builds device-attached drift as either repair
-  issues (when ``create_repairs`` is on -- one per drift
-  kind per device) or the aggregate per-device notification
-  (when off, capped by ``max_device_notifications`` via
-  ``helpers.prepare_notifications``) -- never both. The
-  deviceless + visible-aliased streams are notification-only
-  (no automatable fix). The complete per-instance batch is
-  sweep-dispatched via ``process_repairs_with_sweep`` so
-  prior-run findings no longer present this run get cleaned
-  up from both the notification surface and the issue
+- Finding streams: per-device drift, deviceless id-drift,
+  visible-aliased entities, and script-yaml-key drift. With
+  ``create_repairs`` on, each surfaces as one-click repair
+  issues -- device drift groups its renames per device (one
+  issue per drift kind), while the deviceless and
+  visible-aliased streams emit one issue per entity (they
+  have no grouping); with it off, each renders as an
+  aggregate notification (the per-device notification is
+  capped by ``max_device_notifications`` via
+  ``helpers.prepare_notifications``) -- never both.
+  Script-yaml-key drift is repair-only: nothing is emitted
+  when ``create_repairs`` is off. The complete per-instance
+  batch is sweep-dispatched via ``process_repairs_with_sweep``
+  so prior-run findings no longer present this run get
+  cleaned up from both the notification surface and the issue
   registry.
 """
 
@@ -1001,7 +1004,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
 
     async def _fix_id_drift(notification_id: str) -> None:
         payload = _lookup_repair(hass, notification_id)
-        if not isinstance(payload, logic.DeviceEntityIdDriftRepair):
+        if not isinstance(payload, logic.EntityIdDriftRepair):
             return
         ent_reg = er.async_get(hass)
         for entity_id, expected_id in payload.entity_renames:
@@ -1090,7 +1093,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
 
     register_fix_service(
         hass,
-        logic.FixServices.DEVICE_ENTITY_ID_DRIFT,
+        logic.FixServices.ENTITY_ID_DRIFT,
         _fix_id_drift,
     )
     register_fix_service(

@@ -48,14 +48,14 @@
         }
       }
     },
-    "edw_device_entity_id_drift": {
-      "title": "Entity ID drift on device: {device_name}",
-      "description": "Device `{device_name}` has {count} entities whose entity IDs have drifted from their defaults. Click Submit to regenerate them.",
+    "edw_entity_id_drift": {
+      "title": "Entity ID drift",
+      "description": "{count} entities have entity IDs that have drifted from their defaults. Click Submit to regenerate them.",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Regenerate entity IDs?",
-            "description": "{attribution}\n\nRegenerate drifted entity IDs on `{device_name}` ({count} entities):\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+            "description": "{attribution}\n\nRegenerate {count} drifted entity ID(s):\n\n{entities}\n\nOnly the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }

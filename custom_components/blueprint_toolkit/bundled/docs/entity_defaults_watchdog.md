@@ -28,7 +28,8 @@ resolved.
   (the registered service name `script.<key>`) no longer matches their renamed
   entity id, so the script answers to two names
 - Per-device persistent notifications with auto-clear on drift resolution;
-  single aggregate notification for deviceless entities
+  deviceless entities roll up into a single aggregate notification, or (with
+  **Create repairs** on) one one-click Repair each
 - Selectable drift checks (device entity ID, device entity name, deviceless
   ID, visible aliased entity, script YAML-key, or any combination)
 - Include/exclude integration filtering
@@ -170,8 +171,11 @@ assign today:
 - `sensor.old_kitchen_temperature`
 ```
 
-Deviceless drift is reported as a single aggregate notification with up to two
-sections:
+Deviceless drift is reported as a single aggregate notification (when **Create
+repairs** is off) with up to two sections. When **Create repairs** is on, each
+drifted deviceless entity instead surfaces as its own one-click **Regenerate
+entity IDs?** Repair (see **Repairs** below) -- one per entity, since
+deviceless entities have no device to group under.
 
 **Entity IDs do not match their names** -- one bullet per drifted entity, with
 a pointer to the most useful edit surface:
@@ -306,8 +310,11 @@ finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
 button instead of as a persistent notification. Four finding categories
 convert:
 
-- **Entity-ID drift** -- "rename `<entity_id>` to `<default_entity_id>`".
-  Submit calls the entity registry's rename API.
+- **Entity-ID drift** -- "Regenerate entity IDs?". Submit calls the entity
+  registry's rename API. Device-attached drift groups all of a device's
+  renames into one Repair; deviceless entities (automations, template / helper
+  entities, ...) get one Repair each, since they have no device to group
+  under.
 - **Entity-name drift** -- "reset friendly name on `<entity_id>` from
   `<current>` to `<default>`". Submit clears the user-set name override.
 - **Visible aliased entity** -- "re-hide `<source_entity_id>`". One repair per
@@ -324,9 +331,10 @@ convert:
 
 Each Fix dialog leads with the same attribution header the notifications carry
 -- always the automation that emitted it, the owning integration(s) when
-known, and a link to the device for device-attached findings. The script
-YAML-key fix is deviceless: it shows the automation plus the built-in `script`
-integration (linked to the script-list dashboard), with no device line.
+known, and a link to the device for device-attached findings. Deviceless
+findings (deviceless entity-ID drift, script YAML-key drift) carry the owning
+integration but no device line -- the script YAML-key fix, for instance, shows
+the built-in `script` integration linked to the script-list dashboard.
 
 Other drift categories (unmatched include / exclude directives, etc.) continue
 to surface as notifications regardless of the toggle. The per-device summary

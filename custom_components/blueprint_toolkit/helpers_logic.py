@@ -765,24 +765,30 @@ class FixService:
 def repair_notification_id(
     notification_prefix: str,
     service_name: str,
-    device_id: str,
+    target: str,
 ) -> str:
-    """Build a per-device repair-issue notification_id.
+    """Build a repair-issue notification_id.
 
     Injects the ``repair_`` token so the result carries the
     ``__repair_`` substring that ``repairs.async_create_fix_flow``
     routes on to pick the watchdog fix flow. Callers pass
-    their ``FixServices`` value + the device id and stay
+    their ``FixServices`` value + the grouping target and stay
     agnostic of the token -- the routing convention is owned
     here, in the shared helper, not duplicated in each
     handler's logic.
 
-    Format: ``{notification_prefix}repair_{service_name}__{device_id}``.
+    ``target`` is the grouping key: a ``device_id`` for
+    device-grouped repairs (one issue per device), or the
+    ``entity_id`` for ungrouped per-entity repairs (deviceless
+    findings -- EDW's deviceless entity-ID drift,
+    visible-aliased sources, script-yaml-key drift).
+
+    Format: ``{notification_prefix}repair_{service_name}__{target}``.
     ``notification_prefix`` already ends in ``__`` (see
     ``notification_prefix``), so the ``repair_`` injection
     yields the ``__repair_`` routing substring.
     """
-    return f"{notification_prefix}repair_{service_name}__{device_id}"
+    return f"{notification_prefix}repair_{service_name}__{target}"
 
 
 @dataclass(frozen=True)

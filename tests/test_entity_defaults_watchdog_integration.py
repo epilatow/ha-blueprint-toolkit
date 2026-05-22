@@ -1755,22 +1755,19 @@ class TestFixServiceDeviceDrift:
 
         nid = (
             "blueprint_toolkit_edw__automation.x__"
-            "repair_device_entity_id_drift__dev1"
+            "repair_fix_edw_entity_id_drift__dev1"
         )
         insts = edw._instances(hass)
         insts["automation.x"] = edw.EdwInstanceState(
             instance_id="automation.x",
         )
-        insts["automation.x"].repairs[nid] = (
-            edw_logic.DeviceEntityIdDriftRepair(
-                device_id="dev1",
-                entity_renames=((old_id, new_id),),
-            )
+        insts["automation.x"].repairs[nid] = edw_logic.EntityIdDriftRepair(
+            entity_renames=((old_id, new_id),),
         )
 
         await hass.services.async_call(
             DOMAIN,
-            "fix_edw_device_entity_id_drift",
+            "fix_edw_entity_id_drift",
             {"notification_id": nid},
             blocking=True,
         )
@@ -1887,7 +1884,7 @@ class TestFixServiceDeviceDrift:
         await _setup_integration(hass)
         await hass.services.async_call(
             DOMAIN,
-            "fix_edw_device_entity_id_drift",
+            "fix_edw_entity_id_drift",
             {"notification_id": "blueprint_toolkit_edw__x__repair_x__none"},
             blocking=True,
         )

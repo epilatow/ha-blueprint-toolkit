@@ -248,12 +248,12 @@ class TestSetupEntry:
             "entity_defaults_watchdog",
             "device_watchdog",
             "sensor_threshold_entity_controller",
-            # Per-device repair fix services. Listed
-            # explicitly so a future refactor that drops
-            # one from ``async_register_fix_services`` is
-            # caught here (otherwise the subset-check
-            # would silently pass).
-            "fix_edw_device_entity_id_drift",
+            # Repair fix services. Listed explicitly so a
+            # future refactor that drops one from
+            # ``async_register_fix_services`` is caught here
+            # (otherwise the subset-check would silently
+            # pass).
+            "fix_edw_entity_id_drift",
             "fix_edw_device_entity_name_drift",
             "fix_edw_visible_aliased_entity",
             "fix_edw_script_yaml_key",

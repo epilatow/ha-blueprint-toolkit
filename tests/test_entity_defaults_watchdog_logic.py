@@ -29,16 +29,17 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     DRIFT_CHECK_SCRIPT_YAML_KEY,
     DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
     Config,
-    DeviceEntityIdDriftRepair,
     DeviceEntityNameDriftRepair,
     DeviceEntry,
     DeviceInfo,
+    DevicelessDriftDetail,
     DevicelessEntityInfo,
     DeviceResult,
     DirectiveInputs,
     DriftDetail,
     EdwRepair,
     EntityDriftInfo,
+    EntityIdDriftRepair,
     FixServices,
     ScriptInfo,
     ScriptYamlKeyDriftFinding,
@@ -48,6 +49,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     VisibleAliasedEntityRepair,
     _build_device_notification_message,
     _build_device_repair_specs,
+    _build_deviceless_id_drift_repair_specs,
     _build_script_yaml_key_repair_specs,
     _build_visible_aliased_notification_message,
     _build_visible_aliased_repair_specs,
@@ -1810,24 +1812,22 @@ class TestBuildDeviceRepairSpecs:
         spec = specs[0]
         expected_id = helpers.repair_notification_id(
             cfg.notification_prefix,
-            FixServices.DEVICE_ENTITY_ID_DRIFT,
+            FixServices.ENTITY_ID_DRIFT,
             "abc",
         )
         assert spec.notification_id == expected_id
         assert "__repair_" in spec.notification_id
-        assert spec.translation_key == "edw_device_entity_id_drift"
+        assert spec.translation_key == "edw_entity_id_drift"
         assert spec.translation_placeholders == {
-            "device_name": "Test Device",
             "count": "1",
             "entities": "- `sensor.old` -> `sensor.new`",
         }
         assert spec.repair_callback is not None
         assert spec.repair_callback.service_name == (
-            FixServices.DEVICE_ENTITY_ID_DRIFT.value
+            FixServices.ENTITY_ID_DRIFT.value
         )
         payload = repairs[expected_id]
-        assert isinstance(payload, DeviceEntityIdDriftRepair)
-        assert payload.device_id == "abc"
+        assert isinstance(payload, EntityIdDriftRepair)
         assert payload.entity_renames == (("sensor.old", "sensor.new"),)
 
     def test_name_drift_only_emits_one_name_spec(self) -> None:
@@ -1886,7 +1886,7 @@ class TestBuildDeviceRepairSpecs:
         assert len(specs) == 2
         kinds = {s.translation_key for s in specs}
         assert kinds == {
-            "edw_device_entity_id_drift",
+            "edw_entity_id_drift",
             "edw_device_entity_name_drift",
         }
         name_repair = next(
@@ -1897,7 +1897,7 @@ class TestBuildDeviceRepairSpecs:
         # Non-None target SETS the override.
         assert name_repair.entity_name_targets == (("sensor.c", "Custom"),)
         specs_by_kind = {s.translation_key: s for s in specs}
-        id_ph = specs_by_kind["edw_device_entity_id_drift"]
+        id_ph = specs_by_kind["edw_entity_id_drift"]
         name_ph = specs_by_kind["edw_device_entity_name_drift"]
         assert id_ph.translation_placeholders is not None
         assert name_ph.translation_placeholders is not None
@@ -1957,11 +1957,14 @@ class TestBuildDeviceRepairSpecs:
         assert repairs == {}
 
     def test_device_name_falls_back_to_id(self) -> None:
+        # Only the name-drift spec carries a device_name
+        # placeholder; the id-drift spec leans on the
+        # attribution header for device context.
         result = _device_result(
             device_id="abc",
             device_name="",
             drifted_entities=[
-                _drift(id_drifted=True, expected_entity_id="sensor.new"),
+                _drift(entity_id="sensor.x", name_drifted=True),
             ],
         )
         specs, _ = _build_device_repair_specs(
@@ -1992,6 +1995,85 @@ class TestBuildDeviceRepairSpecs:
         assert len(specs) == 2
         assert len(repairs) == 2
         assert all(s.notification_id.endswith(("__d1", "__d2")) for s in specs)
+
+
+def _deviceless_detail(
+    entity_id: str,
+    expected_object_id: str,
+    *,
+    platform: str | None = "automation",
+) -> DevicelessDriftDetail:
+    return DevicelessDriftDetail(
+        entity_id=entity_id,
+        expected_object_id=expected_object_id,
+        friendly_name="Friendly",
+        stale_suffix=False,
+        platform=platform,
+        unique_id="uid",
+        from_registry=True,
+    )
+
+
+class TestBuildDevicelessIdDriftRepairSpecs:
+    """_build_deviceless_id_drift_repair_specs: one id-drift
+    repair per drifted deviceless entity.
+
+    Deviceless entities have no grouping, so this is one
+    repair per entity (vs the device builder's per-device
+    grouping), keyed on the entity_id, with no device ref.
+    """
+
+    def test_one_repair_per_entity(self) -> None:
+        cfg = _config(create_repairs=True)
+        details = [
+            _deviceless_detail("automation.stsc_main", "stec_main"),
+            _deviceless_detail("automation.stsc_guest", "stec_guest"),
+        ]
+        specs, repairs = _build_deviceless_id_drift_repair_specs(cfg, details)
+        assert len(specs) == 2
+        assert len(repairs) == 2
+
+    def test_spec_shape(self) -> None:
+        cfg = _config(create_repairs=True)
+        detail = _deviceless_detail("automation.stsc_main", "stec_main")
+        specs, repairs = _build_deviceless_id_drift_repair_specs(cfg, [detail])
+        spec = specs[0]
+        expected_id = helpers.repair_notification_id(
+            cfg.notification_prefix,
+            FixServices.ENTITY_ID_DRIFT,
+            "automation.stsc_main",
+        )
+        assert spec.notification_id == expected_id
+        assert "__repair_" in spec.notification_id
+        assert spec.translation_key == "edw_entity_id_drift"
+        assert spec.translation_placeholders == {
+            "count": "1",
+            "entities": ("- `automation.stsc_main` -> `automation.stec_main`"),
+        }
+        assert spec.device is None
+        assert spec.integrations == ("automation",)
+        assert spec.repair_callback is not None
+        assert spec.repair_callback.service_name == (
+            FixServices.ENTITY_ID_DRIFT.value
+        )
+        payload = repairs[expected_id]
+        assert isinstance(payload, EntityIdDriftRepair)
+        assert payload.entity_renames == (
+            ("automation.stsc_main", "automation.stec_main"),
+        )
+
+    def test_no_integration_when_platform_none(self) -> None:
+        cfg = _config(create_repairs=True)
+        detail = _deviceless_detail("sensor.x", "y", platform=None)
+        specs, _ = _build_deviceless_id_drift_repair_specs(cfg, [detail])
+        assert specs[0].integrations == ()
+
+    def test_empty_input_no_specs(self) -> None:
+        specs, repairs = _build_deviceless_id_drift_repair_specs(
+            _config(create_repairs=True), []
+        )
+        assert specs == []
+        assert repairs == {}
 
 
 class TestBuildVisibleAliasedRepairSpecs:
@@ -2191,6 +2273,82 @@ class TestVisibleAliasedRepairBranch:
         assert not any(
             isinstance(p, VisibleAliasedEntityRepair) for p in repairs.values()
         )
+
+
+class TestDevicelessIdDriftRepairBranch:
+    """run_evaluation routes deviceless id-drift to exactly one
+    surface, chosen by ``create_repairs``.
+
+    Mirrors the device-drift + visible-aliased split: the
+    aggregate ``{prefix}deviceless`` notification and the
+    per-entity id-drift repairs are mutually exclusive.
+    """
+
+    _AGG_ID = "entity_defaults_watchdog_test__deviceless"
+
+    def _run(
+        self,
+        cfg: Config,
+    ) -> tuple[list[helpers.PersistentNotification], dict[str, EdwRepair]]:
+        ev = run_evaluation(
+            cfg,
+            devices=[],
+            deviceless_entities=[
+                _deviceless(
+                    "automation.old",
+                    effective_name="New",
+                    platform="automation",
+                    unique_id="1",
+                ),
+            ],
+            peers_by_domain={"automation": {"old"}},
+            all_integrations=[],
+            max_notifications=100,
+        )
+        return ev.notifications, ev.repairs
+
+    def _repair_specs(
+        self,
+        notifications: list[helpers.PersistentNotification],
+    ) -> list[helpers.PersistentNotification]:
+        return [
+            n
+            for n in notifications
+            if n.repair_callback is not None
+            and n.repair_callback.service_name
+            == FixServices.ENTITY_ID_DRIFT.value
+        ]
+
+    def test_repairs_on_emits_repair_not_aggregate(self) -> None:
+        notifications, repairs = self._run(_config(create_repairs=True))
+        assert len(self._repair_specs(notifications)) == 1
+        # The aggregate bucket notification is suppressed --
+        # not even an inactive slot; the sweep clears any prior.
+        assert not [
+            n for n in notifications if n.notification_id == self._AGG_ID
+        ]
+        assert any(isinstance(p, EntityIdDriftRepair) for p in repairs.values())
+
+    def test_repairs_off_emits_aggregate_not_repair(self) -> None:
+        notifications, repairs = self._run(_config(create_repairs=False))
+        assert self._repair_specs(notifications) == []
+        agg = [n for n in notifications if n.notification_id == self._AGG_ID]
+        assert len(agg) == 1
+        assert agg[0].active is True
+        assert not any(
+            isinstance(p, EntityIdDriftRepair) for p in repairs.values()
+        )
+
+    def test_check_disabled_emits_neither(self) -> None:
+        cfg = _config(
+            create_repairs=True,
+            drift_checks=frozenset({DRIFT_CHECK_DEVICE_ENTITY_ID}),
+        )
+        notifications, repairs = self._run(cfg)
+        assert self._repair_specs(notifications) == []
+        assert not [
+            n for n in notifications if n.notification_id == self._AGG_ID
+        ]
 
 
 class TestRenameTopLevelYamlKey:

@@ -173,14 +173,14 @@ class FixServices(StrEnum):
     ``hass.services.async_register``.
     """
 
-    DEVICE_ENTITY_ID_DRIFT = "fix_edw_device_entity_id_drift"
+    ENTITY_ID_DRIFT = "fix_edw_entity_id_drift"
     DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
     VISIBLE_ALIASED_ENTITY = "fix_edw_visible_aliased_entity"
     SCRIPT_YAML_KEY_DRIFT = "fix_edw_script_yaml_key"
 
 
 @dataclass(frozen=True)
-class DeviceEntityIdDriftRepair:
+class EntityIdDriftRepair:
     """Rich per-repair payload for an EDW id-drift fix.
 
     Built by the logic, stored on the handler's instance
@@ -188,9 +188,14 @@ class DeviceEntityIdDriftRepair:
     service to apply the captured ``(entity_id,
     expected_entity_id)`` renames. Stays off the wire (the
     issue-registry payload is just the notification_id).
+
+    Carries the renames only -- no device id. The same fix
+    serves device-attached drift (one issue groups several
+    renames under a device) and deviceless drift (one rename
+    per entity); the rename is an entity-registry operation
+    that never references a device.
     """
 
-    device_id: str
     entity_renames: tuple[tuple[str, str], ...]
 
 
@@ -243,7 +248,7 @@ class ScriptYamlKeyDriftRepair:
 
 
 EdwRepair = (
-    DeviceEntityIdDriftRepair
+    EntityIdDriftRepair
     | DeviceEntityNameDriftRepair
     | VisibleAliasedEntityRepair
     | ScriptYamlKeyDriftRepair
@@ -1550,7 +1555,7 @@ def _build_device_repair_specs(
         if id_renames:
             nid = helpers.repair_notification_id(
                 config.notification_prefix,
-                FixServices.DEVICE_ENTITY_ID_DRIFT,
+                FixServices.ENTITY_ID_DRIFT,
                 r.device_id,
             )
             specs.append(
@@ -1561,12 +1566,11 @@ def _build_device_repair_specs(
                     message="",
                     instance_id=config.instance_id,
                     repair_callback=helpers.FixService(
-                        service_name=FixServices.DEVICE_ENTITY_ID_DRIFT.value,
+                        service_name=FixServices.ENTITY_ID_DRIFT.value,
                         notification_id=nid,
                     ),
-                    translation_key="edw_device_entity_id_drift",
+                    translation_key="edw_entity_id_drift",
                     translation_placeholders={
-                        "device_name": device_name,
                         "count": str(len(id_renames)),
                         "entities": "\n".join(
                             f"- `{old}` -> `{new}`" for old, new in id_renames
@@ -1576,8 +1580,7 @@ def _build_device_repair_specs(
                     integrations=r.integrations,
                 ),
             )
-            repairs[nid] = DeviceEntityIdDriftRepair(
-                device_id=r.device_id,
+            repairs[nid] = EntityIdDriftRepair(
                 entity_renames=tuple(id_renames),
             )
         if name_drifted:
@@ -1618,6 +1621,63 @@ def _build_device_repair_specs(
                 device_id=r.device_id,
                 entity_name_targets=tuple(name_targets),
             )
+    return specs, repairs
+
+
+def _build_deviceless_id_drift_repair_specs(
+    config: Config,
+    drifted: list[DevicelessDriftDetail],
+) -> tuple[
+    list[helpers.PersistentNotification],
+    dict[str, EdwRepair],
+]:
+    """Build one id-drift repair per deviceless drifted entity.
+
+    Used in place of the aggregate ``{prefix}deviceless``
+    notification when ``create_repairs`` is on, so each
+    drifted deviceless entity (automations, template /
+    helper entities, ...) surfaces as its own one-click
+    Repair rather than a line in the bucket notification
+    (never both). Deviceless entities have no grouping, so
+    this is one repair per entity -- mirroring the
+    visible-aliased + script-yaml-key deviceless repairs.
+
+    Reuses ``FixServices.ENTITY_ID_DRIFT`` and
+    ``EntityIdDriftRepair`` (a single rename pair); the fix
+    is the same registry rename the device path performs.
+    """
+    specs: list[helpers.PersistentNotification] = []
+    repairs: dict[str, EdwRepair] = {}
+    for d in drifted:
+        domain = d.entity_id.split(".", 1)[0]
+        new_entity_id = f"{domain}.{d.expected_object_id}"
+        nid = helpers.repair_notification_id(
+            config.notification_prefix,
+            FixServices.ENTITY_ID_DRIFT,
+            d.entity_id,
+        )
+        specs.append(
+            helpers.PersistentNotification(
+                active=True,
+                notification_id=nid,
+                title="",
+                message="",
+                instance_id=config.instance_id,
+                repair_callback=helpers.FixService(
+                    service_name=FixServices.ENTITY_ID_DRIFT.value,
+                    notification_id=nid,
+                ),
+                translation_key="edw_entity_id_drift",
+                translation_placeholders={
+                    "count": "1",
+                    "entities": f"- `{d.entity_id}` -> `{new_entity_id}`",
+                },
+                integrations=(d.platform,) if d.platform else (),
+            ),
+        )
+        repairs[nid] = EntityIdDriftRepair(
+            entity_renames=((d.entity_id, new_entity_id),),
+        )
     return specs, repairs
 
 
@@ -1892,15 +1952,29 @@ def run_evaluation(
             entities_checked=0,
             entities_excluded=0,
         )
-    notifications.append(
-        helpers.PersistentNotification(
-            active=deviceless.has_issue,
-            notification_id=deviceless.notification_id,
-            title=deviceless.notification_title,
-            message=deviceless.notification_message,
-            instance_id=config.instance_id,
-        ),
-    )
+
+    # Same one-surface-per-finding split as device drift above.
+    # Repairs on -> one id-drift repair per drifted deviceless
+    # entity; the aggregate bucket notification is suppressed
+    # (the per-backend sweep clears any prior one). Repairs off
+    # -> the aggregate bucket notification.
+    if config.create_repairs:
+        dl_specs, dl_repairs = _build_deviceless_id_drift_repair_specs(
+            config,
+            deviceless.drifted,
+        )
+        notifications.extend(dl_specs)
+        repairs.update(dl_repairs)
+    else:
+        notifications.append(
+            helpers.PersistentNotification(
+                active=deviceless.has_issue,
+                notification_id=deviceless.notification_id,
+                title=deviceless.notification_title,
+                message=deviceless.notification_message,
+                instance_id=config.instance_id,
+            ),
+        )
 
     if _check_visible_aliased_enabled(config):
         visible_aliased = _evaluate_visible_aliased_entities(
