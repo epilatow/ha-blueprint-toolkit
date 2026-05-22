@@ -483,7 +483,9 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 
 Persistent notifications aren't exposed as `/api/states` entities in HA
 2026.4+; fetch them via the websocket `persistent_notification/get` command
-when you need to verify notification content.
+when you need to verify notification content. `scripts/ha_ws_fetch.py` wraps
+that handshake -- a plain-`python3` (no-uv) helper meant to run on the HA host
+(see `DEVELOPMENT_AGENT.md` "Reaching the HA API").
 
 ## Commit messages
 

@@ -133,10 +133,19 @@ module = ["pytest_homeassistant_custom_component.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# scripts/render_docs.py and the bundled zwave_network_info
-# CLI are bare scripts the test files import off a runtime
-# sys.path entry; mypy's import resolver can't see them.
-module = ["render_docs", "zwave_network_info"]
+# scripts/render_docs.py, scripts/ha_ws_fetch.py, and the
+# bundled zwave_network_info CLI are bare scripts the test
+# files import off a runtime sys.path entry; mypy's import
+# resolver can't see them.
+module = ["render_docs", "zwave_network_info", "ha_ws_fetch"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# scripts/ha_ws_fetch.py runs on the HA host against the host's
+# system ``websockets``; the dev environment may not have it
+# installed, and the import is lazy (inside ``fetch``) so the
+# test env can import the module without it.
+module = ["websockets", "websockets.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

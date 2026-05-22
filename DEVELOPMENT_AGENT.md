@@ -324,14 +324,55 @@ When the user asks for a `./scripts/dev-deploy.py` test cycle, the deploy is
 NOT verified until each step below has cleared. Skipping any step risks a
 "clean deploy" that silently changed user-visible behavior.
 
+### Reaching the HA API
+
+Run every authenticated REST / websocket call in the steps below **from the HA
+host over SSH**, not from the dev machine. This host's inbound path to port
+8123 -- both the LAN name `homeassistant.local` and the Tailscale name
+`homeassistant` -- strips the `Authorization` header before it reaches HA
+core, so an authenticated call from the dev machine returns
+`401: Unauthorized` regardless of token validity. The same token reaches HA
+core intact over the internal supervisor network (the `homeassistant` name as
+resolved on the host). Unauthenticated routes (`/manifest.json`) still return
+200 from the dev machine, so HA looks healthy -- only authed calls fail, which
+is easy to misread as a bad token.
+
+- **REST** (states, services, `automation.trigger`):
+
+  ```bash
+  API_KEY=$(tr -d ' \t\r\n' < ~/tmp/ha-api-key)
+  ssh root@homeassistant \
+    "curl -s -H 'Authorization: Bearer $API_KEY' \
+     http://homeassistant:8123/api/states/<entity_id>"
+  ```
+
+- **Websocket** (persistent notifications -- there is no REST form): copy
+  `scripts/ha_ws_fetch.py` to the host and run it there. The host's system
+  `python3` has `websockets` importable; `uv` is not assumed present, so the
+  helper is plain Python (no PEP 723 block).
+
+  ```bash
+  scp scripts/ha_ws_fetch.py root@homeassistant:/tmp/
+  ssh root@homeassistant \
+    "HA_TOKEN='$API_KEY' python3 /tmp/ha_ws_fetch.py \
+     persistent_notification/get"
+  ```
+
+  The command type defaults to `persistent_notification/get`; pass any other
+  (e.g. `get_config`) as the first positional argument. The token comes from
+  `$HA_TOKEN` or `--token-file`; the result prints as indented JSON; the
+  helper exits non-zero on auth rejection, a failed command, or a connection
+  failure.
+
 ### Pre-deploy: baselines
 
 Before running `./scripts/dev-deploy.py`, capture two snapshots so the
-post-deploy diffs in steps 6 + 7 have something to compare against:
+post-deploy diffs in steps 6 + 7 have something to compare against. Both use
+the host-side access method above:
 
 - **Persistent notifications** to `tmp/dev-deploy-pn-baseline.json`. PNs
-  aren't exposed as `/api/states` entities in HA 2026.4+; fetch via the
-  websocket `persistent_notification/get` command.
+  aren't exposed as `/api/states` entities in HA 2026.4+; fetch via
+  `scripts/ha_ws_fetch.py persistent_notification/get` run on the host.
 - **Diagnostic state entity attributes** to
   `tmp/dev-deploy-state-baseline.json`. For every `blueprint_toolkit.*_state`
   entity, save the full attribute dict (`/api/states/<entity_id>`).
