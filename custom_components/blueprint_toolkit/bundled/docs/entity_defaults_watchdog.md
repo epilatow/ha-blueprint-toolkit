@@ -323,9 +323,10 @@ convert:
   **Script YAML-key drift** above).
 
 Each Fix dialog leads with the same attribution header the notifications carry
--- the automation that emitted it, plus the device's integration(s) and a link
-to the device for device-attached findings (the visible-aliased fix shows just
-the automation when its source has no device).
+-- always the automation that emitted it, the owning integration(s) when
+known, and a link to the device for device-attached findings. The script
+YAML-key fix is deviceless: it shows the automation plus the built-in `script`
+integration (linked to the script-list dashboard), with no device line.
 
 Other drift categories (unmatched include / exclude directives, etc.) continue
 to surface as notifications regardless of the toggle. The per-device summary

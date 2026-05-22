@@ -1719,6 +1719,12 @@ def _build_script_yaml_key_repair_specs(
                 title="",
                 message="",
                 instance_id=config.instance_id,
+                # Scripts are deviceless, so the finding has no
+                # device / config-entry context -- but every
+                # script is owned by the built-in ``script``
+                # integration, which the attribution header
+                # links to the script-list dashboard.
+                integrations=("script",),
                 repair_callback=helpers.FixService(
                     service_name=FixServices.SCRIPT_YAML_KEY_DRIFT.value,
                     notification_id=nid,

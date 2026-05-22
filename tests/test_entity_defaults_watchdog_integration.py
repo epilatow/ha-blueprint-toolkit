@@ -1473,9 +1473,16 @@ class TestScriptYamlKeyScan:
         # The confirm modal leads with the shared attribution
         # header; the dispatcher injects the placeholder for
         # every repair (see AUTOMATIONS.md "Repairs"), and the
-        # confirm string must reference it.
-        placeholders = repair_issues[0].translation_placeholders or {}
-        assert "attribution" in placeholders
+        # confirm string must reference it. Scripts are
+        # deviceless, so the only attribution context is the
+        # built-in ``script`` integration, linked to the
+        # script-list dashboard.
+        attribution = (repair_issues[0].translation_placeholders or {}).get(
+            "attribution",
+            "",
+        )
+        assert "[script](/config/script/dashboard)" in attribution
+        assert "/config/devices/device/" not in attribution
 
     async def test_create_repairs_false_no_issue_no_notification(
         self,

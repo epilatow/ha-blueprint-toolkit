@@ -2346,6 +2346,9 @@ class TestBuildScriptYamlKeyRepairSpecs:
         )
         assert spec.notification_id == expected_id
         assert "__repair_" in spec.notification_id
+        # Scripts are deviceless; the only attribution context
+        # is the built-in ``script`` integration.
+        assert spec.integrations == ("script",)
         assert spec.translation_key == "edw_script_yaml_key_drift"
         assert spec.translation_placeholders == {
             "entity_id": "script.bathroom",
