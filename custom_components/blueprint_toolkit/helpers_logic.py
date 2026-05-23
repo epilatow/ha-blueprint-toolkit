@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 from urllib.parse import quote as _urlquote
 
 from .const import DOMAIN
@@ -810,6 +810,54 @@ def repair_notification_id(
     return f"{notification_prefix}repair_{service_name}__{target}"
 
 
+# --------------------------------------------------------
+# Issue contracts
+# --------------------------------------------------------
+#
+# Each HA repair issue is keyed on a ``translation_key`` that
+# selects a ``issues.<key>`` entry in ``strings.json`` /
+# ``translations/en.json``, and the entry's title / description
+# / fix-flow strings reference ``{placeholder}`` tokens filled
+# from a ``translation_placeholders`` dict. Each issue is
+# codified as a frozen ``Issue`` subclass -- defined in the
+# module that raises it (a watchdog's ``logic.py``, or
+# ``__init__.py`` for the install issues) and exported there in
+# an ``ISSUES`` tuple -- so call sites construct a typed instance
+# instead of a raw dict, then pass ``dataclasses.asdict(...)``
+# (the ``dict[str, str]`` HA wants -- the same boundary
+# conversion STEC / TEC use for their ServiceResponse).
+#
+# Only the shared ``Issue`` base lives here, re-exported via the
+# shim so each module subclasses ``helpers.Issue``.
+# ``test_issues.py`` gathers every module's ``ISSUES`` and
+# asserts each lines up with the JSON: the key exists in both
+# files, and the dataclass field set (plus ``attribution`` for
+# ``ATTRIBUTED`` issues, which the ``process_repairs_with_sweep``
+# dispatcher injects rather than the builder) equals the
+# ``{tokens}`` parsed from the entry.
+
+
+@dataclass(frozen=True)
+class Issue:
+    """Base for a repair issue's typed placeholder contract.
+
+    A subclass sets ``KEY`` (the ``issues.<key>`` translation
+    key) and adds one ``str`` field per ``{placeholder}`` the
+    issue's strings reference, except ``attribution``: the
+    dispatcher injects that token for every repair (see
+    ``process_repairs_with_sweep``), so ``ATTRIBUTED`` defaults
+    to ``True`` and a subclass opts out by setting it ``False``
+    (the install issues, which carry no attribution). Call sites
+    render the instance to HA's ``dict[str, str]`` placeholder
+    shape with ``dataclasses.asdict``. Each module that raises
+    issues defines its own subclasses + an ``ISSUES`` tuple;
+    ``test_issues.py`` checks them against the JSON.
+    """
+
+    KEY: ClassVar[str]
+    ATTRIBUTED: ClassVar[bool] = True
+
+
 @dataclass(frozen=True)
 class DeviceRef:
     """Device context for a notification / repair attribution block.
@@ -1474,12 +1522,17 @@ def spec_bucket(entry: Any, service: str) -> dict[str, Any]:
     return bucket
 
 
+# Only symbols consumed by automation handlers / logic (via the
+# ``helpers`` shim) belong in ``__all__``. The ``Issue`` base is
+# included because each issue-raising module subclasses
+# ``helpers.Issue``.
 __all__ = [
     "BlueprintHandlerSpec",
     "CONTROLLABLE_DOMAINS",
     "CappableResult",
     "DeviceRef",
     "FixService",
+    "Issue",
     "IssueNotification",
     "JoinedRegexLine",
     "JoinedRegexResult",

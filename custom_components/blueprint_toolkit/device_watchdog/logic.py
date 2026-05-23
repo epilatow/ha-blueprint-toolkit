@@ -6,9 +6,10 @@ unavailable entities and stale state (no state report within
 a configurable threshold).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from .. import helpers
 
@@ -231,6 +232,19 @@ class DisabledDiagnosticsRepair:
     entity_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class DwDeviceDisabledDiagnosticsIssue(helpers.Issue):
+    KEY: ClassVar[str] = "dw_device_disabled_diagnostics"
+    count: str
+    device_name: str
+    entities: str
+
+
+# The module's issue export; ``test_issues.py`` checks it
+# against the ``issues.*`` entries in strings.json / en.json.
+ISSUES: tuple[type[helpers.Issue], ...] = (DwDeviceDisabledDiagnosticsIssue,)
+
+
 def check_disabled_diagnostics(
     integration: str,
     entries: list[RegistryEntry],
@@ -348,12 +362,14 @@ def evaluate_diagnostics(
                         ),
                         notification_id=nid,
                     ),
-                    translation_key="dw_device_disabled_diagnostics",
-                    translation_placeholders={
-                        "device_name": device.de.name or device.de.id,
-                        "count": str(len(disabled)),
-                        "entities": entity_lines,
-                    },
+                    translation_key=(DwDeviceDisabledDiagnosticsIssue.KEY),
+                    translation_placeholders=asdict(
+                        DwDeviceDisabledDiagnosticsIssue(
+                            device_name=device.de.name or device.de.id,
+                            count=str(len(disabled)),
+                            entities=entity_lines,
+                        )
+                    ),
                     device=device_ref,
                     integrations=device_integrations,
                 ),

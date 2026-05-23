@@ -9,8 +9,9 @@ old names.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+from typing import ClassVar
 
 from .. import helpers
 
@@ -252,6 +253,56 @@ EdwRepair = (
     | DeviceEntityNameDriftRepair
     | VisibleAliasedEntityRepair
     | ScriptYamlKeyDriftRepair
+)
+
+
+# Repair-issue placeholder contracts (see ``helpers.Issue``).
+# Each names the ``{placeholder}`` tokens its ``issues.<key>``
+# strings entry references; builders pass ``asdict(...)`` of an
+# instance as the ``translation_placeholders``. ``ISSUES`` is
+# the module's export that ``test_issues.py`` checks against the
+# JSON.
+
+
+@dataclass(frozen=True)
+class EdwEntityIdDriftIssue(helpers.Issue):
+    KEY: ClassVar[str] = "edw_entity_id_drift"
+    # The device (device-grouped) or entity (deviceless) the
+    # repair acts on, so the issue-list title distinguishes
+    # otherwise-identical "Entity ID drift" rows.
+    target: str
+    count: str
+    entities: str
+
+
+@dataclass(frozen=True)
+class EdwDeviceEntityNameDriftIssue(helpers.Issue):
+    KEY: ClassVar[str] = "edw_device_entity_name_drift"
+    count: str
+    device_name: str
+    entities: str
+
+
+@dataclass(frozen=True)
+class EdwVisibleAliasedIssue(helpers.Issue):
+    KEY: ClassVar[str] = "edw_visible_aliased_entity"
+    entities: str
+    source_entity_id: str
+
+
+@dataclass(frozen=True)
+class EdwScriptYamlKeyDriftIssue(helpers.Issue):
+    KEY: ClassVar[str] = "edw_script_yaml_key_drift"
+    entity_id: str
+    new_slug: str
+    old_key: str
+
+
+ISSUES: tuple[type[helpers.Issue], ...] = (
+    EdwEntityIdDriftIssue,
+    EdwDeviceEntityNameDriftIssue,
+    EdwVisibleAliasedIssue,
+    EdwScriptYamlKeyDriftIssue,
 )
 
 
@@ -1569,13 +1620,17 @@ def _build_device_repair_specs(
                         service_name=FixServices.ENTITY_ID_DRIFT.value,
                         notification_id=nid,
                     ),
-                    translation_key="edw_entity_id_drift",
-                    translation_placeholders={
-                        "count": str(len(id_renames)),
-                        "entities": "\n".join(
-                            f"- `{old}` -> `{new}`" for old, new in id_renames
-                        ),
-                    },
+                    translation_key=(EdwEntityIdDriftIssue.KEY),
+                    translation_placeholders=asdict(
+                        EdwEntityIdDriftIssue(
+                            target=device_name,
+                            count=str(len(id_renames)),
+                            entities="\n".join(
+                                f"- `{old}` -> `{new}`"
+                                for old, new in id_renames
+                            ),
+                        )
+                    ),
                     device=r.device,
                     integrations=r.integrations,
                 ),
@@ -1605,14 +1660,16 @@ def _build_device_repair_specs(
                         ),
                         notification_id=nid,
                     ),
-                    translation_key="edw_device_entity_name_drift",
-                    translation_placeholders={
-                        "device_name": device_name,
-                        "count": str(len(name_drifted)),
-                        "entities": "\n".join(
-                            _name_drift_line(d) for d in name_drifted
-                        ),
-                    },
+                    translation_key=(EdwDeviceEntityNameDriftIssue.KEY),
+                    translation_placeholders=asdict(
+                        EdwDeviceEntityNameDriftIssue(
+                            device_name=device_name,
+                            count=str(len(name_drifted)),
+                            entities="\n".join(
+                                _name_drift_line(d) for d in name_drifted
+                            ),
+                        )
+                    ),
                     device=r.device,
                     integrations=r.integrations,
                 ),
@@ -1667,11 +1724,14 @@ def _build_deviceless_id_drift_repair_specs(
                     service_name=FixServices.ENTITY_ID_DRIFT.value,
                     notification_id=nid,
                 ),
-                translation_key="edw_entity_id_drift",
-                translation_placeholders={
-                    "count": "1",
-                    "entities": f"- `{d.entity_id}` -> `{new_entity_id}`",
-                },
+                translation_key=EdwEntityIdDriftIssue.KEY,
+                translation_placeholders=asdict(
+                    EdwEntityIdDriftIssue(
+                        target=d.entity_id,
+                        count="1",
+                        entities=f"- `{d.entity_id}` -> `{new_entity_id}`",
+                    )
+                ),
                 integrations=(d.platform,) if d.platform else (),
             ),
         )
@@ -1726,13 +1786,16 @@ def _build_visible_aliased_repair_specs(
                     service_name=FixServices.VISIBLE_ALIASED_ENTITY.value,
                     notification_id=nid,
                 ),
-                translation_key="edw_visible_aliased_entity",
-                translation_placeholders={
-                    "source_entity_id": f.source_entity_id,
-                    "entities": (
-                        f"- `{f.source_entity_id}` ({f.source_friendly_name})"
-                    ),
-                },
+                translation_key=(EdwVisibleAliasedIssue.KEY),
+                translation_placeholders=asdict(
+                    EdwVisibleAliasedIssue(
+                        source_entity_id=f.source_entity_id,
+                        entities=(
+                            f"- `{f.source_entity_id}` "
+                            f"({f.source_friendly_name})"
+                        ),
+                    )
+                ),
                 device=device_ref,
                 integrations=f.source_device_integrations,
             ),
@@ -1789,12 +1852,14 @@ def _build_script_yaml_key_repair_specs(
                     service_name=FixServices.SCRIPT_YAML_KEY_DRIFT.value,
                     notification_id=nid,
                 ),
-                translation_key="edw_script_yaml_key_drift",
-                translation_placeholders={
-                    "entity_id": f.entity_id,
-                    "old_key": f.old_key,
-                    "new_slug": f.new_slug,
-                },
+                translation_key=(EdwScriptYamlKeyDriftIssue.KEY),
+                translation_placeholders=asdict(
+                    EdwScriptYamlKeyDriftIssue(
+                        entity_id=f.entity_id,
+                        old_key=f.old_key,
+                        new_slug=f.new_slug,
+                    )
+                ),
             ),
         )
         repairs[nid] = ScriptYamlKeyDriftRepair(

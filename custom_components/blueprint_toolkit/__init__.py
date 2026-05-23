@@ -29,17 +29,40 @@ import functools
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import installer, reconciler
 from .const import DOMAIN, OPTION_CLI_SYMLINK_DIR
 
-# Repairs issue IDs are duplicated here (the source-of-
-# truth lives in repairs.py) rather than imported, so this
-# module's import graph stays HA-free for the unit tests
-# that import via the package path.
-_ISSUE_INSTALL_CONFLICTS = "install_conflicts"
-_ISSUE_INSTALL_FAILURE = "install_failure"
+# The install issues are raised + fixed here / in repairs.py, so
+# their ``Issue`` contracts live in this module (not common
+# code). ``Issue`` comes from ``helpers_logic`` (the pure
+# flavour: no module-scope HA imports), keeping this module's
+# import graph HA-free for the unit tests that import via the
+# package path.
+from .helpers_logic import Issue
+
+
+@dataclass(frozen=True)
+class InstallConflictsIssue(Issue):
+    KEY: ClassVar[str] = "install_conflicts"
+    ATTRIBUTED: ClassVar[bool] = False
+    conflicts: str
+
+
+@dataclass(frozen=True)
+class InstallFailureIssue(Issue):
+    KEY: ClassVar[str] = "install_failure"
+    ATTRIBUTED: ClassVar[bool] = False
+    errors: str
+
+
+# The module's issue export; ``test_issues.py`` checks it against
+# the ``issues.*`` entries in strings.json / en.json.
+ISSUES: tuple[type[Issue], ...] = (
+    InstallConflictsIssue,
+    InstallFailureIssue,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -154,7 +177,7 @@ def _surface_conflicts(
     from homeassistant.helpers import issue_registry as ir
 
     if not conflicts:
-        ir.async_delete_issue(hass, DOMAIN, _ISSUE_INSTALL_CONFLICTS)
+        ir.async_delete_issue(hass, DOMAIN, InstallConflictsIssue.KEY)
         return
     serialised = [
         {
@@ -176,10 +199,10 @@ def _surface_conflicts(
     ir.async_create_issue(
         hass,
         DOMAIN,
-        _ISSUE_INSTALL_CONFLICTS,
+        InstallConflictsIssue.KEY,
         is_fixable=True,
         severity=ir.IssueSeverity.WARNING,
-        translation_key=_ISSUE_INSTALL_CONFLICTS,
+        translation_key=InstallConflictsIssue.KEY,
         data={
             "entry_id": entry.entry_id,
             "conflicts": serialised,  # type: ignore[dict-item,unused-ignore]
@@ -198,15 +221,15 @@ def _surface_failure(
     from homeassistant.helpers import issue_registry as ir
 
     if not errors:
-        ir.async_delete_issue(hass, DOMAIN, _ISSUE_INSTALL_FAILURE)
+        ir.async_delete_issue(hass, DOMAIN, InstallFailureIssue.KEY)
         return
     ir.async_create_issue(
         hass,
         DOMAIN,
-        _ISSUE_INSTALL_FAILURE,
+        InstallFailureIssue.KEY,
         is_fixable=True,
         severity=ir.IssueSeverity.ERROR,
-        translation_key=_ISSUE_INSTALL_FAILURE,
+        translation_key=InstallFailureIssue.KEY,
         data={
             "entry_id": entry.entry_id,
             "errors": list(errors),  # type: ignore[dict-item,unused-ignore]

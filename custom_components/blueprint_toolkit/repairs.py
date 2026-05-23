@@ -29,19 +29,18 @@ contractual.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 
+from . import InstallConflictsIssue, InstallFailureIssue
 from .const import DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.data_entry_flow import FlowResult
-
-ISSUE_INSTALL_CONFLICTS = "install_conflicts"
-ISSUE_INSTALL_FAILURE = "install_failure"
 
 
 class InstallConflictsFlow(RepairsFlow):
@@ -77,11 +76,13 @@ class InstallConflictsFlow(RepairsFlow):
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
-            description_placeholders={
-                "conflicts": _format_conflict_list(
-                    self._data.get("conflicts", []) or [],
-                ),
-            },
+            description_placeholders=asdict(
+                InstallConflictsIssue(
+                    conflicts=_format_conflict_list(
+                        self._data.get("conflicts", []) or [],
+                    ),
+                )
+            ),
         )
 
 
@@ -108,11 +109,13 @@ class InstallFailureFlow(RepairsFlow):
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
-            description_placeholders={
-                "errors": "\n".join(
-                    self._data.get("errors", []) or ["(no error text)"],
-                ),
-            },
+            description_placeholders=asdict(
+                InstallFailureIssue(
+                    errors="\n".join(
+                        self._data.get("errors", []) or ["(no error text)"],
+                    ),
+                )
+            ),
         )
 
 
@@ -191,9 +194,9 @@ async def async_create_fix_flow(
     data: dict[str, Any] | None,
 ) -> RepairsFlow:
     """Factory HA calls to instantiate a flow per issue."""
-    if issue_id.startswith(ISSUE_INSTALL_CONFLICTS):
+    if issue_id.startswith(InstallConflictsIssue.KEY):
         return InstallConflictsFlow(data)
-    if issue_id.startswith(ISSUE_INSTALL_FAILURE):
+    if issue_id.startswith(InstallFailureIssue.KEY):
         return InstallFailureFlow(data)
     # The ``__repair_`` token is injected by
     # ``helpers.repair_notification_id`` when a watchdog

@@ -49,7 +49,7 @@
       }
     },
     "edw_entity_id_drift": {
-      "title": "Entity ID drift",
+      "title": "Entity ID drift: {target}",
       "description": "{count} entities have entity IDs that have drifted from their defaults. Click Submit to regenerate them.",
       "fix_flow": {
         "step": {

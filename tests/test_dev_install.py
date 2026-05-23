@@ -52,8 +52,16 @@ def _make_fake_integration(root: Path) -> Path:
 
     # Real Python sources (HA-free at module level, so they
     # import outside of HA via dev-install.py's sys.path
-    # injection).
-    for name in ("__init__.py", "installer.py", "reconciler.py", "const.py"):
+    # injection). ``helpers_logic`` is included because
+    # ``__init__`` imports the shared issue-key constants from
+    # it (a pure module, const-only deps).
+    for name in (
+        "__init__.py",
+        "installer.py",
+        "reconciler.py",
+        "const.py",
+        "helpers_logic.py",
+    ):
         shutil.copy2(INTEGRATION_SRC / name, integration_dir / name)
 
     scripts_dir = integration_dir / "scripts"

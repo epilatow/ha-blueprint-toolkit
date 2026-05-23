@@ -1819,6 +1819,7 @@ class TestBuildDeviceRepairSpecs:
         assert "__repair_" in spec.notification_id
         assert spec.translation_key == "edw_entity_id_drift"
         assert spec.translation_placeholders == {
+            "target": "Test Device",
             "count": "1",
             "entities": "- `sensor.old` -> `sensor.new`",
         }
@@ -2047,6 +2048,7 @@ class TestBuildDevicelessIdDriftRepairSpecs:
         assert "__repair_" in spec.notification_id
         assert spec.translation_key == "edw_entity_id_drift"
         assert spec.translation_placeholders == {
+            "target": "automation.stsc_main",
             "count": "1",
             "entities": ("- `automation.stsc_main` -> `automation.stec_main`"),
         }

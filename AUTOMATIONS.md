@@ -328,6 +328,15 @@ Notifications:
   reconstructs into the service call. Each handler's `logic.py` defines a
   `FixServices(StrEnum)` of its service names and builds `FixService`
   instances directly.
+- `Issue` (frozen dataclass base) -- the typed contract each repair issue
+  subclasses, tying its `translation_key` + `translation_placeholders` to its
+  `issues.<key>` strings entry. A subclass sets `KEY` and one `str` field per
+  `{placeholder}` (plus `ATTRIBUTED`, default `True` for the
+  dispatcher-injected `attribution` token; install issues set it `False`).
+  Only the base is shared here; each issue-raising module defines its own
+  subclasses and exports them in an `ISSUES` tuple (a watchdog's `logic.py`;
+  `__init__.py` for the install issues). See the "Translations" bullet under
+  "Repairs" for the full pattern + the `tests/test_issues.py` drift check.
 - `process_persistent_notifications(hass, [spec])` -- dispatcher;
   create/dismiss + automation-link prefix. Skips `create` calls whose new
   title + message would be byte-identical to the currently-active
@@ -822,10 +831,30 @@ as one-click Fix issues instead of as persistent notifications.
   long or interpolated title wraps onto two lines and renders over that
   subtitle. Per-finding specifics (the entity, the rename target) go in the
   confirm description, not the title.
-- **Translations.** Each repair spec sets `translation_key=<kind>`; the
-  entries in `strings.json` / `translations/en.json` carry the user-visible
-  title + description with `{placeholder}` fields filled via
-  `translation_placeholders`. The placeholder set is per-finding. The
+- **Translations.** Each issue is codified by a frozen `helpers.Issue`
+  subclass, defined in the module that raises it -- a watchdog's `logic.py`,
+  or `__init__.py` for the install issues -- and exported there in an `ISSUES`
+  tuple. The subclass sets `KEY` (selects the `issues.<key>` entry) and one
+  field per `{placeholder}`; `ATTRIBUTED` defaults `True` (the dispatcher
+  injects the `{attribution}` token for every repair) and install issues opt
+  out with `ATTRIBUTED = False`. Builders construct the class and pass
+  `dataclasses.asdict(...)` -- `translation_key=<Cls>.KEY` and
+  `translation_placeholders=asdict(<Cls>(...))` -- rather than a raw key
+  string and a raw dict, so a mistyped placeholder is a `mypy` error and a
+  missing field is a constructor error. `asdict` is the boundary conversion
+  STEC / TEC also use for their ServiceResponse; its `dict[str, Any]` result
+  satisfies HA's `dict[str, str]` placeholder APIs directly.
+  `tests/test_issues.py` gathers every module's `ISSUES` and asserts each
+  lines up with both JSON files: the key exists, and the field set (plus
+  `{attribution}` for `ATTRIBUTED` issues) equals the `{tokens}` parsed from
+  the entry's title / description / fix-flow strings -- so a renamed key, an
+  added / removed token, or an issue added on only one side fails a test
+  instead of shipping a broken Repairs dialog. Only the `Issue` base lives in
+  `helpers_logic` (re-exported via the shim so each module subclasses
+  `helpers.Issue`). When adding an issue, define its subclass + add it to the
+  module's `ISSUES` (and the test's union if it's a new module), with the
+  matching `issues.<key>` entry in both JSON files.
+- **Placeholder content.** The placeholder *values* are still per-finding. The
   per-device findings pass an `{entities}` placeholder -- a markdown list of
   the affected entities the confirm modal renders, mirroring the per-device
   notification body: `old -> new` for renames (EDW id-drift entity IDs, EDW
