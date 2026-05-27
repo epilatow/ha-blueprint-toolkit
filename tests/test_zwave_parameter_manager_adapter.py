@@ -1,0 +1,298 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "pytest",
+#     "pytest-cov",
+#     "pytest-homeassistant-custom-component==0.13.357",
+#     "zwave-js-server-python==0.73.0",
+#     "pyyaml",
+#     "types-PyYAML",
+# ]
+# ///
+# This is AI generated code
+"""Tests for the Node -> ParamMeta adapter.
+
+Builds genuine ``zwave_js_server`` Node objects from state dicts (the
+``start_listening`` shape, the same the HA driver + the 3000 server
+emit) with a mock client, so the mapping is exercised against the real
+model rather than hand-mocked attributes.
+"""
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+REPO_ROOT = Path(__file__).parent.parent
+
+sys.path.insert(0, str(REPO_ROOT))
+
+
+from zwave_js_server.model.node import Node  # noqa: E402
+
+from custom_components.blueprint_toolkit.zwave_parameter_manager.adapter import (  # noqa: E402, E501
+    derive_device_types,
+    node_param_metas,
+)
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+    CATALOG,
+    WAKE_UP_INTERVAL_VALUE,
+    Device,
+    DeviceType,
+    GenericParamNames,
+    LabelMatch,
+    MappingTable,
+    ParamValue,
+    ResolutionStatus,
+    resolve,
+)
+
+
+def _config_value(
+    prop: int,
+    label: str,
+    value: int,
+    lo: int,
+    hi: int,
+    states: dict[str, str] | None = None,
+    unit: str | None = None,
+) -> dict[str, object]:
+    return {
+        "endpoint": 0,
+        "commandClass": 112,
+        "commandClassName": "Configuration",
+        "property": prop,
+        "propertyName": label,
+        "value": value,
+        "metadata": {
+            "type": "number",
+            "label": label,
+            "min": lo,
+            "max": hi,
+            "unit": unit,
+            "states": states or {},
+            "writeable": True,
+        },
+    }
+
+
+def _wakeup_value(value: int) -> dict[str, object]:
+    return {
+        "endpoint": 0,
+        "commandClass": 132,
+        "commandClassName": "Wake Up",
+        "property": "wakeUpInterval",
+        "propertyName": "Wake-up interval",
+        "value": value,
+        "metadata": {
+            "type": "number",
+            "label": "Wake-up interval",
+            "min": 0,
+            "max": 86400,
+            "unit": "seconds",
+            "writeable": True,
+        },
+    }
+
+
+def _sensor_value(cc: int, prop: str, value: float) -> dict[str, object]:
+    """A read-only sensor reading -- must be excluded from params."""
+
+    return {
+        "endpoint": 0,
+        "commandClass": cc,
+        "commandClassName": "Multilevel Sensor",
+        "property": prop,
+        "propertyName": prop,
+        "value": value,
+        "metadata": {"type": "number", "label": prop, "writeable": False},
+    }
+
+
+def _node(node_id: int, values: list[dict[str, object]]) -> Node:
+    data = {
+        "nodeId": node_id,
+        "index": 0,
+        "status": 1,
+        "ready": True,
+        "isListening": False,
+        "isRouting": True,
+        "isSecure": False,
+        "deviceClass": {
+            "basic": {"key": 3, "label": "Routing Slave"},
+            "generic": {"key": 7, "label": "Notification Sensor"},
+            "specific": {"key": 0, "label": "Unused"},
+        },
+        "endpoints": [{"nodeId": node_id, "index": 0}],
+        "values": values,
+    }
+    # data is the hand-built start_listening wire shape; the precise
+    # NodeDataType TypedDict is not re-exported for a clean import.
+    return Node(MagicMock(), data)  # type: ignore[arg-type]
+
+
+def test_includes_config_and_wakeup_excludes_sensor() -> None:
+    node = _node(
+        273,
+        [
+            _config_value(
+                12, "Motion Sensor Sensitivity", 8, 0, 8, {"0": "Disable"}
+            ),
+            _config_value(
+                19,
+                "Flash LED on Motion",
+                1,
+                0,
+                1,
+                {"0": "Disable", "1": "Enable"},
+            ),
+            _wakeup_value(3600),
+            _sensor_value(49, "Air temperature", 21.5),
+        ],
+    )
+    by_id = {(m.command_class, m.property): m for m in node_param_metas(node)}
+    # The read-only multilevel-sensor reading is excluded.
+    assert set(by_id) == {(112, 12), (112, 19), (132, "wakeUpInterval")}
+
+    sens = by_id[(112, 12)]
+    assert sens.label == "Motion Sensor Sensitivity"
+    assert sens.range == (0, 8)
+    assert sens.states == {0: "Disable"}  # str keys folded to int
+
+    led = by_id[(112, 19)]
+    assert led.states == {0: "Disable", 1: "Enable"}
+
+    wake = by_id[(132, "wakeUpInterval")]
+    assert wake.unit == "seconds"
+    assert wake.range == (0, 86400)
+
+
+def test_wakeup_interval_unit_backfilled_when_missing() -> None:
+    """zwave-js's persisted metadata for the protocol-level Wake Up
+    value-id omits the unit field; the adapter backfills the spec
+    value (seconds) so the resolver's VALUE conversion can run."""
+
+    raw: dict[str, object] = {
+        "endpoint": 0,
+        "commandClass": 132,
+        "commandClassName": "Wake Up",
+        "property": "wakeUpInterval",
+        "propertyName": "Wake-up interval",
+        "value": 3600,
+        "metadata": {
+            "type": "number",
+            "label": "Wake-up interval",
+            "min": 0,
+            "max": 86400,
+            "writeable": True,
+        },
+    }
+    node = _node(273, [raw])
+    meta = node_param_metas(node)[0]
+    assert meta.command_class == 132
+    assert meta.property == "wakeUpInterval"
+    assert meta.unit == "seconds"
+
+
+def test_adapter_output_resolves() -> None:
+    """The ParamMeta the adapter emits feed the resolver end to end."""
+
+    node = _node(
+        273,
+        [
+            _config_value(
+                12, "Motion Sensor Sensitivity", 4, 0, 8, {"0": "Disable"}
+            ),
+            _wakeup_value(604800),
+        ],
+    )
+    device = Device(
+        node_id=273,
+        name="Office",
+        manufacturer="Zooz",
+        model="ZSE11",
+        is_listening=False,
+        params=node_param_metas(node),
+    )
+    mapping = MappingTable(
+        locators={
+            GenericParamNames.MOTION_SENSITIVITY: LabelMatch(
+                ("Motion Sensor Sensitivity",)
+            ),
+            GenericParamNames.WAKE_UP_INTERVAL: WAKE_UP_INTERVAL_VALUE,
+        },
+        off_labels=frozenset({"disable"}),
+    )
+    gp = CATALOG[GenericParamNames.MOTION_SENSITIVITY]
+    res = resolve(device, gp, mapping, ParamValue.of(gp, 10))
+    assert res.status is ResolutionStatus.RESOLVED
+    assert res.value == 8  # generic 10 -> device max (usable 1..8)
+
+    wake_gp = CATALOG[GenericParamNames.WAKE_UP_INTERVAL]
+    wake = resolve(device, wake_gp, mapping, ParamValue.of(wake_gp, 3600))
+    assert (wake.command_class, wake.property, wake.value) == (
+        132,
+        "wakeUpInterval",
+        3600,
+    )
+
+
+# -- device_types derivation -------------------------------------
+
+
+def test_derive_device_types_multisensor() -> None:
+    tags = derive_device_types(
+        [
+            ("binary_sensor", "motion"),
+            ("sensor", "temperature"),
+            ("sensor", "illuminance"),
+            ("sensor", "battery"),  # diagnostic -> ignored
+            ("sensor", None),  # no device_class -> ignored
+            ("update", None),
+            ("button", None),
+        ]
+    )
+    assert tags == frozenset(
+        {DeviceType.MOTION, DeviceType.TEMPERATURE, DeviceType.ILLUMINANCE}
+    )
+
+
+def test_derive_device_types_contact_collapses() -> None:
+    for device_class in ("window", "door", "garage_door"):
+        assert derive_device_types(
+            [("binary_sensor", device_class)]
+        ) == frozenset({DeviceType.CONTACT})
+
+
+def test_derive_device_types_lock_and_siren_from_domain() -> None:
+    assert derive_device_types(
+        [("lock", None), ("sensor", "battery"), ("button", None)]
+    ) == frozenset({DeviceType.LOCK})
+    assert derive_device_types([("siren", None)]) == frozenset(
+        {DeviceType.SIREN}
+    )
+
+
+def test_derive_device_types_smoke_co_alarm() -> None:
+    assert derive_device_types(
+        [("binary_sensor", "smoke"), ("binary_sensor", "carbon_monoxide")]
+    ) == frozenset({DeviceType.SMOKE, DeviceType.CARBON_MONOXIDE})
+
+
+def test_derive_device_types_diagnostics_only_is_empty() -> None:
+    assert (
+        derive_device_types(
+            [
+                ("sensor", "battery"),
+                ("sensor", "signal_strength"),
+                ("update", None),
+            ]
+        )
+        == frozenset()
+    )
+
+
+if __name__ == "__main__":
+    import pytest
+
+    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
