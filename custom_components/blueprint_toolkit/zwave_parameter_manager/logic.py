@@ -130,10 +130,20 @@ class ModelId:
     ambiguous (the same token can recur across manufacturers).
     Requiring both fields structurally enforces "model implies
     manufacturer" at every construction site.
+
+    Both fields are casefolded at construction so the quirk lookup
+    matches a device's reported identity case-insensitively, the same
+    rule ``Selector`` uses -- a manufacturer/model string that differs
+    only in case between the config DB and the device still finds its
+    quirk.
     """
 
     manufacturer: str
     model: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "manufacturer", self.manufacturer.casefold())
+        object.__setattr__(self, "model", self.model.casefold())
 
 
 @dataclass(frozen=True)
@@ -169,6 +179,14 @@ class MappingTable:
     on_labels: frozenset[str] = frozenset()
     low_tokens: tuple[str, ...] = ()
     high_tokens: tuple[str, ...] = ()
+    # Provenance: a flat string-string mapping recording which
+    # zwave-js snapshot the locators / quirks were classified
+    # against (typically ``zwave_js_tag`` + ``zwave_js_commit`` +
+    # ``zwave_js_commit_date``). Pure metadata for the handler to
+    # log at startup; the resolver ignores it. Unknown subkeys are
+    # accepted for forward-compat -- new provenance fields can be
+    # added without touching the loader.
+    metadata: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # The four categories carry domain-distinct vocab (option-state
@@ -191,6 +209,229 @@ class MappingTable:
                         f"{seen[key]} and {category}"
                     )
                 seen[key] = category
+
+    @classmethod
+    def from_dict(cls, raw: object) -> MappingTable:
+        """Build from the generated, checked-in mapping JSON.
+
+        The DB-scan generator emits this; nothing else hand-edits it.
+        Validation is strict: any malformed entry raises ``ValueError``
+        with the path of the offending field, so a generator bug fails
+        loudly at load rather than silently mis-resolving. The disjoint
+        label/token invariant is enforced by ``__post_init__``.
+
+        Expected shape::
+
+            {
+              "locators": {
+                "<concept>": {"labels": [...]}
+                             OR {"command_class": int,
+                                 "property": int | str}
+              },
+              "quirks": {
+                "<concept>": {"<manufacturer>": {"<model>":
+                  {"invert"?: bool,
+                   "off_value"?: int | null,
+                   "on_value"?: int | null}}}
+              },
+              "off_labels": [...], "on_labels": [...],
+              "low_tokens": [...], "high_tokens": [...],
+              "metadata": {"zwave_js_tag": "...",
+                           "zwave_js_commit": "...", ...}
+            }
+
+        Every top-level key except ``locators`` is optional.
+        """
+
+        if not isinstance(raw, Mapping):
+            raise ValueError("mapping: root must be a mapping")
+        unknown = set(raw) - {
+            "metadata",
+            "locators",
+            "quirks",
+            "off_labels",
+            "on_labels",
+            "low_tokens",
+            "high_tokens",
+        }
+        if unknown:
+            raise ValueError(
+                f"mapping: unknown top-level key(s): {sorted(unknown)}"
+            )
+        return cls(
+            locators=_parse_locators(raw.get("locators")),
+            quirks=_parse_quirks(raw.get("quirks")),
+            off_labels=frozenset(
+                _parse_str_list(raw.get("off_labels"), "off_labels")
+            ),
+            on_labels=frozenset(
+                _parse_str_list(raw.get("on_labels"), "on_labels")
+            ),
+            low_tokens=_parse_str_list(raw.get("low_tokens"), "low_tokens"),
+            high_tokens=_parse_str_list(raw.get("high_tokens"), "high_tokens"),
+            metadata=_parse_metadata(raw.get("metadata")),
+        )
+
+
+_CONCEPT_NAMES: dict[str, GenericParamNames] = {
+    n.value: n for n in GenericParamNames
+}
+
+
+def _concept(name: object, where: str) -> GenericParamNames:
+    if not isinstance(name, str) or name not in _CONCEPT_NAMES:
+        raise ValueError(f"{where}: unknown concept {name!r}")
+    return _CONCEPT_NAMES[name]
+
+
+def _parse_locators(raw: object) -> Mapping[GenericParamNames, Locator]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("mapping: 'locators' must be a mapping")
+    out: dict[GenericParamNames, Locator] = {}
+    for name, spec in raw.items():
+        concept = _concept(name, "locators")
+        out[concept] = _parse_locator(spec, concept)
+    return out
+
+
+def _parse_locator(spec: object, concept: GenericParamNames) -> Locator:
+    where = f"locators[{concept.value!r}]"
+    if not isinstance(spec, Mapping):
+        raise ValueError(f"{where}: must be a mapping")
+    has_labels = "labels" in spec
+    has_cc = "command_class" in spec
+    if has_labels == has_cc:
+        raise ValueError(
+            f"{where}: needs exactly one of 'labels' or 'command_class'"
+        )
+    allowed = {"labels"} if has_labels else {"command_class", "property"}
+    extra = set(spec) - allowed
+    if extra:
+        raise ValueError(f"{where}: unknown key(s): {sorted(extra)}")
+    if has_labels:
+        labels = spec["labels"]
+        if (
+            not isinstance(labels, list)
+            or not labels
+            or not all(isinstance(x, str) and x for x in labels)
+        ):
+            raise ValueError(
+                f"{where}: 'labels' must be a non-empty list of "
+                f"non-empty strings"
+            )
+        return LabelMatch(tuple(labels))
+    cc = spec.get("command_class")
+    prop = spec.get("property")
+    if isinstance(cc, bool) or not isinstance(cc, int):
+        raise ValueError(f"{where}: 'command_class' must be an int")
+    if isinstance(prop, bool) or not isinstance(prop, (int, str)):
+        raise ValueError(f"{where}: 'property' must be an int or string")
+    return FixedValueId(cc, prop)
+
+
+def _parse_quirks(
+    raw: object,
+) -> Mapping[tuple[GenericParamNames, ModelId], ModelQuirk]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("mapping: 'quirks' must be a mapping")
+    out: dict[tuple[GenericParamNames, ModelId], ModelQuirk] = {}
+    for concept_name, by_mfg in raw.items():
+        concept = _concept(concept_name, "quirks")
+        if not isinstance(by_mfg, Mapping):
+            raise ValueError(
+                f"quirks[{concept_name!r}]: must be a mapping of "
+                f"manufacturer -> model -> quirk"
+            )
+        for mfg, by_model in by_mfg.items():
+            if not isinstance(mfg, str) or not mfg:
+                raise ValueError(
+                    f"quirks[{concept_name!r}]: manufacturer key must "
+                    f"be a non-empty string"
+                )
+            if not isinstance(by_model, Mapping):
+                raise ValueError(
+                    f"quirks[{concept_name!r}][{mfg!r}]: must be a "
+                    f"mapping of model -> quirk"
+                )
+            for model, q in by_model.items():
+                if not isinstance(model, str) or not model:
+                    raise ValueError(
+                        f"quirks[{concept_name!r}][{mfg!r}]: model "
+                        f"key must be a non-empty string"
+                    )
+                out[(concept, ModelId(mfg, model))] = _parse_quirk(
+                    q, concept, mfg, model
+                )
+    return out
+
+
+def _parse_quirk(
+    raw: object, concept: GenericParamNames, mfg: str, model: str
+) -> ModelQuirk:
+    where = f"quirks[{concept.value!r}][{mfg!r}][{model!r}]"
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{where}: must be a mapping")
+    extra = set(raw) - {"invert", "off_value", "on_value"}
+    if extra:
+        raise ValueError(f"{where}: unknown key(s): {sorted(extra)}")
+    invert = raw.get("invert", False)
+    if not isinstance(invert, bool):
+        raise ValueError(f"{where}: 'invert' must be a bool")
+    return ModelQuirk(
+        invert=invert,
+        off_value=_parse_opt_int(raw.get("off_value"), f"{where}.off_value"),
+        on_value=_parse_opt_int(raw.get("on_value"), f"{where}.on_value"),
+    )
+
+
+def _parse_opt_int(raw: object, where: str) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"{where}: must be an int or null")
+    return raw
+
+
+def _parse_metadata(raw: object) -> Mapping[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("mapping: 'metadata' must be a mapping")
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"mapping: metadata key must be a string, got "
+                f"{type(key).__name__}"
+            )
+        if not isinstance(value, str):
+            raise ValueError(
+                f"mapping: metadata[{key!r}] must be a string, got "
+                f"{type(value).__name__}"
+            )
+        out[key] = value
+    return out
+
+
+def _parse_str_list(raw: object, where: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(
+        isinstance(x, str) and x for x in raw
+    ):
+        raise ValueError(
+            f"mapping: {where!r} must be a list of non-empty strings"
+        )
+    seen: set[str] = set()
+    for item in raw:
+        if item in seen:
+            raise ValueError(f"mapping: {where!r} contains duplicate {item!r}")
+        seen.add(item)
+    return tuple(raw)
 
 
 # -- Device + parameter metadata (resolver inputs) ---------------

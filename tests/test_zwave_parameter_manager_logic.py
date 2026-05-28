@@ -236,6 +236,214 @@ def test_mapping_disjoint_check_is_case_insensitive() -> None:
         )
 
 
+# -- MappingTable.from_dict (strict loader for generated JSON) ---
+
+
+def _from_dict_raises(raw: dict[str, object], match: str) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match=match):
+        MappingTable.from_dict(raw)
+
+
+def test_from_dict_round_trip() -> None:
+    raw = {
+        "locators": {
+            "motion_sensitivity": {
+                "labels": ["Motion Sensor Sensitivity", "PIR Sensitivity"]
+            },
+            "wake_up_interval": {
+                "command_class": 132,
+                "property": "wakeUpInterval",
+            },
+        },
+        "quirks": {
+            "light_on_motion": {
+                "Zooz": {"ZSE11": {"off_value": 0, "on_value": 7}}
+            }
+        },
+        "off_labels": ["disable", "off"],
+        "on_labels": ["enable", "on"],
+        "low_tokens": ["lowest", "low"],
+        "high_tokens": ["highest", "high"],
+    }
+    table = MappingTable.from_dict(raw)
+    # The wake_up_interval locator is the same value-id everyone shares.
+    assert table.locators[WUI] == WAKE_UP_INTERVAL_VALUE
+    assert table.locators[MS] == LabelMatch(
+        ("Motion Sensor Sensitivity", "PIR Sensitivity")
+    )
+    assert table.quirks[(LOM, ModelId("Zooz", "ZSE11"))] == ModelQuirk(
+        off_value=0, on_value=7
+    )
+    assert table.off_labels == frozenset({"disable", "off"})
+    assert table.high_tokens == ("highest", "high")
+
+
+def test_from_dict_inherits_disjoint_invariant() -> None:
+    _from_dict_raises(
+        {
+            "locators": {},
+            "off_labels": ["off"],
+            "on_labels": ["off"],
+        },
+        match="off_labels and on_labels",
+    )
+
+
+def test_from_dict_rejects_non_mapping_root() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="root must be a mapping"):
+        MappingTable.from_dict([1, 2, 3])
+
+
+def test_from_dict_rejects_unknown_top_level_key() -> None:
+    _from_dict_raises(
+        {"locators": {}, "wat": 1},
+        match="unknown top-level key",
+    )
+
+
+def test_from_dict_rejects_unknown_concept_name() -> None:
+    _from_dict_raises(
+        {"locators": {"motion_sensitvity": {"labels": ["x"]}}},
+        match="unknown concept",
+    )
+
+
+def test_from_dict_locator_needs_exactly_one_form() -> None:
+    _from_dict_raises(
+        {"locators": {"motion_sensitivity": {}}},
+        match="exactly one of",
+    )
+    _from_dict_raises(
+        {
+            "locators": {
+                "motion_sensitivity": {
+                    "labels": ["x"],
+                    "command_class": 112,
+                }
+            }
+        },
+        match="exactly one of",
+    )
+
+
+def test_from_dict_rejects_empty_labels() -> None:
+    _from_dict_raises(
+        {"locators": {"motion_sensitivity": {"labels": []}}},
+        match="non-empty list",
+    )
+
+
+def test_from_dict_quirks_require_manufacturer_layer() -> None:
+    # The JSON nesting (concept -> manufacturer -> model -> quirk)
+    # has no shortcut for bare-model. Omitting the manufacturer layer
+    # fails structurally -- the next level down isn't a valid quirk
+    # mapping. Error path locates the rejected level.
+    _from_dict_raises(
+        {
+            "locators": {},
+            "quirks": {"light_on_motion": {"ZSE11": {"off_value": 0}}},
+        },
+        match="must be a mapping",
+    )
+
+
+def test_from_dict_quirk_rejects_unknown_field() -> None:
+    _from_dict_raises(
+        {
+            "locators": {},
+            "quirks": {"light_on_motion": {"Zooz": {"ZSE11": {"invrt": True}}}},
+        },
+        match="unknown key",
+    )
+
+
+def test_from_dict_loads_metadata() -> None:
+    """Provenance metadata round-trips intact onto MappingTable.
+
+    The handler logs ``zwave_js_tag`` and friends at startup so the
+    operator can confirm which DB snapshot the mapping was generated
+    against."""
+
+    raw = {
+        "locators": {},
+        "metadata": {
+            "zwave_js_tag": "v15.24.0",
+            "zwave_js_commit": "5ffca2b38393f9eab0bffcdbd65b3020cbeda492",
+            "zwave_js_commit_date": "2026-05-12T18:19:20Z",
+        },
+    }
+    table = MappingTable.from_dict(raw)
+    assert table.metadata["zwave_js_tag"] == "v15.24.0"
+    assert (
+        table.metadata["zwave_js_commit"]
+        == "5ffca2b38393f9eab0bffcdbd65b3020cbeda492"
+    )
+    assert table.metadata["zwave_js_commit_date"] == "2026-05-12T18:19:20Z"
+
+
+def test_from_dict_metadata_optional_defaults_empty() -> None:
+    table = MappingTable.from_dict({"locators": {}})
+    assert table.metadata == {}
+
+
+def test_from_dict_rejects_malformed_metadata() -> None:
+    _from_dict_raises(
+        {"locators": {}, "metadata": "not a mapping"},
+        match="'metadata' must be a mapping",
+    )
+    _from_dict_raises(
+        {"locators": {}, "metadata": {"zwave_js_tag": 15}},
+        match=r"metadata\['zwave_js_tag'\] must be a string",
+    )
+
+
+def test_from_dict_locator_rejects_unknown_keys() -> None:
+    _from_dict_raises(
+        {"locators": {"motion_sensitivity": {"labels": ["X"], "garbage": 1}}},
+        match="unknown key",
+    )
+    _from_dict_raises(
+        {
+            "locators": {
+                "wake_up_interval": {
+                    "command_class": 132,
+                    "property": "wakeUpInterval",
+                    "stray": 1,
+                }
+            }
+        },
+        match="unknown key",
+    )
+
+
+def test_from_dict_rejects_duplicate_labels_or_tokens() -> None:
+    _from_dict_raises(
+        {"locators": {}, "off_labels": ["off", "off"]},
+        match="duplicate 'off'",
+    )
+    _from_dict_raises(
+        {"locators": {}, "low_tokens": ["low", "lowest", "low"]},
+        match="duplicate 'low'",
+    )
+
+
+def test_from_dict_quirk_rejects_bad_int() -> None:
+    # bool is an int subclass; the loader must reject True/False here.
+    _from_dict_raises(
+        {
+            "locators": {},
+            "quirks": {
+                "light_on_motion": {"Zooz": {"ZSE11": {"off_value": True}}}
+            },
+        },
+        match="off_value: must be an int",
+    )
+
+
 # -- validate_value (strict input, at the boundary) --------------
 
 
@@ -505,6 +713,24 @@ def test_evaluate_uses_invert_quirk() -> None:
     mapping = MappingTable(
         locators=MAPPING.locators,
         quirks={(MS, ModelId("Zooz", "ZSE11")): ModelQuirk(invert=True)},
+        off_labels=MAPPING.off_labels,
+    )
+    policies = [
+        Policy("outdoor", Selector(model="ZSE11"), {MS: pv(MS, 10)}),
+    ]
+    plan = evaluate_policies([ZSE11], policies, mapping)
+    write = next(w for w in plan.writes if w.concept == MS)
+    assert write.value == 1
+
+
+def test_invert_quirk_matches_case_insensitively() -> None:
+    # The quirk key's manufacturer/model casing differs from the
+    # device's reported strings ("Zooz"/"ZSE11"); the invert must still
+    # fire, the same way Selector matches, so a config-vs-node case
+    # drift can't silently drop a direction invert.
+    mapping = MappingTable(
+        locators=MAPPING.locators,
+        quirks={(MS, ModelId("ZOOZ", "zse11")): ModelQuirk(invert=True)},
         off_labels=MAPPING.off_labels,
     )
     policies = [
