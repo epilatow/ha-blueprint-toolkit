@@ -68,17 +68,6 @@ only reads brand assets from the brands CDN.
   `conftest.run_tests()`.
 - Use pytest.
 - Use `autospec=True` for all mocks.
-- Code-quality coverage (ruff + mypy --strict) is parametrized per discovered
-  `.py` file. The delivered `_repo_shared/tests/test_code_quality.py` walks
-  the repo via `discover_python_files` and resolves each file's mypy deps from
-  its PEP 723 `# /// script` block. `repo-shared init` injects a `testpaths`
-  entry into `pyproject.toml` pointing at `_repo_shared/tests`, so a bare
-  `uv run pytest` picks the shared tests up alongside this repo's own. New
-  files are picked up automatically -- if they need a non-default mypy env
-  (e.g. HA-coupled module files that need
-  `pytest-homeassistant-custom-component` resolvable for real
-  `homeassistant.*` types), add a `# /// script` block under the file's
-  docstring declaring those deps + `requires-python`.
 
 ### Comments
 
@@ -318,14 +307,15 @@ the integration's async lifecycle and each handler's full call path (config
 flow, service registration, argparse error paths, state-entity attributes).
 
 The HACC pin is duplicated across every PEP 723 inline-deps block (one per
-HA-coupled module or test file), plus `pyproject.toml`'s dev-deps. The exact
-pin gives reproducible test runs, but it also means the suite won't notice if
-a future HA release breaks an interface we depend on until someone manually
-bumps the pin. `.github/workflows/hacc-drift.yml` plugs that gap: it runs
-weekly (and on demand via `workflow_dispatch`), rewrites every pin site to the
-latest released HACC version, runs `tests/run_all.py`, and opens (or updates)
-a PR on the `hacc-drift` branch carrying the result. CI failures on that PR
-are the early-warning signal; clean runs are one-click merges.
+HACC test file under `tests/`) plus `pyproject.toml` (the
+`[tool.repo-shared.code-quality] mypy-extra-deps` fallback and dev-deps). The
+exact pin gives reproducible test runs, but it also means the suite won't
+notice if a future HA release breaks an interface we depend on until someone
+manually bumps the pin. `.github/workflows/hacc-drift.yml` plugs that gap: it
+runs weekly (and on demand via `workflow_dispatch`), rewrites every pin site
+to the latest released HACC version, runs `tests/run_all.py`, and opens (or
+updates) a PR on the `hacc-drift` branch carrying the result. CI failures on
+that PR are the early-warning signal; clean runs are one-click merges.
 
 ### Manifest version bump rule
 
@@ -379,19 +369,17 @@ the script exits cleanly without creating a duplicate release.
 ### Code quality
 
 Lint, format, and type checks run as the parametrized
-`_repo_shared/tests/test_code_quality.py` suite -- one parametrize case per
-discovered `.py` file. `discover_python_files` walks the repo (skipping
-`_repo_shared/`, `.venv/`, `__pycache__/`, etc.) and `resolve_files` resolves
-each file's mypy `extra_deps` + `python_version` from its PEP 723
-`# /// script` block when present. For files that need real `homeassistant.*`
-types (the HA-coupled module files plus the HACC test files), the block
-declares `dependencies = ["pytest-homeassistant-custom-component==..."]` plus
-`requires-python = ">=3.14"`, and the test runner spawns a fresh
-`uvx --python 3.14 --with <hacc-pin>` mypy invocation against that file.
-Pure-logic targets without a block fall through to plain `mypy --strict` in
-the project venv -- `pyproject.toml`'s `[[tool.mypy.overrides]]`
-ignore-missing-imports rules handle the rest (voluptuous, jinja2, socketio,
-etc.).
+`_repo_shared/tests/test_code_quality.py` suite, one case per discovered `.py`
+file. mypy `--strict` deps come from each file's PEP 723 `# /// script` block
+when present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps`
+in `pyproject.toml` (HACC
+
+- `types-PyYAML` at `mypy-python-version = "3.14"`). Per-file blocks are kept
+  only where a file needs more than the fallback -- e.g. the HACC test files
+  under `tests/` add `pytest` / `pytest-cov`. Other files fall through to
+  plain `mypy --strict` in the project venv; `pyproject.toml`'s
+  `[[tool.mypy.overrides]]` covers transitive untyped imports (voluptuous,
+  jinja2, socketio, etc.).
 
 `repo-shared init` injected `testpaths = ["tests", "_repo_shared/tests"]` into
 `[tool.pytest.ini_options]`, so a bare `uv run pytest` runs both this repo's

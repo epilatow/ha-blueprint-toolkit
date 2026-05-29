@@ -20,13 +20,6 @@ convention -- the file name and the
 contractual.
 """
 
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#     "pytest-homeassistant-custom-component==0.13.331",
-# ]
-# ///
-
 from __future__ import annotations
 
 from dataclasses import asdict
