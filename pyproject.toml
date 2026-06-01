@@ -174,3 +174,8 @@ ignore_missing_imports = true
 # the tests.
 module = ["custom_components.blueprint_toolkit.*.handler"]
 implicit_reexport = true
+
+[dependency-groups]
+dev = [
+    "mdformat-frontmatter>=2.1.2",
+]

@@ -53,6 +53,12 @@ SVG + 256/512 PNG renders). They are only consumed by a future PR to
 `home-assistant/brands`; they do not ship inside the bundle because HA's UI
 only reads brand assets from the brands CDN.
 
+Repo-local Claude Code skills live at `skills/<name>/SKILL.md` at the repo
+root, and `.claude/skills` is a committed symlink to `../skills` so Claude
+Code finds them at the standard discovery path. To add a new skill: create the
+directory + `SKILL.md` under `skills/<name>/`; the existing symlink already
+covers it.
+
 ## File conventions
 
 ### Shebangs
@@ -212,6 +218,18 @@ shared test bases under `_repo_shared/tests/`:
   ```bash
   uvx --with mdformat-gfm --with mdformat-tables \
       mdformat --wrap=78 --number <path>
+  ```
+
+  A markdown file with YAML frontmatter (`skills/<name>/SKILL.md`) also needs
+  `--with mdformat-frontmatter` -- without the plugin, `mdformat` rewrites the
+  `---` fences as a horizontal rule and folds the frontmatter into a heading,
+  which breaks skill discovery. The project venv (which the gating test runs
+  via `python -m mdformat`) already has the plugin, so the test stays green;
+  the `uvx` form needs it spelled out:
+
+  ```bash
+  uvx --with mdformat-gfm --with mdformat-tables --with mdformat-frontmatter \
+      mdformat --wrap=78 --number skills/<name>/SKILL.md
   ```
 
 - **`markdownlint-cli2`** covers content rules `mdformat` can't see: required

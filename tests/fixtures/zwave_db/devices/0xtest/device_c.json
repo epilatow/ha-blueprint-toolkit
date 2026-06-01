@@ -1,0 +1,15 @@
+{
+  "manufacturer": "TestMfg",
+  "manufacturerId": "0x0FFF",
+  "label": "DEV-C",
+  "description": "Exercises ~/-anchored imports (devices-root-relative).",
+  "devices": [{"productType": "0x0003", "productId": "0x0003"}],
+  "firmwareVersion": {"min": "0.0", "max": "255.255"},
+  "paramInformation": [
+    {
+      "#": "1",
+      "$import": "~/templates/master.json#base_enable_disable",
+      "label": "Flash LED on Motion"
+    }
+  ]
+}

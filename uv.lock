@@ -103,11 +103,19 @@ dependencies = [
     { name = "pytest" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mdformat-frontmatter" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "epilatow-repo-shared", git = "https://github.com/epilatow/repo-shared?rev=cbe583e8526f74e5e5785fee9e557b96aa342c63" },
     { name = "pytest" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "mdformat-frontmatter", specifier = ">=2.1.2" }]
 
 [[package]]
 name = "iniconfig"

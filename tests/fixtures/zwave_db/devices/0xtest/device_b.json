@@ -1,0 +1,22 @@
+{
+  // JSONC line comments are allowed in zwave-js config files.
+  "manufacturer": "TestMfg",
+  "manufacturerId": "0x0FFF",
+  "label": "DEV-B",
+  "description": "Synthetic device that exercises chained imports.",
+  "devices": [{"productType": "0x0002", "productId": "0x0002"}],
+  "firmwareVersion": {"min": "0.0", "max": "255.255"},
+  "paramInformation": [
+    {
+      "#": "1",
+      "label": "Motion Sensor Sensitivity",
+      "valueSize": 1,
+      "minValue": 0,
+      "maxValue": 8
+    },
+    {
+      "#": "4",
+      "$import": "templates/test_template.json#humidity_threshold_zse44"
+    }
+  ]
+}

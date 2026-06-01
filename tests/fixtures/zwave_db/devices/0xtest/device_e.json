@@ -1,0 +1,20 @@
+{
+  "manufacturer": "TestMfg",
+  "manufacturerId": "0x0FFF",
+  "label": "DEV-E",
+  "description": "Inverted-scale motion sensor (descending sensitivity).",
+  "devices": [{"productType": "0x0005", "productId": "0x0005"}],
+  "firmwareVersion": {"min": "0.0", "max": "255.255"},
+  "paramInformation": [
+    {
+      "#": "1",
+      "label": "Motion Sensor Sensitivity",
+      "description": "8 = highest, 255 = lowest",
+      "valueSize": 2,
+      "minValue": 8,
+      "maxValue": 255,
+      "defaultValue": 12,
+      "unsigned": true
+    }
+  ]
+}

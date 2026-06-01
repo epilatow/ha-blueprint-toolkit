@@ -1,0 +1,27 @@
+{
+  "manufacturer": "TestMfg",
+  "manufacturerId": "0x0FFF",
+  "label": "DEV-A",
+  "description": "Synthetic motion + humidity sensor for tests.",
+  "devices": [{"productType": "0x0001", "productId": "0x0001"}],
+  "firmwareVersion": {"min": "0.0", "max": "255.255"},
+  "paramInformation": [
+    {
+      "#": "1",
+      "label": "Motion Sensor Sensitivity",
+      "valueSize": 1,
+      "minValue": 0,
+      "maxValue": 8,
+      "defaultValue": 8
+    },
+    {
+      "#": "2",
+      "$import": "templates/test_template.json#led_on_motion_base",
+      "label": "Flash LED on Motion"
+    },
+    {
+      "#": "3",
+      "$import": "templates/test_template.json#humidity_threshold"
+    }
+  ]
+}

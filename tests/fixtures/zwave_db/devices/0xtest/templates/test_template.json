@@ -1,0 +1,33 @@
+{
+  // The label is inherited by importers that don't override it.
+  "humidity_threshold": {
+    "label": "Humidity Report Threshold",
+    "valueSize": 1,
+    "minValue": 0,
+    "maxValue": 50,
+    "unit": "%",
+    "options": [
+      {"label": "Disable", "value": 0}
+    ]
+  },
+  // No label here -- the importing entry must provide one.
+  "led_on_motion_base": {
+    "valueSize": 1,
+    "minValue": 0,
+    "maxValue": 1,
+    "options": [
+      {"label": "Disable", "value": 0},
+      {"label": "Enable", "value": 1}
+    ]
+  },
+  // Chained import to exercise recursion.
+  "humidity_threshold_zse44": {
+    "$import": "#humidity_threshold",
+    "maxValue": 80
+  },
+  // Self-referential -- the cycle guard breaks the chain after one
+  // step and treats the import as empty so the outer label survives.
+  "self_loop": {
+    "$import": "#self_loop"
+  }
+}

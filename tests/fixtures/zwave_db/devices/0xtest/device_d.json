@@ -1,0 +1,15 @@
+{
+  "manufacturer": "TestMfg",
+  "manufacturerId": "0x0FFF",
+  "label": "DEV-D",
+  "description": "Imports a self-referential template -- exercises the cycle guard.",
+  "devices": [{"productType": "0x0004", "productId": "0x0004"}],
+  "firmwareVersion": {"min": "0.0", "max": "255.255"},
+  "paramInformation": [
+    {
+      "#": "1",
+      "$import": "templates/test_template.json#self_loop",
+      "label": "Cycle Param"
+    }
+  ]
+}
