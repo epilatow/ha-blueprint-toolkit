@@ -5,20 +5,44 @@
       "name": "Configuration",
       "labels": [
         {
-          "label": "Humidity Change Report Threshold",
-          "device_count": 19
+          "label": "PIR Sensitivity",
+          "device_count": 22
         },
         {
           "label": "Motion Sensor Sensitivity",
-          "device_count": 18
+          "device_count": 17
+        },
+        {
+          "label": "Humidity Change Report Threshold",
+          "device_count": 16
+        },
+        {
+          "label": "Humidity Reporting Threshold",
+          "device_count": 16
         },
         {
           "label": "Motion Sensitivity",
           "device_count": 16
         },
         {
-          "label": "Humidity Report Threshold",
+          "label": "Humidity Sensor Report Threshold",
           "device_count": 7
+        },
+        {
+          "label": "Humidity Report Threshold",
+          "device_count": 6
+        },
+        {
+          "label": "LED: Blink on Motion",
+          "device_count": 6
+        },
+        {
+          "label": "Motion Sensor: Sensitivity",
+          "device_count": 4
+        },
+        {
+          "label": "Humidity Change Reporting Threshold",
+          "device_count": 3
         },
         {
           "label": "Threshold Check Interval",
@@ -29,15 +53,50 @@
           "device_count": 2
         },
         {
-          "label": "LED Indicator (Motion)",
+          "label": "Humidity D-Value (Report Threshold) Setting",
+          "device_count": 2
+        },
+        {
+          "label": "Motion LED",
+          "device_count": 2
+        },
+        {
+          "label": "Motion Sensitivity Level",
+          "device_count": 2
+        },
+        {
+          "label": "Automatic Reporting: Humidity Change Threshold",
+          "device_count": 1
+        },
+        {
+          "label": "Change Threshold Reporting: Check Interval",
+          "device_count": 1
+        },
+        {
+          "label": "Change Threshold Reporting: Humidity",
           "device_count": 1
         },
         {
           "label": "Humidity Reporting Change Threshold",
           "device_count": 1
+        },
+        {
+          "label": "Humidity Sensor: Change Report Threshold",
+          "device_count": 1
+        },
+        {
+          "label": "LED Indicator (Motion)",
+          "device_count": 1
+        },
+        {
+          "label": "LED Indicator: Blink on Motion",
+          "device_count": 1
+        },
+        {
+          "label": "Motion Detection Sensitivity",
+          "device_count": 1
         }
-      ],
-      "label_count": 8
+      ]
     }
   }
 }

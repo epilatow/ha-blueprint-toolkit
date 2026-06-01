@@ -1,0 +1,27 @@
+[
+  {
+    "concept": "motion_sensitivity",
+    "manufacturer": "STEINEL GmbH",
+    "model": "IS140-2"
+  },
+  {
+    "concept": "motion_sensitivity",
+    "manufacturer": "STEINEL GmbH",
+    "model": "L 810 LED iHF"
+  },
+  {
+    "concept": "motion_sensitivity",
+    "manufacturer": "STEINEL GmbH",
+    "model": "MotionSwitch LED"
+  },
+  {
+    "concept": "motion_sensitivity",
+    "manufacturer": "STEINEL GmbH",
+    "model": "RS LED D2 Z-Wave"
+  },
+  {
+    "concept": "motion_sensitivity",
+    "manufacturer": "STEINEL GmbH",
+    "model": "XLED Home 2"
+  }
+]

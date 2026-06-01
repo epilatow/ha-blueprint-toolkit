@@ -1,0 +1,150 @@
+{
+  "metadata": {
+    "zwave_js_tag": "v15.24.0",
+    "zwave_js_commit": "5ffca2b38393f9eab0bffcdbd65b3020cbeda492",
+    "zwave_js_commit_date": "2026-05-12T18:19:20Z"
+  },
+  "locators": {
+    "motion_sensitivity": {
+      "labels": [
+        "PIR Sensitivity",
+        "Motion Sensor Sensitivity",
+        "Motion Sensitivity",
+        "Motion Sensor: Sensitivity",
+        "Motion Sensitivity Level",
+        "Motion Detection Sensitivity"
+      ]
+    },
+    "light_on_motion": {
+      "labels": [
+        "LED: Blink on Motion",
+        "Flash LED on Motion",
+        "Motion LED",
+        "LED Indicator (Motion)",
+        "LED Indicator: Blink on Motion"
+      ]
+    },
+    "humidity_report_threshold": {
+      "labels": [
+        "Humidity Change Report Threshold",
+        "Humidity Reporting Threshold",
+        "Humidity Sensor Report Threshold",
+        "Humidity Report Threshold",
+        "Humidity Change Reporting Threshold",
+        "Humidity D-Value (Report Threshold) Setting",
+        "Automatic Reporting: Humidity Change Threshold",
+        "Change Threshold Reporting: Humidity",
+        "Humidity Reporting Change Threshold",
+        "Humidity Sensor: Change Report Threshold"
+      ]
+    },
+    "threshold_check_interval": {
+      "labels": [
+        "Threshold Check Interval",
+        "Change Threshold Reporting: Check Interval"
+      ]
+    },
+    "wake_up_interval": {
+      "command_class": 132,
+      "property": "wakeUpInterval"
+    }
+  },
+  "quirks": {
+    "motion_sensitivity": {
+      "Elexa Consumer Products Inc.": {
+        "DMMS1": {
+          "invert": true
+        }
+      },
+      "Fibargroup": {
+        "FGMS001": {
+          "invert": true
+        }
+      },
+      "GE/Enbrighten": {
+        "26931 / ZW4006": {
+          "invert": true
+        },
+        "26933 / ZW3008": {
+          "invert": true
+        }
+      },
+      "Inteset": {
+        "INT-SMMD-N1": {
+          "invert": true
+        }
+      },
+      "Jasco": {
+        "24770 / ZW4006": {
+          "invert": true
+        },
+        "26932 / ZW3008": {
+          "invert": true
+        }
+      },
+      "Namron": {
+        "SR-ZV9032A-EU": {
+          "invert": true
+        }
+      },
+      "Nortek Security & Control LLC": {
+        "PIR-200": {
+          "invert": true
+        }
+      },
+      "ShenZhen Sunricher Technology, Ltd.": {
+        "SR-ZV9032A-EU": {
+          "invert": true
+        }
+      },
+      "Shenzhen Neo Electronics Co., Ltd.": {
+        "NAS-PD01Z": {
+          "invert": true
+        },
+        "NAS-PD02Z": {
+          "invert": true
+        },
+        "NAS-PD03Z": {
+          "invert": true
+        },
+        "NAS_PD02Z-2": {
+          "invert": true
+        }
+      },
+      "Vision Security": {
+        "ZP3111-5": {
+          "invert": true
+        },
+        "ZP3113-7": {
+          "invert": true
+        }
+      },
+      "Zooz": {
+        "ZSE09": {
+          "invert": true
+        }
+      }
+    }
+  },
+  "off_labels": [
+    "disable",
+    "disabled",
+    "no",
+    "none",
+    "off"
+  ],
+  "on_labels": [
+    "enable",
+    "enabled",
+    "on",
+    "yes"
+  ],
+  "low_tokens": [
+    "low",
+    "lowest"
+  ],
+  "high_tokens": [
+    "high",
+    "highest"
+  ]
+}
