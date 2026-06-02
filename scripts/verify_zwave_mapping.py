@@ -55,6 +55,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
     LabelMatch,
     Locator,
     MappingTable,
+    ParamId,
     ParamMeta,
     ParamValue,
     ResolutionStatus,
@@ -177,8 +178,7 @@ def _build_param(
     unit_raw = raw.get("unit")
     unit = unit_raw if isinstance(unit_raw, str) else None
     return ParamMeta(
-        command_class=cc,
-        property=prop,
+        id=ParamId(cc, prop),
         label=str(label),
         range=rng,
         unit=unit,
@@ -199,8 +199,8 @@ def _locator_matches(locator: Locator, device: Device) -> list[ParamMeta]:
         return [
             p
             for p in device.params
-            if p.command_class == locator.command_class
-            and p.property == locator.property
+            if p.id.command_class == locator.command_class
+            and p.id.property_ == locator.property_
         ]
     return []
 
@@ -216,16 +216,13 @@ def _classify_device(device: Device, mapping: MappingTable) -> _DeviceReport:
             # RESOLVED) keeps AMBIGUOUS labels out of the unmapped
             # summary -- the mapping already captures them.
             for pm in _locator_matches(locator, device):
-                matched_param_ids.add((pm.command_class, pm.property))
+                matched_param_ids.add((pm.id.command_class, pm.id.property_))
         dummy = ParamValue.of(gp, _DUMMY_VALUE[gp.param_type.value])
         res = resolve(device, gp, mapping, dummy)
         matched_label: str | None = None
         if res.status is ResolutionStatus.RESOLVED:
             for pm in device.params:
-                if (
-                    pm.command_class == res.command_class
-                    and pm.property == res.property
-                ):
+                if pm.id == res.id:
                     matched_label = pm.label
                     break
         outcomes.append(
@@ -239,7 +236,7 @@ def _classify_device(device: Device, mapping: MappingTable) -> _DeviceReport:
     unmapped = [
         p
         for p in device.params
-        if (p.command_class, p.property) not in matched_param_ids
+        if (p.id.command_class, p.id.property_) not in matched_param_ids
     ]
     return _DeviceReport(
         name=device.name,

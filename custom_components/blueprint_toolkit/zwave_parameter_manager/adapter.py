@@ -82,14 +82,12 @@ def node_param_metas(node: Node) -> tuple[ParamMeta, ...]:
         pid = _param_key(value)
         metas.append(
             ParamMeta(
-                command_class=pid.command_class,
-                property=pid.property,
+                id=pid,
                 label=meta.label or "",
-                property_key=pid.property_key,
                 range=_range(meta),
                 unit=meta.unit
                 or _PROTOCOL_UNITS.get(
-                    FixedValueId(pid.command_class, pid.property)
+                    FixedValueId(pid.command_class, pid.property_)
                 ),
                 states=_states(meta),
             )

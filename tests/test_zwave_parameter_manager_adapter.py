@@ -163,19 +163,23 @@ def test_includes_config_and_wakeup_excludes_sensor() -> None:
             _sensor_value(49, "Air temperature", 21.5),
         ],
     )
-    by_id = {(m.command_class, m.property): m for m in node_param_metas(node)}
+    by_id = {m.id: m for m in node_param_metas(node)}
     # The read-only multilevel-sensor reading is excluded.
-    assert set(by_id) == {(112, 12), (112, 19), (132, "wakeUpInterval")}
+    assert set(by_id) == {
+        ParamId(112, 12),
+        ParamId(112, 19),
+        ParamId(132, "wakeUpInterval"),
+    }
 
-    sens = by_id[(112, 12)]
+    sens = by_id[ParamId(112, 12)]
     assert sens.label == "Motion Sensor Sensitivity"
     assert sens.range == (0, 8)
     assert sens.states == {0: "Disable"}  # str keys folded to int
 
-    led = by_id[(112, 19)]
+    led = by_id[ParamId(112, 19)]
     assert led.states == {0: "Disable", 1: "Enable"}
 
-    wake = by_id[(132, "wakeUpInterval")]
+    wake = by_id[ParamId(132, "wakeUpInterval")]
     assert wake.unit == "seconds"
     assert wake.range == (0, 86400)
 
@@ -202,8 +206,7 @@ def test_wakeup_interval_unit_backfilled_when_missing() -> None:
     }
     node = _node(273, [raw])
     meta = node_param_metas(node)[0]
-    assert meta.command_class == 132
-    assert meta.property == "wakeUpInterval"
+    assert meta.id == ParamId(132, "wakeUpInterval")
     assert meta.unit == "seconds"
 
 
@@ -243,11 +246,7 @@ def test_adapter_output_resolves() -> None:
 
     wake_gp = CATALOG[GenericParamNames.WAKE_UP_INTERVAL]
     wake = resolve(device, wake_gp, mapping, ParamValue.of(wake_gp, 3600))
-    assert (wake.command_class, wake.property, wake.value) == (
-        132,
-        "wakeUpInterval",
-        3600,
-    )
+    assert (wake.id, wake.value) == (ParamId(132, "wakeUpInterval"), 3600)
 
 
 # -- build_device + actual_values --------------------------------
@@ -280,9 +279,9 @@ def test_build_device_identity_flags_and_params() -> None:
     assert device.is_listening is False
     assert device.device_id == "dev-264"
     assert device.device_types == frozenset({DeviceType.HUMIDITY})
-    assert {(p.command_class, p.property) for p in device.params} == {
-        (112, 5),
-        (132, "wakeUpInterval"),
+    assert {p.id for p in device.params} == {
+        ParamId(112, 5),
+        ParamId(132, "wakeUpInterval"),
     }
 
 
@@ -332,11 +331,7 @@ def test_param_metas_and_actuals_share_one_key_space() -> None:
     node = _node(
         21, [_config_value(12, "Sensitivity", 4, 0, 8), _wakeup_value(3600)]
     )
-    meta_ids = {
-        ParamId(m.command_class, m.property, m.property_key)
-        for m in node_param_metas(node)
-    }
-    assert meta_ids == set(actual_values(node))
+    assert {m.id for m in node_param_metas(node)} == set(actual_values(node))
 
 
 # -- device_types derivation -------------------------------------

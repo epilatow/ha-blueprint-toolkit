@@ -37,6 +37,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
     MappingTable,
     ModelId,
     ModelQuirk,
+    ParamId,
     ParamMeta,
     ParamType,
     ParamValue,
@@ -94,52 +95,45 @@ MAPPING = MappingTable(
 # -- Parameter fixtures (real metadata) --------------------------
 
 ZSE11_SENS = ParamMeta(
-    command_class=112,
-    property=12,
+    id=ParamId(112, 12),
     label="Motion Sensor Sensitivity",
     range=(0, 8),
     states={0: "Disable"},
 )
 ZSE11_LED = ParamMeta(
-    command_class=112,
-    property=19,
+    id=ParamId(112, 19),
     label="Flash LED on Motion",
     range=(0, 1),
     states={0: "Disable", 1: "Enable"},
 )
 ZWA045_SENS = ParamMeta(
-    command_class=112,
-    property=4,
+    id=ParamId(112, 4),
     label="Motion Sensitivity",
     range=(0, 3),
     states={0: "Disable", 1: "Low", 2: "Medium", 3: "High"},
 )
 ZSE44_HUM = ParamMeta(
-    command_class=112,
-    property=4,
+    id=ParamId(112, 4),
     label="Humidity Report Threshold",
     range=(0, 50),
     unit="%",
     states={0: "Disable"},
 )
 ZWA039_HUM = ParamMeta(
-    command_class=112,
-    property=2,
+    id=ParamId(112, 2),
     label="Humidity Change Report Threshold",
     range=(0, 20),
     unit="%",
     states={0: "Disable"},
 )
 ZWA039_CHECK = ParamMeta(
-    command_class=112,
-    property=3,
+    id=ParamId(112, 3),
     label="Threshold Check Interval",
     range=(1, 255),
     unit="minutes",
 )
 WAKEUP = ParamMeta(
-    command_class=132,
-    property="wakeUpInterval",
+    id=ParamId(132, "wakeUpInterval"),
     label="Wake Up Interval",
     range=(0, 86400),
     unit="seconds",
@@ -475,7 +469,7 @@ def test_validate_value_rejects_non_finite() -> None:
 def test_bool_false_maps_to_off_state() -> None:
     res = resolve(ZSE11, CATALOG[LOM], MAPPING, pv(LOM, False))
     assert res.status is ResolutionStatus.RESOLVED
-    assert (res.command_class, res.property, res.value) == (112, 19, 0)
+    assert (res.id, res.value) == (ParamId(112, 19), 0)
 
 
 def test_bool_true_maps_to_on_state() -> None:
@@ -520,8 +514,7 @@ def test_range_descending_detected_when_no_quirk() -> None:
         is_listening=False,
         params=(
             ParamMeta(
-                command_class=112,
-                property=5,
+                id=ParamId(112, 5),
                 label="PIR Sensitivity",
                 range=(1, 7),
                 states={1: "Highest", 4: "Medium", 7: "Lowest"},
@@ -550,8 +543,7 @@ def test_range_off_state_mid_scale_is_unmappable() -> None:
         is_listening=False,
         params=(
             ParamMeta(
-                command_class=112,
-                property=1,
+                id=ParamId(112, 1),
                 label="Motion Sensitivity",
                 range=(0, 8),
                 states={0: "Disable", 4: "Disable"},
@@ -579,8 +571,7 @@ def test_value_subpercent_scaled() -> None:
         is_listening=False,
         params=(
             ParamMeta(
-                command_class=112,
-                property=40,
+                id=ParamId(112, 40),
                 label="Humidity Report Threshold",
                 range=(0, 255),
                 unit="0.1 %",
@@ -600,8 +591,7 @@ def test_value_minutes_to_seconds_with_clamp() -> None:
         is_listening=False,
         params=(
             ParamMeta(
-                command_class=112,
-                property=3,
+                id=ParamId(112, 3),
                 label="Threshold Check Interval",
                 range=(60, 65535),
                 unit="seconds",
@@ -615,11 +605,7 @@ def test_value_minutes_to_seconds_with_clamp() -> None:
 def test_wake_up_interval_fixed_value_id() -> None:
     res = resolve(ZSE11, CATALOG[WUI], MAPPING, pv(WUI, 3600))
     assert res.status is ResolutionStatus.RESOLVED
-    assert (res.command_class, res.property, res.value) == (
-        132,
-        "wakeUpInterval",
-        3600,
-    )
+    assert (res.id, res.value) == (ParamId(132, "wakeUpInterval"), 3600)
 
 
 # -- not-applicable / ambiguous ----------------------------------
@@ -638,8 +624,8 @@ def test_ambiguous_when_multiple_params_match() -> None:
         model="DUP",
         is_listening=False,
         params=(
-            ParamMeta(112, 1, "Motion Sensitivity", range=(0, 10)),
-            ParamMeta(112, 2, "PIR Sensitivity", range=(0, 10)),
+            ParamMeta(ParamId(112, 1), "Motion Sensitivity", range=(0, 10)),
+            ParamMeta(ParamId(112, 2), "PIR Sensitivity", range=(0, 10)),
         ),
     )
     res = resolve(dupe, CATALOG[MS], MAPPING, pv(MS, 5))

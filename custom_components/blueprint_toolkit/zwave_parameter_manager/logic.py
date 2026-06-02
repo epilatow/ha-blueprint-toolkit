@@ -109,7 +109,7 @@ class FixedValueId:
     """
 
     command_class: int
-    property: int | str
+    property_: int | str
 
 
 Locator = LabelMatch | FixedValueId
@@ -449,7 +449,7 @@ class ParamId:
     """
 
     command_class: int
-    property: int | str
+    property_: int | str
     property_key: int | None = None
 
 
@@ -457,17 +457,15 @@ class ParamId:
 class ParamMeta:
     """One device parameter as zwave-js reports it.
 
+    ``id`` is the parameter's ``ParamId`` (command class / property / key).
     ``states`` maps a raw value to its option label (e.g.
-    ``{0: "Disable", 1: "Enable"}``); empty for a bare numeric range.
-    ``range`` is the inclusive raw ``(min, max)`` bounds, ``None`` when
-    the parameter reports none. ``property_key`` is set for bitmask /
-    partial parameters.
+    ``{0: "Disable", 1: "Enable"}``), empty for a bare numeric range;
+    ``range`` is the inclusive raw ``(min, max)`` bounds, ``None`` when the
+    parameter reports none.
     """
 
-    command_class: int
-    property: int | str
+    id: ParamId
     label: str
-    property_key: int | None = None
     range: ParamRange | None = None
     unit: str | None = None
     states: Mapping[int, str] = field(default_factory=dict)
@@ -580,15 +578,13 @@ class ResolutionStatus(Enum):
 class Resolution:
     """Result of ``resolve``.
 
-    On ``RESOLVED``, the command_class / property / property_key /
-    value are the concrete write; otherwise ``reason`` explains the
+    On ``RESOLVED``, ``id`` (a ParamId) and ``value`` are the concrete
+    write target; otherwise both are ``None`` and ``reason`` explains the
     warning / error.
     """
 
     status: ResolutionStatus
-    command_class: int | None = None
-    property: int | str | None = None
-    property_key: int | None = None
+    id: ParamId | None = None
     value: int | None = None
     reason: str = ""
 
@@ -606,8 +602,8 @@ def matching_params(
         return [
             p
             for p in device.params
-            if p.command_class == locator.command_class
-            and p.property == locator.property
+            if p.id.command_class == locator.command_class
+            and p.id.property_ == locator.property_
         ]
     wanted = {label.casefold() for label in locator.labels}
     return [p for p in device.params if p.label.casefold() in wanted]
@@ -818,9 +814,7 @@ def _resolve_value(
 def _resolved(param: ParamMeta, value: int) -> Resolution:
     return Resolution(
         ResolutionStatus.RESOLVED,
-        command_class=param.command_class,
-        property=param.property,
-        property_key=param.property_key,
+        id=param.id,
         value=value,
     )
 
@@ -953,9 +947,7 @@ class PlannedWrite:
     device: Device
     concept: GenericParamNames
     policy: str
-    command_class: int
-    property: int | str
-    property_key: int | None
+    id: ParamId
     value: int
 
 
@@ -1049,17 +1041,14 @@ def _record(
     errors: list[PlanIssue],
 ) -> None:
     if res.status is ResolutionStatus.RESOLVED:
-        assert res.command_class is not None
-        assert res.property is not None
+        assert res.id is not None
         assert res.value is not None
         writes.append(
             PlannedWrite(
                 device=device,
                 concept=concept_name,
                 policy=policy.name,
-                command_class=res.command_class,
-                property=res.property,
-                property_key=res.property_key,
+                id=res.id,
                 value=res.value,
             )
         )
