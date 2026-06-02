@@ -31,6 +31,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from zwave_js_server.model.node import Node  # noqa: E402
 
 from custom_components.blueprint_toolkit.zwave_parameter_manager.adapter import (  # noqa: E402, E501
+    actual_values,
+    build_device,
     derive_device_types,
     node_param_metas,
 )
@@ -42,6 +44,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
     GenericParamNames,
     LabelMatch,
     MappingTable,
+    ParamId,
     ParamValue,
     ResolutionStatus,
     resolve,
@@ -51,7 +54,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
 def _config_value(
     prop: int,
     label: str,
-    value: int,
+    value: int | None,
     lo: int,
     hi: int,
     states: dict[str, str] | None = None,
@@ -109,15 +112,25 @@ def _sensor_value(cc: int, prop: str, value: float) -> dict[str, object]:
     }
 
 
-def _node(node_id: int, values: list[dict[str, object]]) -> Node:
+def _node(
+    node_id: int,
+    values: list[dict[str, object]],
+    *,
+    name: str | None = None,
+    is_listening: bool = False,
+    manufacturer: str = "Zooz",
+    model: str = "ZSE11",
+) -> Node:
     data = {
         "nodeId": node_id,
         "index": 0,
         "status": 1,
         "ready": True,
-        "isListening": False,
+        "isListening": is_listening,
         "isRouting": True,
         "isSecure": False,
+        "name": name,
+        "deviceConfig": {"manufacturer": manufacturer, "label": model},
         "deviceClass": {
             "basic": {"key": 3, "label": "Routing Slave"},
             "generic": {"key": 7, "label": "Notification Sensor"},
@@ -235,6 +248,95 @@ def test_adapter_output_resolves() -> None:
         "wakeUpInterval",
         3600,
     )
+
+
+# -- build_device + actual_values --------------------------------
+
+
+def test_build_device_identity_flags_and_params() -> None:
+    node = _node(
+        264,
+        [
+            _config_value(
+                5, "Motion Sensor Sensitivity", 8, 0, 8, {"0": "Disable"}
+            ),
+            _wakeup_value(14400),
+        ],
+        name="Main Bath",
+        is_listening=False,
+        manufacturer="Zooz",
+        model="ZSE44",
+    )
+    device = build_device(
+        node,
+        device_id="dev-264",
+        device_types=frozenset({DeviceType.HUMIDITY}),
+    )
+    assert device.node_id == 264
+    assert device.name == "Main Bath"
+    # Identity is the device_config -- what the mapping selectors + quirks
+    # match on -- not the (often-null) productLabel.
+    assert (device.manufacturer, device.model) == ("Zooz", "ZSE44")
+    assert device.is_listening is False
+    assert device.device_id == "dev-264"
+    assert device.device_types == frozenset({DeviceType.HUMIDITY})
+    assert {(p.command_class, p.property) for p in device.params} == {
+        (112, 5),
+        (132, "wakeUpInterval"),
+    }
+
+
+def test_build_device_mains_and_blank_name() -> None:
+    node = _node(
+        50,
+        [_config_value(1, "LED Brightness", 5, 0, 10)],
+        name=None,
+        is_listening=True,
+        manufacturer="Zooz",
+        model="ZEN72",
+    )
+    device = build_device(node, device_id=None, device_types=frozenset())
+    assert device.is_listening is True
+    assert device.name == ""  # node.name None -> ""
+    assert device.device_id is None
+    assert (device.manufacturer, device.model) == ("Zooz", "ZEN72")
+
+
+def test_actual_values_match_param_keys_and_unread_is_none() -> None:
+    node = _node(
+        21,
+        [
+            _config_value(12, "Sensitivity", 4, 0, 8),
+            _config_value(20, "LED", None, 0, 1),  # not reported -> unread
+            _wakeup_value(3600),
+            _sensor_value(49, "Air temperature", 21.5),  # read-only, excluded
+        ],
+    )
+    assert actual_values(node) == {
+        ParamId(112, 12): 4,
+        ParamId(112, 20): None,
+        ParamId(132, "wakeUpInterval"): 3600,
+    }
+
+
+def test_actual_values_folds_boolean_param_to_int() -> None:
+    # A boolean-type config param reports a Python bool; it folds to its int
+    # form so it compares against the resolver's int target.
+    node = _node(7, [_config_value(1, "Enabled", True, 0, 1)])
+    assert actual_values(node) == {ParamId(112, 1): 1}
+
+
+def test_param_metas_and_actuals_share_one_key_space() -> None:
+    # A ParamMeta's identity and the actual_values keys are the same ParamId
+    # set -- the convergence join depends on it (one shared derivation).
+    node = _node(
+        21, [_config_value(12, "Sensitivity", 4, 0, 8), _wakeup_value(3600)]
+    )
+    meta_ids = {
+        ParamId(m.command_class, m.property, m.property_key)
+        for m in node_param_metas(node)
+    }
+    assert meta_ids == set(actual_values(node))
 
 
 # -- device_types derivation -------------------------------------

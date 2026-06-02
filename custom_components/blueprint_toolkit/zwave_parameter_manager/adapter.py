@@ -17,10 +17,16 @@ parameters -- the Configuration CC (112) values plus the Wake Up CC
 (132) ``wakeUpInterval`` -- onto the pure ``logic.ParamMeta`` the
 resolver matches against (label / range / unit / option states).
 
-This is the Node-only half of the adapter. Device identity (name,
-device_id), ``device_types``, and the convergence extras (location,
-last wake) come from HA registries / the recorder and land with the
-handler wiring.
+Everything the node itself carries is assembled here: the settable
+parameters as ``logic.ParamMeta`` (label / range / unit / option
+states), the current values for convergence, and the resolver
+``Device`` whose identity is the node's ``device_config`` (the
+config-DB manufacturer / label the mapping matches on, not the
+often-null ``productLabel``). The handler supplies the two
+registry-derived inputs -- the HA ``device_id`` and the
+``device_types`` it derives via ``derive_device_types`` over the
+node's HA entities -- plus the convergence extras (location, last
+wake) it reads from the registries and recorder.
 """
 
 from __future__ import annotations
@@ -33,8 +39,10 @@ from zwave_js_server.model.value import Value, ValueMetadata
 from .logic import (
     WAKE_UP_INTERVAL_VALUE,
     CommandClass,
+    Device,
     DeviceType,
     FixedValueId,
+    ParamId,
     ParamMeta,
     ParamRange,
 )
@@ -71,20 +79,17 @@ def node_param_metas(node: Node) -> tuple[ParamMeta, ...]:
         if not _is_settable_param(value):
             continue
         meta = value.metadata
+        pid = _param_key(value)
         metas.append(
             ParamMeta(
-                command_class=value.command_class,
-                property=value.property_,
+                command_class=pid.command_class,
+                property=pid.property,
                 label=meta.label or "",
-                property_key=(
-                    value.property_key
-                    if isinstance(value.property_key, int)
-                    else None
-                ),
+                property_key=pid.property_key,
                 range=_range(meta),
                 unit=meta.unit
                 or _PROTOCOL_UNITS.get(
-                    FixedValueId(value.command_class, value.property_)
+                    FixedValueId(pid.command_class, pid.property)
                 ),
                 states=_states(meta),
             )
@@ -98,6 +103,22 @@ def _is_settable_param(value: Value) -> bool:
     return (
         FixedValueId(value.command_class, value.property_)
         in _SETTABLE_VALUE_IDS
+    )
+
+
+def _param_key(value: Value) -> ParamId:
+    """A settable param's ``ParamId``.
+
+    ``property_key`` folds to int | None (zwave-js reports an int, a str, or
+    nothing). ``node_param_metas`` and ``actual_values`` both derive a
+    parameter's identity through this, so the metadata and the live value
+    share one key for the convergence join.
+    """
+
+    return ParamId(
+        value.command_class,
+        value.property_,
+        value.property_key if isinstance(value.property_key, int) else None,
     )
 
 
@@ -167,3 +188,56 @@ def derive_device_types(
             if by_class is not None:
                 found.add(by_class)
     return frozenset(found)
+
+
+# -- Device assembly + actual values -----------------------------
+
+
+def build_device(
+    node: Node,
+    *,
+    device_id: str | None,
+    device_types: frozenset[DeviceType],
+) -> Device:
+    """Assemble the resolver ``Device`` from a live node.
+
+    Identity comes off the node's ``device_config`` -- the config-DB
+    manufacturer / label the mapping's selectors + per-model quirks match
+    on (the wire ``productLabel`` is often null). The handler resolves
+    ``device_id`` from the HA device registry and ``device_types`` via
+    ``derive_device_types`` over the node's HA entities and passes both
+    in; everything else is read from the node.
+    """
+
+    config = node.device_config
+    return Device(
+        node_id=node.node_id,
+        name=node.name or "",
+        manufacturer=config.manufacturer or "",
+        model=config.label or "",
+        is_listening=bool(node.is_listening),
+        device_id=device_id,
+        device_types=device_types,
+        params=node_param_metas(node),
+    )
+
+
+def actual_values(node: Node) -> dict[ParamId, int | None]:
+    """Current live value of each settable param, keyed by ``ParamId``.
+
+    The same identity ``node_param_metas`` emits, so the convergence
+    computation joins a planned write to its live value. ``None`` when the
+    device has not reported a value (unread), which the report renders as
+    such; read-only sensor readings (excluded from ``node_param_metas``) are
+    excluded here too.
+    """
+
+    out: dict[ParamId, int | None] = {}
+    for value in node.values.values():
+        if not _is_settable_param(value):
+            continue
+        raw = value.value
+        # A boolean-type config param reports a Python bool; fold it to the
+        # int form so it compares against the resolver's int target.
+        out[_param_key(value)] = int(raw) if isinstance(raw, bool) else raw
+    return out

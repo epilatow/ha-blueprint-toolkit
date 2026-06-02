@@ -438,6 +438,22 @@ def _parse_str_list(raw: object, where: str) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class ParamId:
+    """A device parameter's identity: command class, property, and key.
+
+    The hashable key for a device's live values and for the convergence
+    join (a planned write looked up against the current value).
+    ``property_key`` is set for bitmask / partial parameters, ``None``
+    otherwise. Distinct from ``FixedValueId`` (a mapping *locator*, which
+    carries no ``property_key``).
+    """
+
+    command_class: int
+    property: int | str
+    property_key: int | None = None
+
+
+@dataclass(frozen=True)
 class ParamMeta:
     """One device parameter as zwave-js reports it.
 
