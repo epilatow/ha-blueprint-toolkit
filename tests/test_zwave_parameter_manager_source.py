@@ -146,13 +146,15 @@ def _install_fleet(hass: HomeAssistant, node: Node) -> str:
     dev_reg.async_update_device(device.id, area_id=area.id)
 
     ent_reg = er.async_get(hass)
-    ent_reg.async_get_or_create(
+    # zwave_js leaves the registry's device class unset and only publishes
+    # it on the live state, so derive device_types off the state attribute.
+    motion = ent_reg.async_get_or_create(
         "binary_sensor",
         "zwave_js",
         f"{HOME_ID}.5.motion",
         device_id=device.id,
-        original_device_class="motion",
     )
+    hass.states.async_set(motion.entity_id, "off", {"device_class": "motion"})
     status = ent_reg.async_get_or_create(
         "sensor",
         "zwave_js",

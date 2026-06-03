@@ -18,8 +18,11 @@ context), and the current value of each settable param.
 Values, metadata, and identity come off ``node.values`` -- the live
 driver state, not HA's cached entity states and not the on-disk cache.
 ``device_id`` / name / location come from the HA device + area
-registries; ``device_types`` from the entity registry's device-class
-attributes; the last wake from the node-status entity's recorder history.
+registries; ``device_types`` from each entity's device class (the entity
+registry's value, falling back to the live state's -- zwave_js sets the
+device class on the entity, not the registered entity description, so the
+registry value is often unset); the last wake from the node-status
+entity's recorder history.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from .logic import CommandClass, Device, ParamId
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_registry import RegistryEntry
     from zwave_js_server.model.driver import Driver
     from zwave_js_server.model.node import Node
 
@@ -135,13 +139,33 @@ def _registry_context(
         location = area.name if area is not None else None
     ent_reg = er.async_get(hass)
     entities = [
-        (
-            entry.entity_id.split(".", 1)[0],
-            entry.device_class or entry.original_device_class,
-        )
+        (entry.entity_id.split(".", 1)[0], _device_class(hass, entry))
         for entry in er.async_entries_for_device(ent_reg, dev_entry.id)
     ]
     return dev_entry.id, name, location, entities
+
+
+def _device_class(hass: HomeAssistant, entry: RegistryEntry) -> str | None:
+    """An entity's device class for device-type derivation.
+
+    zwave_js leaves the entity registry's device class unset and only
+    publishes it on the live state, so the registry value (a user override,
+    then the platform default) falls back to the current state attribute.
+    """
+
+    return (
+        entry.device_class
+        or entry.original_device_class
+        or _state_device_class(hass, entry.entity_id)
+    )
+
+
+def _state_device_class(hass: HomeAssistant, entity_id: str) -> str | None:
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    device_class = state.attributes.get("device_class")
+    return device_class if isinstance(device_class, str) else None
 
 
 async def _last_awake(hass: HomeAssistant, device_id: str) -> datetime | None:
