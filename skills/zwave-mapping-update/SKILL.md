@@ -154,21 +154,41 @@ an enumerated pattern, no SKILL.md edit is owed.
 
 #### light_on_motion
 
-- **ACCEPT** patterns: `LED` (any spelling: `LED`, `LED Indicator`,
-  `Status LED`) tied to motion -- either paired with `on Motion`, `(Motion)`,
-  or `: Blink on Motion`, or a motion-prefixed toggle (`Motion LED`) whose
-  options or description confirm it enables / disables a motion-triggered LED
-  (e.g. Disable / Enable with a description like "LED flash when motion is
-  sensed"). The tie to motion must be explicit in the label or its
-  description, and the param must be an on / off toggle, not a brightness /
-  color / activity setting.
+- **ACCEPT** patterns:
+  - `LED` (any spelling: `LED`, `LED Indicator`, `Status LED`) tied to motion
+    -- either paired with `on Motion`, `(Motion)`, or `: Blink on Motion`, or
+    a motion-prefixed toggle (`Motion LED`) whose options or description
+    confirm it enables / disables a motion-triggered LED (e.g. Disable /
+    Enable with a description like "LED flash when motion is sensed"). The tie
+    to motion must be explicit in the label or its description, and the param
+    must be an on / off toggle, not a brightness / color setting.
+  - A report- / activity-triggered LED toggle whose label does not itself name
+    motion but whose `description` ties the LED to the device's reports /
+    activity (e.g. `LED Activity`, description "Enable/Disable LED activity
+    when specific reports are sent"), with a clean Disable / Enable option
+    pair. On a motion sensor the reports that drive the LED include motion, so
+    this IS the device's motion LED -- but only there. Accept ONLY when
+    **every** device carrying the label is a motion sensor: each instance's
+    `(manufacturer, model)` must also appear, in the extraction, under a
+    motion-family parameter (a `Motion` / `Motion Sensor` / `PIR` sensitivity
+    or detection label -- the motion_sensitivity ACCEPT set). If any carrier
+    is not a motion sensor the label is ambiguous across device types --
+    REJECT it (a generic activity LED on a plug or contact sensor is not
+    motion-driven). Today `LED Activity` is carried only by the Aeotec ZWA045,
+    a motion sensor, so it qualifies.
 - **REJECT** when:
-  - The LED triggers on a different event (`LED Indicator: Tamper Alarm`,
-    `LED Indicator: Open/Close Change`, `LED Indicator: Wake Up`).
+  - The LED triggers on a specific NON-motion event
+    (`LED Indicator: Tamper Alarm`, `LED Indicator: Open/Close Change`,
+    `LED Indicator: Wake Up`). (A *generic* activity / reports LED differs: on
+    a motion sensor its reports include motion -- see the second ACCEPT
+    pattern -- whereas these name a single non-motion event.)
   - The label controls motion reporting rather than LED
     (`Motion Detection: Send Basic Set`, `Motion Sensor Report Indicator`).
-  - The label is about LED brightness / color / activity rather than the
-    motion-triggered toggle.
+  - The label is about LED brightness or color (a continuous setting, not an
+    on / off toggle).
+  - A report- / activity-triggered LED toggle carried by ANY device that is
+    not a motion sensor (no motion-family parameter on that
+    `(manufacturer, model)`) -- there the LED is not motion-driven.
 
 #### humidity_report_threshold
 
