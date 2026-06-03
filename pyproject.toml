@@ -126,6 +126,15 @@ module = ["socketio", "socketio.exceptions", "aiohttp"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# The ZPM source/adapter modules declare zwave-js-server-python in
+# their own PEP 723 blocks (mypy type-checks against the real package
+# there). Targets that only reach it transitively -- the integration
+# __init__ that imports the ZPM handler -- run on the fallback deps,
+# which omit it, so ignore the missing impl for them.
+module = ["zwave_js_server", "zwave_js_server.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # voluptuous is a vendored HA dep; the host dev environment
 # may not have it installed. The integration's TEC handler
 # uses vol.Schema to validate service-call payloads.

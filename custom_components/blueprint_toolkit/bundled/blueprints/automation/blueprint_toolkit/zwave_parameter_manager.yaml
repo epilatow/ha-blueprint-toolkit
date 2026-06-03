@@ -1,0 +1,84 @@
+blueprint:
+  name: Z-Wave Parameter Manager
+  description: >
+    Reconciles each Z-Wave node's settable config parameters against a
+    declarative policy YAML file, in-process via Home Assistant's Z-Wave
+    JS integration. Policies match devices by manufacturer / model /
+    power / type and set device-agnostic concepts (motion sensitivity,
+    wake interval, etc.); the resolver maps each concept onto the
+    device's real parameter. Reconciles on HA startup, on manual
+    trigger, when the policy file is edited, and periodically (default
+    every 5 minutes) to pick up newly-joined devices. Requires the
+    Z-Wave JS integration.
+    [Full documentation](/local/blueprint_toolkit/docs/zwave_parameter_manager.html)
+    covers the policy file format.
+  domain: automation
+  author: epilatow
+
+  input:
+    config_file_path:
+      name: Policy file path
+      description: >
+        Path to the YAML file defining parameter policies,
+        relative to the /config directory. Absolute paths
+        are also accepted. A missing file means no policies
+        yet.
+      default: zwave_parameter_manager.yaml
+      selector:
+        text: {}
+
+    reconcile_interval_minutes:
+      name: Reconcile interval (minutes)
+      description: >
+        How often to re-read the live fleet: pick up
+        newly-joined devices, re-issue not-yet-applied
+        writes, and refresh the pending report. Lower
+        values react sooner.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 10080
+          mode: box
+          unit_of_measurement: minutes
+
+    debug_logging:
+      name: Debug logging
+      description: >
+        Emit a log.warning line per reconcile summarising
+        devices, writes planned / issued, pending, and
+        converged. Check Settings > System > Logs to view
+        output.
+      default: false
+      selector:
+        boolean: {}
+
+triggers: []
+
+actions:
+  - action: blueprint_toolkit.zwave_parameter_manager
+    data:
+      instance_id: "{{ this.entity_id }}"
+      # All invocations are synthetic (the integration's
+      # periodic timer + restart/reload-recovery kicks +
+      # the driver-reconnect re-trigger); ``trigger_id`` is
+      # passed as a flat top-level variable since HA's
+      # automation.trigger service strips the ``trigger``
+      # key from caller variables. Default covers ad-hoc
+      # dev-tools manual calls.
+      trigger_id: "{{ trigger_id | default('manual', true) }}"
+      config_file_path: !input config_file_path
+      reconcile_interval_minutes_raw: !input reconcile_interval_minutes
+      debug_logging_raw: !input debug_logging
+
+# Periodic reconciles, restart recovery, and reload
+# recovery are all owned by the integration -- no
+# blueprint-side triggers needed. The integration's
+# periodic timer handles the cadence (interval = the
+# reconcile_interval_minutes input); recover_at_startup
+# kicks every discovered automation on
+# EVENT_HOMEASSISTANT_STARTED and again on
+# EVENT_AUTOMATION_RELOADED. Manual triggers (dev tools,
+# the restart-recovery + reconnect kicks) reach the action
+# via automation.trigger directly.
+mode: single

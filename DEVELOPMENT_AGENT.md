@@ -434,7 +434,7 @@ are user-visible-behavior validation against the pre-deploy baselines.
    `blueprint_toolkit.<service_tag>_<slug>_state` entity has a `last_run`
    post-restart and a valid `state`:
 
-   - Watchdog handlers (DW, EDW, RW, ZRM): `state="ok"` with non-zero
+   - Watchdog handlers (DW, EDW, RW, ZRM, ZPM): `state="ok"` with non-zero
      `runtime`.
    - Trigger-driven handlers (STEC, TEC): `state` is one of the handler's
      `Action` enum values (`NONE`, `TURN_ON`, `TURN_OFF`, ...); `runtime` may
@@ -471,9 +471,9 @@ are user-visible-behavior validation against the pre-deploy baselines.
    `tmp/dev-deploy-state-baseline.json`. Any change should be explainable by
    the deploy:
 
-   - **For watchdogs** (DW, EDW, RW, ZRM): per-handler stat counters should be
-     unchanged unless the deploy modified detection / scan / reconcile logic.
-     Concrete examples of expected drift:
+   - **For watchdogs** (DW, EDW, RW, ZRM, ZPM): per-handler stat counters
+     should be unchanged unless the deploy modified detection / scan /
+     reconcile logic. Concrete examples of expected drift:
      - DW's `disabled_diagnostic_count` drops by 1 -> a deploy that enabled an
        entity, OR the user enabled it manually between baseline and now.
      - RW's `refs_total` jumps by 467 -> a deploy that added new reference-set

@@ -47,6 +47,15 @@ are standalone -- self-contained YAML blueprints with no service handler.
   clear-unmanaged mode makes the config file the single source of truth.
   Requires the `core_zwave_js` addon.
 
+- [Z-Wave Parameter Manager](docs/zwave_parameter_manager.md) - Keeps each
+  Z-Wave node's settable config parameters aligned with a declarative policy
+  file. Policies match devices by manufacturer / model / power / type and set
+  device-agnostic concepts (motion sensitivity, wake interval, etc.); the
+  resolver maps each concept onto the device's real parameter. Runs in-process
+  through the Z-Wave JS integration. Issues each write at most once per
+  pending cycle and reports devices still waiting to apply (queued until a
+  sleeping device next wakes). Requires the Z-Wave JS integration.
+
 - [Trigger Alert Controller](docs/trigger_alert_controller.md) - Responds when
   any of a set of binary sensors turns on (water leak, smoke, an open door,
   etc.): a one-time initial notification, then a siren and/or repeated

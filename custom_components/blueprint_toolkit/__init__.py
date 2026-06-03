@@ -309,10 +309,12 @@ async def async_setup_entry(
     from .reference_watchdog import handler as rw_handler
     from .sensor_threshold_entity_controller import handler as stec_handler
     from .trigger_entity_controller import handler as tec_handler
+    from .zwave_parameter_manager import handler as zpm_handler
     from .zwave_route_manager import handler as zrm_handler
 
     await tec_handler.async_register(hass, entry)
     await zrm_handler.async_register(hass, entry)
+    await zpm_handler.async_register(hass, entry)
     await rw_handler.async_register(hass, entry)
     await edw_handler.async_register(hass, entry)
     await dw_handler.async_register(hass, entry)
@@ -349,10 +351,12 @@ async def async_unload_entry(
     from .reference_watchdog import handler as rw_handler
     from .sensor_threshold_entity_controller import handler as stec_handler
     from .trigger_entity_controller import handler as tec_handler
+    from .zwave_parameter_manager import handler as zpm_handler
     from .zwave_route_manager import handler as zrm_handler
 
     await tec_handler.async_unregister(hass, entry)
     await zrm_handler.async_unregister(hass, entry)
+    await zpm_handler.async_unregister(hass, entry)
     await rw_handler.async_unregister(hass, entry)
     await edw_handler.async_unregister(hass, entry)
     await dw_handler.async_unregister(hass, entry)

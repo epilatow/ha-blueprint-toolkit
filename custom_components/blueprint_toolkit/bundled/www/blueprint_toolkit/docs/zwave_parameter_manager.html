@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Z-Wave Parameter Manager</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  max-width: 760px;
+  margin: 2em auto;
+  padding: 0 1em;
+  line-height: 1.55;
+  color: #222;
+}
+h1, h2, h3, h4 { line-height: 1.25; }
+h1 { border-bottom: 1px solid #ddd; padding-bottom: .2em; }
+h2 { border-bottom: 1px solid #eee; padding-bottom: .15em; }
+code {
+  background: #f2f2f2;
+  padding: .1em .3em;
+  border-radius: 3px;
+  font-size: .92em;
+}
+pre {
+  background: #f6f6f6;
+  padding: .8em 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: .9em; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td {
+  border: 1px solid #ccc;
+  padding: .4em .7em;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #f2f2f2; }
+blockquote {
+  border-left: 3px solid #ccc;
+  margin: 1em 0;
+  padding: .2em 1em;
+  color: #555;
+}
+a { color: #0366d6; }
+</style>
+</head>
+<body>
+<h1>Z-Wave Parameter Manager</h1>
+<h2>Summary</h2>
+<p>Z-Wave Parameter Manager (ZPM) keeps each Z-Wave node's settable configuration
+parameters aligned with a declarative policy file. You describe intent in
+device-agnostic terms -- &quot;battery motion sensors wake every hour&quot;, &quot;all motion
+sensors at maximum sensitivity&quot; -- and ZPM resolves each concept onto the
+concrete parameter every matched device actually exposes, then writes it. It
+runs in-process through Home Assistant's Z-Wave JS integration: it reads live
+values straight off the driver and applies changes through the standard
+<code>zwave_js</code> services, so there is no separate connection to configure.</p>
+<p>A sleeping (battery) device receives queued writes only when it next wakes, so
+ZPM tracks what it has issued and reports what is still pending rather than
+re-sending the same command on every pass.</p>
+<h2>Features</h2>
+<ul>
+<li>Declarative policy file: match devices by manufacturer, model, power source,
+or device type, and set device-agnostic concepts.</li>
+<li>Concept resolver maps each concept onto the device's real parameter,
+rescaling ranges and converting units per device.</li>
+<li>In-process via the Z-Wave JS integration -- no host, port, or token to
+configure.</li>
+<li>Reconciles on startup, on manual trigger, when the policy file is edited,
+and periodically to pick up newly-joined devices.</li>
+<li>Issues each command at most once per pending cycle; re-issues only after the
+Z-Wave JS add-on restarts (which flushes the device queue).</li>
+<li>A pending report tracks devices that have not yet applied their writes (with
+each device's wake interval and estimated next wake); a desired-config
+report fires when the policy file changes or a new device becomes
+configured.</li>
+</ul>
+<h2>Requirements</h2>
+<ul>
+<li>The <strong>Z-Wave JS</strong> integration, loaded and connected to its driver. ZPM reads
+and writes through it in-process; it does not talk to zwave-js-ui directly.</li>
+<li>A policy file under <code>/config</code> (see
+<a href="#policy-file-format">Policy file format</a>). A missing file simply means no
+policies yet.</li>
+</ul>
+<h2>Usage</h2>
+<ol>
+<li>In <strong>Settings &gt; Automations &amp; Scenes &gt; Blueprints</strong>, create an automation
+from the <strong>Z-Wave Parameter Manager</strong> blueprint.</li>
+<li>Set the <strong>Policy file path</strong> (default <code>zwave_parameter_manager.yaml</code>,
+relative to <code>/config</code>) and, optionally, the reconcile interval.</li>
+<li>Create the policy file (see below) and save it. ZPM picks up edits on its
+next reconcile.</li>
+</ol>
+<h2>Configuration</h2>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Policy file path</td>
+<td><code>zwave_parameter_manager.yaml</code></td>
+<td>Path to the policy YAML, relative to <code>/config</code> (absolute paths accepted). A missing file means none.</td>
+</tr>
+<tr>
+<td>Reconcile interval (minutes)</td>
+<td><code>5</code></td>
+<td>How often to re-read the live fleet, pick up newly-joined devices, and refresh the pending report.</td>
+</tr>
+<tr>
+<td>Debug logging</td>
+<td><code>false</code></td>
+<td>Emit one <code>WARNING</code> summary line per reconcile to <strong>Settings &gt; System &gt; Logs</strong>.</td>
+</tr>
+</tbody>
+</table>
+<h2>Usage notes</h2>
+<h3>Policy file format</h3>
+<p>The file is a mapping with a single <code>policies</code> list. Each policy has a <code>name</code>,
+a <code>match</code> selector, a <code>settings</code> map of concept values, and an optional
+<code>exclude</code> list of selectors:</p>
+<pre><code class="language-yaml">policies:
+  - name: battery motion sensors
+    match:
+      device_type: motion
+      power: battery
+    settings:
+      motion_sensitivity: 10
+      wake_up_interval: 3600
+    exclude:
+      - model: ZSE99
+
+  - name: mains repeaters wake check
+    match:
+      power: mains
+    settings:
+      wake_up_interval: 43200
+</code></pre>
+<p>A device must satisfy every field present in <code>match</code> and none of the <code>exclude</code>
+selectors. Two policies setting the same concept on one device is a hard error
+(surfaced as a notification) -- there is no implicit ordering.</p>
+<p>Selector fields: <code>manufacturer</code> and <code>model</code> (matched case-insensitively
+against the Z-Wave config-DB identity), <code>power</code> (<code>battery</code> or <code>mains</code>, derived
+from the node's listening flag), and <code>device_type</code> (one of <code>motion</code>,
+<code>contact</code>, <code>moisture</code>, <code>humidity</code>, <code>temperature</code>, <code>illuminance</code>, <code>smoke</code>,
+<code>carbon_monoxide</code>, <code>lock</code>, <code>siren</code>, derived from the device's Home Assistant
+entities).</p>
+<h3>Concepts</h3>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>motion_sensitivity</code></td>
+<td><code>1</code>-<code>10</code></td>
+<td>Motion / PIR sensitivity, rescaled onto each device's own range.</td>
+</tr>
+<tr>
+<td><code>light_on_motion</code></td>
+<td><code>true</code>/<code>false</code></td>
+<td>Whether the status LED illuminates on motion.</td>
+</tr>
+<tr>
+<td><code>humidity_report_threshold</code></td>
+<td>percent</td>
+<td>Minimum humidity change before an unsolicited report.</td>
+</tr>
+<tr>
+<td><code>threshold_check_interval</code></td>
+<td>seconds</td>
+<td>How often the device samples its sensors.</td>
+</tr>
+<tr>
+<td><code>wake_up_interval</code></td>
+<td>seconds</td>
+<td>How often a battery device wakes to receive queued commands.</td>
+</tr>
+</tbody>
+</table>
+<p>A concept that a matched device does not expose is reported as a warning, not
+applied -- the device simply lacks that parameter.</p>
+<h3>How writes reach sleeping devices</h3>
+<p>A battery device only receives a queued write when it next wakes (on its
+<code>wake_up_interval</code>, or a manual button wake). ZPM cannot force a wake; it
+keeps the command queued and reports the device as pending until it applies.
+Shortening <code>wake_up_interval</code> is the only unattended way to make future writes
+land sooner -- and that change is itself queued, so it takes effect only after
+the device's next wake.</p>
+<h2>Developer notes</h2>
+<h3>Architecture</h3>
+<p>The handler composes pure modules in the <code>zwave_parameter_manager</code> subpackage:
+<code>config.parse_policies</code> (validate the policy file), <code>source.read_fleet</code>
+(assemble each node's identity, settable parameters, live values, and wake
+context off the in-process driver, the registries, and the recorder),
+<code>logic.evaluate_policies</code> (plan writes against the shipped <code>mapping.json</code>),
+<code>apply.select_writes</code> (which writes to issue this cycle), and <code>report</code> +
+<code>notification</code> (render the reports).</p>
+<h3>Apply model</h3>
+<p>Pending state -- the writes ZPM has issued but not yet seen converge -- is
+held in memory per instance. A write is suppressed while the pending map
+already holds its value, so a periodic reconcile never piles duplicate
+commands into a sleeping device's queue. The map is cleared when the Z-Wave JS
+driver reconnects (an add-on restart that flushes the queue), at which point
+the next reconcile re-issues every still-mismatched write. After a Home
+Assistant Core restart the map starts empty, so the first reconcile re-issues
+everything still mismatched -- the conservative recovery for a queue flush
+that may have happened while Core was down. ZPM does not depend on the add-on
+de-duplicating its queue.</p>
+<h3>Reporting</h3>
+<p>The pending report (<code>...__pending</code>) refreshes every reconcile while any device
+is unconverged and dismisses on convergence. The desired-config report
+(<code>...__desired</code>) re-fires only when the policy file changes or a
+newly-configured node appears, so convergence progress does not re-bubble it.
+Policy conflicts and unmappable concepts surface as their own notification; a
+config-file parse error and a &quot;Z-Wave JS unavailable&quot; state each have theirs.</p>
+<h3>Diagnostic state entity</h3>
+<p><code>blueprint_toolkit.zpm_&lt;slug&gt;_state</code> carries, per reconcile: <code>last_run</code>,
+<code>runtime</code>, <code>last_trigger</code>, <code>last_config_mtime</code>, <code>devices</code>, <code>writes_planned</code>,
+<code>writes_issued</code>, <code>pending</code>, <code>converged</code>, <code>pending_params</code>, <code>plan_warnings</code>,
+<code>plan_errors</code>, and a human-readable <code>pending_writes</code> list.</p>
+<h3>Debug log format</h3>
+<p>With debug logging on, one line per reconcile:</p>
+<pre><code class="language-text">[ZPM: &lt;automation name&gt;] trigger=&lt;id&gt; devices=N planned=N issued=N pending=N converged=N
+</code></pre>
+</body>
+</html>

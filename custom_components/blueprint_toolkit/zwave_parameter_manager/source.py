@@ -69,7 +69,7 @@ async def read_fleet(hass: HomeAssistant) -> list[NodeRead]:
     Returns an empty list when zwave_js is not loaded.
     """
 
-    driver = _driver(hass)
+    driver = get_driver(hass)
     if driver is None:
         return []
     return [
@@ -78,7 +78,8 @@ async def read_fleet(hass: HomeAssistant) -> list[NodeRead]:
     ]
 
 
-def _driver(hass: HomeAssistant) -> Driver | None:
+def get_driver(hass: HomeAssistant) -> Driver | None:
+    """The in-process zwave_js driver, or ``None`` when it is not loaded."""
     entries = hass.config_entries.async_entries(_ZWAVE_JS_DOMAIN)
     if not entries:
         return None

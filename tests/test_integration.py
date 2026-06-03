@@ -248,6 +248,7 @@ class TestSetupEntry:
         expected = {
             "trigger_entity_controller",
             "zwave_route_manager",
+            "zwave_parameter_manager",
             "reference_watchdog",
             "entity_defaults_watchdog",
             "device_watchdog",

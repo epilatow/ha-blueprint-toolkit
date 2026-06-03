@@ -662,6 +662,14 @@ the cancel-callable on the per-instance state object;
 reload (set for handlers whose `_ensure_timer` re-arm decision compares
 against that field).
 
+`cancel_field` cancels exactly ONE callable. A handler that holds a second
+teardownable resource per instance -- e.g. ZPM keeps a `cancel_dispatcher`
+unsubscribe for the zwave_js driver-reconnect signal alongside `cancel_timer`
+-- can't express that through `cancel_field`. The pattern is to keep
+`on_entity_rename` as the bare `_MUTATORS` alias and define thin `@callback`
+wrappers for `on_reload` / `on_entity_remove` / `on_teardown` that cancel the
+extra callable(s) first and then delegate to the matching `_MUTATORS` method.
+
 ### Disabled automations
 
 Scans are integration-driven (the per-instance periodic timer and the
