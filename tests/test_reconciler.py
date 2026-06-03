@@ -582,5 +582,4 @@ if __name__ == "__main__":
             / "blueprint_toolkit"
             / "reconciler.py"
         ),
-        repo_root=Path(__file__).parent.parent,
     )

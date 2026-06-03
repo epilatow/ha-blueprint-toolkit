@@ -48,10 +48,7 @@ def _cleanup_all_caches() -> None:
 atexit.register(_cleanup_all_caches)
 
 
-def pytest_sessionfinish(
-    session: pytest.Session,
-    exitstatus: int,
-) -> None:
+def pytest_sessionfinish() -> None:
     """Clean up pycache directories after test session."""
     _cleanup_all_caches()
 
@@ -59,7 +56,6 @@ def pytest_sessionfinish(
 def run_tests(
     test_file: str,
     script_path: Path,
-    repo_root: Path,
 ) -> None:
     """Entry point for running a test file directly.
 
@@ -71,7 +67,6 @@ def run_tests(
         test_file: The test file's ``__file__`` path.
         script_path: Path to the script under test
             (used to derive the coverage module name).
-        repo_root: Repository root directory.
     """
     import argparse
 

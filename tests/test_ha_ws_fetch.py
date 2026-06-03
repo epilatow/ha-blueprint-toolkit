@@ -182,7 +182,7 @@ def test_main_prints_json_and_succeeds(
     monkeypatch.setenv("HA_TOKEN", "tok")
 
     async def fake_fetch(
-        url: str, token: str, command: str, timeout: float = 30.0
+        _url: str, _token: str, command: str, **_kwargs: Any
     ) -> Any:
         assert command == "get_config"
         return {"version": "2026.5.3"}
@@ -202,7 +202,7 @@ def test_main_auth_error_returns_one(
     monkeypatch.setenv("HA_TOKEN", "tok")
 
     async def fake_fetch(
-        url: str, token: str, command: str, timeout: float = 30.0
+        _url: str, _token: str, _command: str, **_kwargs: Any
     ) -> Any:
         raise ha_ws_fetch.WebsocketError("authentication rejected")
 

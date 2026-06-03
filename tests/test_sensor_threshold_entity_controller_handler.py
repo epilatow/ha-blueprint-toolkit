@@ -314,7 +314,7 @@ class TestArgparseSchemaRejection(_ArgparseHarness):
         h.states = type(  # type: ignore[attr-defined]
             "S",
             (),
-            {"get": lambda self, eid: object()},
+            {"get": lambda _self, _eid: object()},
         )()
         call = FakeServiceCall(
             _valid_argparse_payload(
@@ -337,7 +337,7 @@ class TestArgparseSchemaRejection(_ArgparseHarness):
         h.states = type(  # type: ignore[attr-defined]
             "S",
             (),
-            {"get": lambda self, eid: object()},
+            {"get": lambda _self, _eid: object()},
         )()
         call = FakeServiceCall(
             _valid_argparse_payload(

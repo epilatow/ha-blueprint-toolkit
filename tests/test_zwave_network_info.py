@@ -1190,4 +1190,4 @@ class TestRenderTable:
 if __name__ == "__main__":
     from conftest import run_tests
 
-    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)
+    run_tests(__file__, _SCRIPT_PATH)

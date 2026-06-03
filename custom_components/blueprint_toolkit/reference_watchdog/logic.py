@@ -1366,7 +1366,7 @@ def _scan_template(
 
 def _scan_customize(
     source: SourceInput,
-    truth_set: TruthSet,
+    _truth_set: TruthSet,
 ) -> list[tuple[Owner, object]]:
     """Owner per entity customization in customize.yaml.
 
@@ -1449,7 +1449,7 @@ def _scan_config_entries(
 
 def _scan_lovelace(
     source: SourceInput,
-    truth_set: TruthSet,
+    _truth_set: TruthSet,
 ) -> list[tuple[Owner, object]]:
     """Single owner per ``.storage/lovelace.<id>`` dashboard file."""
     parsed = source.parsed
@@ -1475,7 +1475,7 @@ def _scan_lovelace(
 
 def _scan_person(
     source: SourceInput,
-    truth_set: TruthSet,
+    _truth_set: TruthSet,
 ) -> list[tuple[Owner, object]]:
     """Owner per person in ``.storage/person``.
 
@@ -1531,7 +1531,7 @@ def _scan_person(
 
 def _scan_generic_yaml(
     source: SourceInput,
-    truth_set: TruthSet,
+    _truth_set: TruthSet,
 ) -> list[tuple[Owner, object]]:
     """Generic YAML adapter with structural owner derivation.
 

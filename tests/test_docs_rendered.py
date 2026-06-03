@@ -204,5 +204,4 @@ if __name__ == "__main__":
     run_tests(
         test_file=__file__,
         script_path=RENDER_SCRIPT,
-        repo_root=REPO_ROOT,
     )

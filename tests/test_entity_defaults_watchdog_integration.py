@@ -59,7 +59,11 @@ SERVICE = "entity_defaults_watchdog"
 
 @pytest.fixture(autouse=True)
 def install_our_integration(
-    hass: HomeAssistant, enable_custom_integrations: None
+    hass: HomeAssistant,
+    # Requested for its side effect; pytest resolves fixtures by name
+    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
+    # on a fixture function.
+    enable_custom_integrations: None,  # noqa: ARG001
 ) -> Generator[None]:
     """Symlink our integration into pytest-HACC's config_dir."""
     import shutil

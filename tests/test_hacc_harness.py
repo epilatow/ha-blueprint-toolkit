@@ -118,9 +118,9 @@ class TestBlueprintParse:
                 f"{path.name} domain must be 'automation', got {bp['domain']!r}"
             )
 
+    @pytest.mark.usefixtures("hass")
     async def test_each_parses_via_ha_yaml_loader(
         self,
-        hass: HomeAssistant,
         all_blueprints: list[Path],
     ) -> None:
         # HA ships its own YAML loader that knows about the

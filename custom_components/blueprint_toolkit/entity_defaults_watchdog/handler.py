@@ -292,7 +292,7 @@ async def _async_argparse(
 
 async def _async_service_layer(
     hass: HomeAssistant,
-    call: ServiceCall,
+    _call: ServiceCall,
     *,
     now: datetime,
     instance_id: str,

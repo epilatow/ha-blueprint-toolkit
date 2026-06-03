@@ -398,7 +398,6 @@ def _do_deploy(
     host: str,
     *,
     root: Path,
-    workspace: str,
     install_path: str,
     ha_config: str,
     cli_symlink_dir: str | None,
@@ -659,7 +658,6 @@ def main() -> int:
     _do_deploy(
         args.host,
         root=root,
-        workspace=args.workspace,
         install_path=install_path,
         ha_config=args.ha_config,
         cli_symlink_dir=args.cli_symlink_dir,
