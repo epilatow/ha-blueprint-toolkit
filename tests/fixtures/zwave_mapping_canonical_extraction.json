@@ -85,6 +85,10 @@
           "device_count": 1
         },
         {
+          "label": "LED Activity",
+          "device_count": 1
+        },
+        {
           "label": "LED Indicator (Motion)",
           "device_count": 1
         },
