@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-epilatow-repo-shared = { git = "https://github.com/epilatow/repo-shared", rev = "3695dbd86f9a6fbaf2d616aabb0bfb0089cbdb02" }
+epilatow-repo-shared = { git = "https://github.com/epilatow/repo-shared", rev = "547161e236e9af2c5c66f541bd9eb0d5c57f0797" }
 
 [tool.repo-shared.markdown]
 # Repo's pre-existing markdown was wrapped at 78 (markdownlint.json
