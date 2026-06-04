@@ -53,6 +53,15 @@ policies:
       wake_up_interval: 3600
 """
 
+_UNUSED_POLICY = """
+policies:
+  - name: ghost
+    match:
+      manufacturer: Nonexistent Inc.
+    settings:
+      wake_up_interval: 3600
+"""
+
 
 @pytest.fixture(autouse=True)
 def install_our_integration(
@@ -259,6 +268,25 @@ async def test_invalid_policy_emits_config_error(hass: Any) -> None:
 
     notifs = _async_get_or_create_notifications(hass)
     assert any("config_error" in nid for nid in notifs), list(notifs)
+
+
+async def test_unused_policy_emits_notification(hass: Any) -> None:
+    # A policy whose selector matches no installed device lands on
+    # nothing, so the reconcile fires the unused-config notification on
+    # its first (config-change) pass.
+    _write_policy(hass, _UNUSED_POLICY)
+    _install_zwave_js(hass)
+    await _setup_integration(hass)
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    notifs = _async_get_or_create_notifications(hass)
+    assert any("unused" in nid for nid in notifs), list(notifs)
 
 
 async def test_no_zwave_js_emits_unavailable(hass: Any) -> None:

@@ -7,6 +7,9 @@ device page) annotated with location, node id, wake interval, and
 expected next wake, then the params being set -- each as
 ``actual -> desired``. The desired report lists every device and param;
 the pending report lists only the devices and params not yet converged.
+The unused report renders ``Plan.unused`` -- configured policies /
+settings that landed on no device -- as a flat bullet list, off the same
+planner output a future CLI view will render as rows.
 
 Pure markdown assembly: the handler wraps the returned body in a
 ``PersistentNotification`` spec (instance id, title, attribution) and
@@ -17,6 +20,8 @@ reads the same derivations rather than recomputing them.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ..helpers_logic import device_link, md_escape
 from ..zwave.convergence import (
     ConvergenceReport,
@@ -24,6 +29,11 @@ from ..zwave.convergence import (
     ParamConvergence,
 )
 from ..zwave.formatting import format_wake_time, humanize_duration
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from .logic import UnusedSetting
 
 
 def render_report_body(report: ConvergenceReport, *, pending_only: bool) -> str:
@@ -70,3 +80,23 @@ def _device_block(dc: DeviceConvergence, *, pending_only: bool) -> str:
 def _param_line(param: ParamConvergence) -> str:
     actual = f"`{param.actual}`" if param.actual is not None else "unread"
     return f"- `{param.param}`: {actual} -> `{param.desired}`"
+
+
+def render_unused_body(unused: Sequence[UnusedSetting]) -> str:
+    """Markdown body for the unused-config report.
+
+    One bullet per finding -- a policy whose selector matched nothing, or
+    a setting no matched device exposed. Returns ``""`` when nothing is
+    unused so the handler dismisses the notification instead of posting
+    an empty one.
+    """
+
+    if not unused:
+        return ""
+    return "\n".join(_unused_line(u) for u in unused)
+
+
+def _unused_line(u: UnusedSetting) -> str:
+    if u.concept is None:
+        return f"- policy `{u.policy}`: {u.reason}"
+    return f"- policy `{u.policy}` setting `{u.concept}`: {u.reason}"

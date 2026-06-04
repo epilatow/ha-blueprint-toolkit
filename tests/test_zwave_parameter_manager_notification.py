@@ -39,8 +39,13 @@ from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E40
     DeviceConvergence,
     ParamConvergence,
 )
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+    GenericParamNames,
+    UnusedSetting,
+)
 from custom_components.blueprint_toolkit.zwave_parameter_manager.notification import (  # noqa: E402, E501
     render_report_body,
+    render_unused_body,
 )
 
 WOKE = datetime(2026, 6, 1, 8, 0, 0)
@@ -145,6 +150,30 @@ def test_empty_pending_report_is_dismissed() -> None:
         ),
     )
     assert render_report_body(converged, pending_only=True) == ""
+
+
+# -- unused-config report ----------------------------------------
+
+
+def test_unused_body_lists_policy_and_setting_findings() -> None:
+    unused = (
+        UnusedSetting("ghost policy", None, "selector matched no devices"),
+        UnusedSetting(
+            "indoor motion",
+            GenericParamNames.LIGHT_ON_MOTION,
+            "no matched device exposes this setting",
+        ),
+    )
+    body = render_unused_body(unused)
+    assert (
+        body == "- policy `ghost policy`: selector matched no devices\n"
+        "- policy `indoor motion` setting `light_on_motion`: "
+        "no matched device exposes this setting"
+    )
+
+
+def test_empty_unused_report_is_dismissed() -> None:
+    assert render_unused_body(()) == ""
 
 
 if __name__ == "__main__":

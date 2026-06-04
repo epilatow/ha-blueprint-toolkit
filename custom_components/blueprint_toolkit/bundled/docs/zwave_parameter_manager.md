@@ -31,6 +31,9 @@ re-sending the same command on every pass.
   each device's wake interval and estimated next wake); a desired-config
   report fires when the policy file changes or a new device becomes
   configured.
+- An unused-config report flags policies and settings that match no device --
+  a selector typo, a mis-scoped policy, or a setting no matched device
+  exposes.
 
 ## Requirements
 
@@ -106,7 +109,10 @@ entities).
 | `wake_up_interval`          | seconds        | How often a battery device wakes to receive queued commands.     |
 
 A concept that a matched device does not expose is reported as a warning, not
-applied -- the device simply lacks that parameter.
+applied -- the device simply lacks that parameter. When *no* matched device
+exposes a setting (or a policy matches no device at all), it is additionally
+flagged on the unused-config report as a whole specified setting that landed
+on nothing.
 
 ### How writes reach sleeping devices
 
@@ -148,15 +154,20 @@ The pending report (`...__pending`) refreshes every reconcile while any device
 is unconverged and dismisses on convergence. The desired-config report
 (`...__desired`) re-fires only when the policy file changes or a
 newly-configured node appears, so convergence progress does not re-bubble it.
-Policy conflicts and unmappable concepts surface as their own notification; a
-config-file parse error and a "Z-Wave JS unavailable" state each have theirs.
+The unused-config report (`...__unused`) lists each policy or setting that
+applied to no device (a selector matching nothing, or a setting no matched
+device exposes). It re-evaluates every reconcile, but its body carries no live
+values, so the notification updates only when the unused set actually changes
+and dismisses when every policy and setting lands somewhere. Policy conflicts
+and unmappable concepts surface as their own notification; a config-file parse
+error and a "Z-Wave JS unavailable" state each have theirs.
 
 ### Diagnostic state entity
 
 `blueprint_toolkit.zpm_<slug>_state` carries, per reconcile: `last_run`,
 `runtime`, `last_trigger`, `last_config_mtime`, `devices`, `writes_planned`,
 `writes_issued`, `pending`, `converged`, `pending_params`, `plan_warnings`,
-`plan_errors`, and a human-readable `pending_writes` list.
+`plan_errors`, `unused`, and a human-readable `pending_writes` list.
 
 ### Debug log format
 

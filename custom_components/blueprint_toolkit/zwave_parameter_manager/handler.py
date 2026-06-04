@@ -394,6 +394,23 @@ async def _do_reconcile(
         active=bool(pending_body),
     )
 
+    # Unused-config report: configured policies / settings that landed on no
+    # device (typos, mis-scoped selectors, stale concepts). Re-evaluated every
+    # reconcile -- unlike the desired report it carries no live values, so its
+    # body is stable and the dispatcher's content-dedup suppresses re-bubbling
+    # while still self-correcting when the unused set changes (e.g. a node
+    # joins that a previously-empty policy now matches). Dismissed when empty.
+    unused_body = notification.render_unused_body(plan.unused)
+    await _dispatch_single(
+        hass,
+        prefix,
+        "unused",
+        instance_id,
+        "Z-Wave Parameter Manager: unused configuration",
+        unused_body,
+        active=bool(unused_body),
+    )
+
     state.last_config_mtime = current_mtime
     state.last_reconcile_dt = now
     _persist(
@@ -411,6 +428,7 @@ async def _do_reconcile(
             "pending_params": rep.pending_count,
             "plan_warnings": len(plan.warnings),
             "plan_errors": len(plan.errors),
+            "unused": len(plan.unused),
             "pending_writes": _pending_summary(state.pending),
         },
     )

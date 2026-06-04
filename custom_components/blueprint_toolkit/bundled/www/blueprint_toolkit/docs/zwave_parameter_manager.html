@@ -77,6 +77,9 @@ Z-Wave JS add-on restarts (which flushes the device queue).</li>
 each device's wake interval and estimated next wake); a desired-config
 report fires when the policy file changes or a new device becomes
 configured.</li>
+<li>An unused-config report flags policies and settings that match no device --
+a selector typo, a mis-scoped policy, or a setting no matched device
+exposes.</li>
 </ul>
 <h2>Requirements</h2>
 <ul>
@@ -191,7 +194,10 @@ entities).</p>
 </tbody>
 </table>
 <p>A concept that a matched device does not expose is reported as a warning, not
-applied -- the device simply lacks that parameter.</p>
+applied -- the device simply lacks that parameter. When <em>no</em> matched device
+exposes a setting (or a policy matches no device at all), it is additionally
+flagged on the unused-config report as a whole specified setting that landed
+on nothing.</p>
 <h3>How writes reach sleeping devices</h3>
 <p>A battery device only receives a queued write when it next wakes (on its
 <code>wake_up_interval</code>, or a manual button wake). ZPM cannot force a wake; it
@@ -224,13 +230,18 @@ de-duplicating its queue.</p>
 is unconverged and dismisses on convergence. The desired-config report
 (<code>...__desired</code>) re-fires only when the policy file changes or a
 newly-configured node appears, so convergence progress does not re-bubble it.
-Policy conflicts and unmappable concepts surface as their own notification; a
-config-file parse error and a &quot;Z-Wave JS unavailable&quot; state each have theirs.</p>
+The unused-config report (<code>...__unused</code>) lists each policy or setting that
+applied to no device (a selector matching nothing, or a setting no matched
+device exposes). It re-evaluates every reconcile, but its body carries no live
+values, so the notification updates only when the unused set actually changes
+and dismisses when every policy and setting lands somewhere. Policy conflicts
+and unmappable concepts surface as their own notification; a config-file parse
+error and a &quot;Z-Wave JS unavailable&quot; state each have theirs.</p>
 <h3>Diagnostic state entity</h3>
 <p><code>blueprint_toolkit.zpm_&lt;slug&gt;_state</code> carries, per reconcile: <code>last_run</code>,
 <code>runtime</code>, <code>last_trigger</code>, <code>last_config_mtime</code>, <code>devices</code>, <code>writes_planned</code>,
 <code>writes_issued</code>, <code>pending</code>, <code>converged</code>, <code>pending_params</code>, <code>plan_warnings</code>,
-<code>plan_errors</code>, and a human-readable <code>pending_writes</code> list.</p>
+<code>plan_errors</code>, <code>unused</code>, and a human-readable <code>pending_writes</code> list.</p>
 <h3>Debug log format</h3>
 <p>With debug logging on, one line per reconcile:</p>
 <pre><code class="language-text">[ZPM: &lt;automation name&gt;] trigger=&lt;id&gt; devices=N planned=N issued=N pending=N converged=N
