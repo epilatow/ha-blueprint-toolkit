@@ -41,11 +41,11 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
     ParamMeta,
     ParamType,
     ParamValue,
-    Plan,
     Policy,
     Power,
     ResolutionStatus,
     Selector,
+    UnusedSetting,
     evaluate_policies,
     policy_matches,
     resolve,
@@ -683,6 +683,8 @@ def test_evaluate_emits_writes_and_warning() -> None:
     assert any(
         w.device.node_id == 264 and w.concept == TCI for w in plan.warnings
     )
+    # TCI resolved on node 42, so it is used despite being NA on 264.
+    assert plan.unused == ()
 
 
 def test_evaluate_conflicting_policies_is_error() -> None:
@@ -693,6 +695,8 @@ def test_evaluate_conflicting_policies_is_error() -> None:
     plan = evaluate_policies([ZSE11], policies, MAPPING)
     assert any(e.concept == MS for e in plan.errors)
     assert not any(w.concept == MS for w in plan.writes)
+    # A conflict-blocked setting is an error, not 'unused'.
+    assert plan.unused == ()
 
 
 def test_evaluate_uses_invert_quirk() -> None:
@@ -727,13 +731,75 @@ def test_invert_quirk_matches_case_insensitively() -> None:
     assert write.value == 1
 
 
-def test_empty_plan_for_no_match() -> None:
+# -- unused-config detection -------------------------------------
+
+
+def test_unused_policy_when_selector_matches_nothing() -> None:
+    # A policy whose selector matches no device is inert: no writes /
+    # warnings / errors, and one policy-level unused finding (its
+    # settings aren't enumerated -- the whole policy applied to nothing).
     plan = evaluate_policies(
         [REPEATER],
         [Policy("x", Selector(device_type=DeviceType.MOTION), {MS: pv(MS, 5)})],
         MAPPING,
     )
-    assert plan == Plan()
+    assert (plan.writes, plan.warnings, plan.errors) == ((), (), ())
+    assert plan.unused == (
+        UnusedSetting("x", None, "selector matched no devices"),
+    )
+
+
+def test_unused_setting_when_no_matched_device_exposes_it() -> None:
+    # ZWA045 matches device_type motion but has no light_on_motion
+    # param, so the setting is NOT_APPLICABLE on every match: the
+    # aggregate setting is unused (and also a per-device warning).
+    policies = [
+        Policy(
+            "motion",
+            Selector(device_type=DeviceType.MOTION),
+            {LOM: pv(LOM, True)},
+        ),
+    ]
+    plan = evaluate_policies([ZWA045], policies, MAPPING)
+    assert plan.writes == ()
+    assert any(w.concept == LOM for w in plan.warnings)
+    assert plan.unused == (
+        UnusedSetting("motion", LOM, "no matched device exposes this setting"),
+    )
+
+
+def test_resolved_anywhere_setting_is_not_unused() -> None:
+    # ZWA045 lacks light_on_motion but resolves motion_sensitivity, so
+    # only the absent setting is unused -- a resolved one never is.
+    policies = [
+        Policy(
+            "motion",
+            Selector(device_type=DeviceType.MOTION),
+            {MS: pv(MS, 5), LOM: pv(LOM, True)},
+        ),
+    ]
+    plan = evaluate_policies([ZWA045], policies, MAPPING)
+    assert {u.concept for u in plan.unused} == {LOM}
+
+
+def test_resolution_error_setting_is_not_unused() -> None:
+    # An AMBIGUOUS (>1 matching param) setting is an error, not 'unused':
+    # the config did name a real, exposed parameter family.
+    dupe = Device(
+        node_id=904,
+        name="Twin",
+        manufacturer="Acme",
+        model="DUP",
+        is_listening=False,
+        params=(
+            ParamMeta(ParamId(112, 1), "Motion Sensitivity", range=(0, 10)),
+            ParamMeta(ParamId(112, 2), "PIR Sensitivity", range=(0, 10)),
+        ),
+    )
+    policies = [Policy("dup", Selector(model="DUP"), {MS: pv(MS, 5)})]
+    plan = evaluate_policies([dupe], policies, MAPPING)
+    assert any(e.concept == MS for e in plan.errors)
+    assert plan.unused == ()
 
 
 if __name__ == "__main__":

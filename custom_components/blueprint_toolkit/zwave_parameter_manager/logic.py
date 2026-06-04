@@ -965,17 +965,36 @@ class PlanIssue:
 
 
 @dataclass(frozen=True)
+class UnusedSetting:
+    """A configured policy / setting that applied to no device.
+
+    Aggregate config hygiene, distinct from the per-device
+    not-applicable warnings: a whole specified setting that landed on
+    nothing. ``concept`` is ``None`` when the policy's selector matched
+    no device at all (the entire policy is inert); otherwise it names the
+    one setting that no matched device exposed. ``reason`` is the
+    human-readable explanation for the report.
+    """
+
+    policy: str
+    concept: GenericParamNames | None
+    reason: str
+
+
+@dataclass(frozen=True)
 class Plan:
     """Result of ``evaluate_policies``.
 
     ``writes`` are the concrete writes; ``warnings`` are
     not-applicable concepts (a selected device lacks the parameter);
-    ``errors`` are conflicts and unmappable values.
+    ``errors`` are conflicts and unmappable values; ``unused`` are
+    configured policies / settings that applied to no device at all.
     """
 
     writes: tuple[PlannedWrite, ...] = ()
     warnings: tuple[PlanIssue, ...] = ()
     errors: tuple[PlanIssue, ...] = ()
+    unused: tuple[UnusedSetting, ...] = ()
 
 
 def evaluate_policies(
@@ -989,13 +1008,24 @@ def evaluate_policies(
     error (no implicit ordering). A selected device lacking a
     parameter for a concept is a warning, not an error. Values are
     assumed already validated by ``validate_value``.
+
+    A configured policy / setting that lands on no device is an
+    ``unused`` finding (aggregate config hygiene): a policy whose
+    selector matched nothing, or a setting no matched device exposed
+    (NOT_APPLICABLE on every match). A setting blocked everywhere by a
+    conflict or a resolution error is NOT unused -- it already surfaces
+    on the error report -- so unused stays the inert-config signal.
     """
 
     writes: list[PlannedWrite] = []
     warnings: list[PlanIssue] = []
     errors: list[PlanIssue] = []
+    matched_policies: set[str] = set()
+    resolved_keys: set[tuple[str, GenericParamNames]] = set()
+    blocked_keys: set[tuple[str, GenericParamNames]] = set()
     for device in devices:
         applied = [p for p in policies if policy_matches(p, device)]
+        matched_policies.update(p.name for p in applied)
         sources: dict[GenericParamNames, list[str]] = {}
         for policy in applied:
             for concept_name in policy.settings:
@@ -1010,6 +1040,7 @@ def evaluate_policies(
                         f"set by conflicting policies: {joined}",
                     )
                 )
+                blocked_keys.update((name, concept_name) for name in names)
         for policy in applied:
             for concept_name, value in policy.settings.items():
                 if len(sources.get(concept_name, [])) > 1:
@@ -1024,11 +1055,53 @@ def evaluate_policies(
                     warnings,
                     errors,
                 )
+                key = (policy.name, concept_name)
+                if res.status is ResolutionStatus.RESOLVED:
+                    resolved_keys.add(key)
+                elif res.status is not ResolutionStatus.NOT_APPLICABLE:
+                    blocked_keys.add(key)
     return Plan(
         writes=tuple(writes),
         warnings=tuple(warnings),
         errors=tuple(errors),
+        unused=_unused(policies, matched_policies, resolved_keys, blocked_keys),
     )
+
+
+def _unused(
+    policies: Sequence[Policy],
+    matched_policies: set[str],
+    resolved_keys: set[tuple[str, GenericParamNames]],
+    blocked_keys: set[tuple[str, GenericParamNames]],
+) -> tuple[UnusedSetting, ...]:
+    """Configured policies / settings that landed on no device.
+
+    A policy that matched nothing yields one policy-level finding (its
+    settings aren't enumerated -- the whole policy is inert). A matched
+    policy yields a per-setting finding for each concept that neither
+    resolved nor was blocked anywhere, i.e. NOT_APPLICABLE on every
+    matched device.
+    """
+
+    unused: list[UnusedSetting] = []
+    for policy in policies:
+        if policy.name not in matched_policies:
+            unused.append(
+                UnusedSetting(policy.name, None, "selector matched no devices")
+            )
+            continue
+        for concept_name in policy.settings:
+            key = (policy.name, concept_name)
+            if key in resolved_keys or key in blocked_keys:
+                continue
+            unused.append(
+                UnusedSetting(
+                    policy.name,
+                    concept_name,
+                    "no matched device exposes this setting",
+                )
+            )
+    return tuple(unused)
 
 
 def _record(
