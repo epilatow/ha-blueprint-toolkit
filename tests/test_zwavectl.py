@@ -460,8 +460,7 @@ class TestRouteLabel:
             50: {"device_name": "Hallway Switch", "stat_entities": {}},
         }
         assert (
-            zc._route_label({"repeaters": [50]}, node_to_ha)
-            == "Hallway Switch"
+            zc._route_label({"repeaters": [50]}, node_to_ha) == "Hallway Switch"
         )
 
     def test_repeater_falls_back_to_node_label(self) -> None:
@@ -1216,6 +1215,106 @@ class TestRenderTable:
         )
         lines = out.split("\n")
         assert lines[0].strip().startswith("Node")
+
+
+# --- Subcommand parsing ----------------------------------------
+
+
+class TestArgParser:
+    def test_list_subcommand_parses_flags(self) -> None:
+        args = zc.build_parser().parse_args(["list", "--cols", "node,device"])
+        assert args.cmd1 == "list"
+        assert args.cols == "node,device"
+
+    def test_param_manager_config_mode_path(self) -> None:
+        # Generic numbered levels carry the full path: cmd1 / cmd2 / cmd3.
+        args = zc.build_parser().parse_args(
+            ["param-manager", "config", "pending"]
+        )
+        assert (args.cmd1, args.cmd2, args.cmd3) == (
+            "param-manager",
+            "config",
+            "pending",
+        )
+
+    def test_config_rejects_unknown_mode(self) -> None:
+        with pytest.raises(SystemExit):
+            zc.build_parser().parse_args(["param-manager", "config", "bogus"])
+
+    def test_dispatch_keys_match_callbacks(self) -> None:
+        # Every leaf path the parser reaches has a callback, and vice
+        # versa -- a drift here is a missing or dangling entry point.
+        assert set(zc.COMMAND_CALLBACKS) == {
+            "list",
+            "param-manager config desired",
+            "param-manager config pending",
+            "param-manager config unused",
+        }
+
+
+class TestCli:
+    def _argv(self, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
+        monkeypatch.setattr(sys, "argv", ["zwavectl", *argv])
+
+    def _missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        argv: list[str],
+        needle: str,
+    ) -> None:
+        # A missing subcommand exits 2 with the deepest level's full help on
+        # stdout (not a terse usage error).
+        self._argv(monkeypatch, argv)
+        with pytest.raises(SystemExit) as exc:
+            zc.cli()
+        assert exc.value.code == 2
+        assert needle in capsys.readouterr().out
+
+    def test_missing_command_prints_top_help(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._missing(monkeypatch, capsys, [], "param-manager")
+
+    def test_missing_action_prints_subcommand_help(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._missing(monkeypatch, capsys, ["param-manager"], "config")
+
+    def test_missing_mode_prints_config_help(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._missing(
+            monkeypatch, capsys, ["param-manager", "config"], "desired"
+        )
+
+    def test_invalid_mode_is_a_usage_error_not_help(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An INVALID subcommand is argparse's usage error on stderr, distinct
+        # from the full-help path a missing subcommand takes.
+        self._argv(monkeypatch, ["param-manager", "config", "bogus"])
+        with pytest.raises(SystemExit) as exc:
+            zc.cli()
+        assert exc.value.code == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+    def test_mode_dispatches_to_its_entry_point(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._argv(monkeypatch, ["param-manager", "config", "unused"])
+        assert zc.cli() == 1
+        assert "unused: not yet implemented" in capsys.readouterr().err
 
 
 # --- Code quality ----------------------------------------------

@@ -5,7 +5,7 @@
 # Home Assistant host this ships to doesn't carry uv, so the
 # script bootstraps its own venv at first run instead (see
 # bootstrap_venv / reexec_in_venv below).
-"""Display Z-Wave network info: protocol, signal strength, stats, routes."""
+"""zwavectl: Z-Wave network and parameter-manager views, from the HA host."""
 
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ import pathlib
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 HA_CONFIG_YAML = pathlib.Path("/config/configuration.yaml")
 DEFAULT_RECORDER_KEEP_DAYS = 10  # HA built-in default when unset
@@ -190,11 +191,11 @@ Recorder retention
 Environment
 -----------
   On first run, the script creates a venv at
-  /root/.zwave_network_info_venv/ with python-socketio and aiohttp, then
+  /root/.zwavectl_venv/ with python-socketio and aiohttp, then
   re-execs inside it.
 """
 
-VENV_DIR = pathlib.Path("/root/.zwave_network_info_venv")
+VENV_DIR = pathlib.Path("/root/.zwavectl_venv")
 # Stamp file written after a successful ``pip install`` of
 # VENV_DEPS. Its absence means the venv is either missing or
 # half-built (e.g. venv created but pip install failed mid-way),
@@ -1777,12 +1778,9 @@ async def _run(
     return zwave_nodes, node_to_ha, current_states, history, neighbors
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        epilog=_HELP_EPILOG,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+def _add_list_args(parser: argparse.ArgumentParser) -> None:
+    """Attach the per-node network-view flags to the ``list`` subparser."""
+
     parser.add_argument(
         "--cols",
         default="",
@@ -1839,22 +1837,37 @@ def main() -> int:
             "some data is better than none."
         ),
     )
-    args = parser.parse_args()
 
-    if args.days < 0:
-        parser.error("--days must be >= 0")
-    if args.days > 0:
+
+def do_list(
+    *,
+    cols: str,
+    days: int,
+    sort: str,
+    reverse: bool,
+    no_header: bool,
+    no_color: bool,
+    use_snapshot_data: bool,
+) -> int:
+    """Render the per-node network table (the ``list`` subcommand)."""
+
+    if days < 0:
+        print("error: --days must be >= 0", file=sys.stderr)
+        return 2
+    if days > 0:
         keep = _read_recorder_keep_days()
-        if args.days > keep:
-            parser.error(
-                f"--days {args.days} exceeds HA's "
+        if days > keep:
+            print(
+                f"error: --days {days} exceeds HA's "
                 f"recorder.purge_keep_days ({keep}). "
                 f"Reduce --days or increase purge_keep_days "
                 f"in HA's configuration.yaml.",
+                file=sys.stderr,
             )
-    day_offsets = list(range(1, args.days + 1))
+            return 2
+    day_offsets = list(range(1, days + 1))
 
-    columns = _parse_columns(args.cols)
+    columns = _parse_columns(cols)
 
     if not API_KEY_FILE.exists():
         print(f"API key file not found: {API_KEY_FILE}", file=sys.stderr)
@@ -1883,7 +1896,7 @@ def main() -> int:
                 api_key,
                 day_offsets,
                 columns,
-                use_snapshot_data=args.use_snapshot_data,
+                use_snapshot_data=use_snapshot_data,
             ),
         )
     except (TimeoutError, _sio_exc.TimeoutError) as e:
@@ -1920,16 +1933,197 @@ def main() -> int:
         day_offsets,
         neighbors,
     )
-    rows = _sort_rows(rows, _parse_sort(args.sort), reverse=args.reverse)
+    rows = _sort_rows(rows, _parse_sort(sort), reverse=reverse)
 
-    use_color = (not args.no_color) and sys.stdout.isatty()
-    print(
-        render_table(rows, columns, use_color, show_header=not args.no_header)
-    )
+    use_color = (not no_color) and sys.stdout.isatty()
+    print(render_table(rows, columns, use_color, show_header=not no_header))
     return 0
+
+
+def _param_manager_config(mode: str) -> int:
+    """Render a Parameter Manager config view for ``mode``.
+
+    The fetch from the zwave-js server, the adapter onto the shared resolver /
+    convergence model, and the table renderer land in following commits.
+    """
+
+    print(
+        f"param-manager config {mode}: not yet implemented",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def do_pm_config_desired() -> int:
+    return _param_manager_config("desired")
+
+
+def do_pm_config_pending() -> int:
+    return _param_manager_config("pending")
+
+
+def do_pm_config_unused() -> int:
+    return _param_manager_config("unused")
+
+
+# --- Argparse: strict subparsers + auto-help on a missing action ----
+# Inlined from epilatow/utils ``src/common/argparse_ext.py`` -- this script
+# ships standalone to the HA host and cannot import shared first-party code.
+
+if TYPE_CHECKING:
+    _SubParsersActionBase = argparse._SubParsersAction[argparse.ArgumentParser]
+else:
+    _SubParsersActionBase = argparse._SubParsersAction  # noqa: SLF001
+
+
+class _StrictSubParsersAction(_SubParsersActionBase):
+    """Route a subparser's argument errors through that subparser, not the
+    root, so the error names the subcommand the user actually typed.
+
+    Stdlib stashes leftover subcommand tokens on the top-level namespace, so
+    an unknown-arg error is reported by the root parser with its usage line;
+    calling the chosen subparser's strict ``parse_args`` instead routes the
+    error through that subparser's own ``error()``.
+    """
+
+    def __call__(
+        self,
+        _parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        _option_string: str | None = None,
+    ) -> None:
+        parser_name = values[0]
+        arg_strings = values[1:]
+        if self.dest is not argparse.SUPPRESS:
+            setattr(namespace, self.dest, parser_name)
+        subparser = self._name_parser_map[parser_name]  # noqa: SLF001
+        subnamespace = subparser.parse_args(arg_strings)
+        for key, value in vars(subnamespace).items():
+            setattr(namespace, key, value)
+
+
+class _StrictArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser whose subparsers use the strict action above; child
+    parsers inherit it (add_subparsers defaults parser_class to type(self))."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.register("action", "parsers", _StrictSubParsersAction)
+
+    def parse_command(
+        self, argv: list[str] | None = None
+    ) -> argparse.Namespace:
+        """Parse argv and collapse the numbered ``cmd<level>`` dests into a
+        single ``command`` path (space-joined), leaving only the leaf's own
+        options on the namespace.
+
+        A path that stops at an action group (no command, or an action group
+        entered with no action chosen) prints the deepest level's help and
+        exits 2 -- the same way argparse exits for ``-h`` or a usage error,
+        but with the subcommand's full help rather than a terse usage line.
+        Invalid arguments / subcommands are still ``parse_args``'s usual
+        usage error.
+        """
+
+        data = vars(self.parse_args(argv))
+        action_help = data.pop("_action_help", None)
+        path: list[str] = []
+        level = 1
+        while f"cmd{level}" in data:
+            chosen = data.pop(f"cmd{level}")
+            if chosen is None:
+                help_fn = action_help or self.print_help
+                help_fn()
+                raise SystemExit(2)
+            path.append(chosen)
+            level += 1
+        return argparse.Namespace(command=" ".join(path), **data)
+
+
+def _action_subparsers(
+    parent: argparse.ArgumentParser, *, level: int, **kwargs: Any
+) -> _SubParsersActionBase:
+    """Add a subparsers group to ``parent`` under the generic ``cmd<level>``
+    dest, recording ``parent.print_help`` as the ``_action_help`` default so
+    an omitted action prints the parent's own help (invoked by ``cli``).
+
+    Levels are numbered, not named, so every nesting depth shares one dest
+    scheme (cmd1, cmd2, ...) that ``cli`` walks generically -- a new
+    subcommand at any depth needs no new per-command dest name.
+    """
+
+    parent.set_defaults(_action_help=parent.print_help)
+    return parent.add_subparsers(dest=f"cmd{level}", **kwargs)
+
+
+def build_parser() -> _StrictArgumentParser:
+    """Build the command tree: ``list`` (the network view) and ``param-manager
+    config {desired|pending|unused}`` (the Parameter Manager views).
+
+    Action groups are added via ``_action_subparsers`` so ``cli`` can dispatch
+    and print help generically.
+    """
+
+    parser = _StrictArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="cmd1", metavar="COMMAND")
+
+    list_parser = sub.add_parser(
+        "list",
+        help="per-node Z-Wave network view",
+        description=__doc__,
+        epilog=_HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_list_args(list_parser)
+
+    pm_parser = sub.add_parser(
+        "param-manager",
+        help="Z-Wave Parameter Manager views",
+    )
+    pm_sub = _action_subparsers(pm_parser, level=2)
+
+    config_parser = pm_sub.add_parser(
+        "config",
+        help="show the desired / pending / unused parameter config",
+    )
+    config_sub = _action_subparsers(config_parser, level=3)
+    config_sub.add_parser(
+        "desired", help="every device + param a policy applies to"
+    )
+    config_sub.add_parser(
+        "pending", help="only the not-yet-converged device + params"
+    )
+    config_sub.add_parser(
+        "unused", help="policies / settings that match no device"
+    )
+    return parser
+
+
+COMMAND_CALLBACKS: dict[str, Callable[..., int]] = {
+    "list": do_list,
+    "param-manager config desired": do_pm_config_desired,
+    "param-manager config pending": do_pm_config_pending,
+    "param-manager config unused": do_pm_config_unused,
+}
+
+
+def cli() -> int:
+    """Parse argv and dispatch to the matching COMMAND_CALLBACKS entry.
+
+    ``parse_command`` resolves the numbered subcommand levels into ``command``
+    (and prints help + exits for a missing subcommand); the leaf's own options
+    pass through to the callback as keyword arguments.
+    """
+
+    args = vars(build_parser().parse_command())
+    return COMMAND_CALLBACKS[args.pop("command")](**args)
 
 
 if __name__ == "__main__":
     bootstrap_venv()
     reexec_in_venv()
-    sys.exit(main())
+    sys.exit(cli())
