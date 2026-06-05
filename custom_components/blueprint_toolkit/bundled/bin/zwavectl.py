@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import pathlib
 import re
@@ -191,21 +192,43 @@ Recorder retention
 Environment
 -----------
   On first run, the script creates a venv at
-  /root/.zwavectl_venv/ with python-socketio and aiohttp, then
-  re-execs inside it.
+  /root/.zwavectl_venv/ with its dependencies, then re-execs inside
+  it.
 """
 
 VENV_DIR = pathlib.Path("/root/.zwavectl_venv")
-# Stamp file written after a successful ``pip install`` of
-# VENV_DEPS. Its absence means the venv is either missing or
-# half-built (e.g. venv created but pip install failed mid-way),
-# so ``bootstrap_venv`` re-runs the install. pip is idempotent
-# on already-installed packages, so the re-run is cheap.
+# Stamp file holding the VENV_DEPS that were last installed. A missing
+# stamp means a half-built venv (pip failed mid-run); a stamp whose
+# contents differ from the current VENV_DEPS means the dep set changed
+# since the last install (e.g. a new dep added on an upgrade). Either
+# case re-runs ``pip install`` (a no-op when packages are already
+# present), so a venv from an older zwavectl never silently misses a
+# newly-added dependency.
 VENV_STAMP = VENV_DIR / ".installed"
 API_KEY_FILE = pathlib.Path("/root/api-key")
 HA_URL = "http://homeassistant:8123"
 ZWAVE_URL = "http://core-zwave-js:8091"
-VENV_DEPS = ["python-socketio[asyncio_client]==5.11.3", "aiohttp"]
+# The zwave-js *server* (not the 8091 zwave-js-ui socket): its
+# start_listening dump carries the per-node value metadata the param
+# resolver needs, which the 8091 getNodes() omits. Used by the
+# param-manager view only.
+ZWAVE_SERVER_URL = "ws://core-zwave-js:3000"
+# Cap every blocking recv on the 3000 socket so a half-open server (connected
+# but never framing) fails with a clear error instead of hanging the CLI.
+ZWAVE_SERVER_RECV_TIMEOUT = 40
+VENV_DEPS = [
+    "python-socketio[asyncio_client]==5.11.3",
+    "aiohttp",
+    # param-manager view: the raw 3000 socket + the Node model the shared
+    # adapter consumes.
+    "websockets",
+    # Pinned to the same version the shared source / adapter modules declare
+    # and are tested against. This venv is isolated from HA's, so HA bundling
+    # a different version is irrelevant: the wire read negotiates the schema
+    # down to what this client parses (capped at MAX_SERVER_SCHEMA_VERSION),
+    # and the integration code runs here against the client it was tested with.
+    "zwave-js-server-python==0.73.0",
+]
 
 # Columns that carry a list of days+1 values (latest first).
 HISTORICAL_COLUMNS = [
@@ -362,17 +385,17 @@ ENTITY_SUFFIX = {
 
 
 def bootstrap_venv() -> None:
-    """Ensure a venv with VENV_DEPS exists at VENV_DIR.
+    """Ensure a venv with the current VENV_DEPS exists at VENV_DIR.
 
-    Creates the venv if missing, then runs ``pip install`` and
-    writes VENV_STAMP. The stamp distinguishes a fully-installed
-    venv from one that was created but never got its deps (e.g.
-    a pip failure on an earlier run): if the stamp is absent we
-    re-run ``pip install``, which is a no-op when packages are
-    already present.
+    Creates the venv if missing, then runs ``pip install`` and records the
+    installed VENV_DEPS in VENV_STAMP. The stamp gates the reinstall: it is
+    absent on a half-built venv (pip failed mid-run) and stale whenever
+    VENV_DEPS changed since the last install, so either case re-runs ``pip
+    install`` (a no-op when the packages are already present).
     """
     vpy = VENV_DIR / "bin" / "python"
-    if vpy.exists() and VENV_STAMP.exists():
+    want = "\n".join(VENV_DEPS)
+    if vpy.exists() and VENV_STAMP.exists() and VENV_STAMP.read_text() == want:
         return
     if not vpy.exists():
         print(f"Creating venv at {VENV_DIR} (first run) ...", file=sys.stderr)
@@ -382,14 +405,14 @@ def bootstrap_venv() -> None:
         )
     else:
         print(
-            f"Reinstalling deps in {VENV_DIR} (stamp missing) ...",
+            f"Installing/updating deps in {VENV_DIR} ...",
             file=sys.stderr,
         )
     subprocess.run(
         [str(VENV_DIR / "bin" / "pip"), "install", "--quiet", *VENV_DEPS],
         check=True,
     )
-    VENV_STAMP.touch()
+    VENV_STAMP.write_text(want)
 
 
 def reexec_in_venv() -> None:
@@ -782,6 +805,34 @@ def _state_at_or_before(
 # --- Registry plumbing ------------------------------------------
 
 
+def node_ids_by_device(
+    devices_by_id: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    """Map HA ``device_id`` -> zwave ``node_id`` by reverse-parsing each
+    device's ``("zwave_js", "<home_id>-<node_id>")`` identifier.
+
+    The standalone CLI has no driver to call ``get_device_id`` against, so it
+    parses the identifier string. The extended identifier form appends more
+    ``-``-joined fields, but ``node_id`` stays at index 1. identifiers order
+    is non-deterministic, so the first ``zwave_js`` identifier that parses
+    wins.
+    """
+    dev_to_node: dict[str, int] = {}
+    for dev in devices_by_id.values():
+        for ident in dev.get("identifiers") or []:
+            if (
+                not isinstance(ident, (list, tuple))
+                or len(ident) < 2
+                or ident[0] != "zwave_js"
+            ):
+                continue
+            parts = str(ident[1]).split("-")
+            if len(parts) >= 2 and parts[1].isdigit():
+                dev_to_node[dev["id"]] = int(parts[1])
+                break
+    return dev_to_node
+
+
 def build_node_to_ha(
     devices_by_id: dict[str, dict[str, Any]],
     areas_by_id: dict[str, dict[str, Any]],
@@ -794,21 +845,7 @@ def build_node_to_ha(
     round_trip_time, etc). Absent entries mean the entity
     doesn't exist for that node -- rendered as ``--``.
     """
-    dev_to_node: dict[str, int] = {}
-    for dev in devices_by_id.values():
-        for ident in dev.get("identifiers") or []:
-            if not isinstance(ident, (list, tuple)) or len(ident) < 2:
-                continue
-            if ident[0] != "zwave_js":
-                continue
-            parts = str(ident[1]).split("-")
-            if len(parts) < 2:
-                continue
-            try:
-                dev_to_node[dev["id"]] = int(parts[1])
-            except ValueError:
-                continue
-            break
+    dev_to_node = node_ids_by_device(devices_by_id)
 
     out: dict[int, dict[str, Any]] = {}
     for dev_id, node_id in dev_to_node.items():
@@ -1940,18 +1977,258 @@ def do_list(
     return 0
 
 
+# --- Parameter Manager: shared read via a standalone access layer ---
+# zwavectl runs the same read + planner as the ZPM handler, only from a
+# different access layer: the handler reuses HA's in-process zwave-js client
+# and registries; this CLI opens its own zwave-js-server socket and reads the
+# HA registries / states over the API. Both feed the integration's shared
+# `source.build_node_read`, so the CLI resolves and reports identically.
+
+
+class _FleetReadError(Exception):
+    """A transport failure while reading the param-manager fleet (the 3000
+    socket or the HA API), surfaced as a clear message, not a traceback."""
+
+
+def _ensure_integration_importable() -> None:
+    """Put the integration's package root on sys.path so the shared
+    ``blueprint_toolkit.zwave_parameter_manager`` modules import.
+
+    zwavectl ships inside the integration tree but runs standalone, so it puts
+    ``custom_components`` (the dir holding the ``blueprint_toolkit`` package) on
+    sys.path. ``resolve()`` follows a cli-symlink to the real bundled file so
+    the walk is correct through a $PATH symlink. Callers then import under the
+    ``blueprint_toolkit`` top-level name -- the name HA's loader and mypy both
+    use for the package -- so the static import type-checks. Deferred to the
+    param-manager views, so ``list`` stays dependency-free.
+    """
+
+    cc_dir = str(pathlib.Path(__file__).resolve().parents[3])
+    if cc_dir not in sys.path:
+        sys.path.insert(0, cc_dir)
+
+
+async def _fetch_zwave_server_nodes() -> list[dict[str, Any]]:
+    """The zwave-js server's live per-node state via one start_listening.
+
+    Raw websocket to 3000; the node dicts carry the value metadata the param
+    resolver needs (which the 8091 getNodes() snapshot omits).
+    """
+
+    import websockets  # noqa: PLC0415 - needs venv
+    from zwave_js_server.const import (  # noqa: PLC0415 - needs venv
+        MAX_SERVER_SCHEMA_VERSION,
+    )
+
+    async with websockets.connect(ZWAVE_SERVER_URL, max_size=None) as ws:
+
+        async def recv() -> Any:
+            return json.loads(
+                await asyncio.wait_for(ws.recv(), ZWAVE_SERVER_RECV_TIMEOUT)
+            )
+
+        hello = await recv()
+        schema = min(
+            int(hello.get("maxSchemaVersion", 1)), MAX_SERVER_SCHEMA_VERSION
+        )
+        await ws.send(
+            json.dumps(
+                {
+                    "messageId": "sv",
+                    "command": "set_api_schema",
+                    "schemaVersion": schema,
+                }
+            )
+        )
+        while (await recv()).get("messageId") != "sv":
+            pass
+        await ws.send(
+            json.dumps({"messageId": "sl", "command": "start_listening"})
+        )
+        while True:
+            msg = await recv()
+            if msg.get("messageId") == "sl":
+                nodes: list[dict[str, Any]] = msg["result"]["state"]["nodes"]
+                return nodes
+
+
+async def _fetch_state_device_classes(api_key: str) -> dict[str, str | None]:
+    """``entity_id -> device_class`` off the live state attributes.
+
+    zwave_js publishes the device class on the entity's state, not the
+    registry, so device-type derivation reads it from the state (mirrors the
+    handler's ``source._device_class`` fallback).
+    """
+
+    import aiohttp  # noqa: PLC0415 - needs venv
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{HA_URL}/api/states", headers=headers) as r:
+            r.raise_for_status()
+            states = await r.json()
+    return {
+        s["entity_id"]: s.get("attributes", {}).get("device_class")
+        for s in states
+    }
+
+
+@dataclass(frozen=True)
+class NodeContext:
+    """The HA context ``source.build_node_read`` needs for one node, parsed
+    out of the registries: ``device_id`` / display ``name`` / ``location`` and
+    each entity's ``(domain, device_class)`` (state device_class fallback).
+    Field names + types mirror ``build_node_read``'s keyword parameters."""
+
+    device_id: str | None
+    name: str
+    location: str | None
+    entities: list[tuple[str, str | None]]
+
+
+def _node_contexts(
+    devices_by_id: dict[str, dict[str, Any]],
+    entities: list[dict[str, Any]],
+    areas_by_id: dict[str, dict[str, Any]],
+    device_classes: dict[str, str | None],
+) -> dict[int, NodeContext]:
+    """Map each zwave node_id to its ``NodeContext``."""
+
+    dev_to_node = node_ids_by_device(devices_by_id)
+
+    names: dict[int, str] = {}
+    locations: dict[int, str | None] = {}
+    ents: dict[int, list[tuple[str, str | None]]] = {}
+    for dev_id, node_id in dev_to_node.items():
+        dev = devices_by_id[dev_id]
+        area_id = dev.get("area_id")
+        locations[node_id] = (
+            areas_by_id[area_id].get("name")
+            if area_id and area_id in areas_by_id
+            else None
+        )
+        names[node_id] = dev.get("name_by_user") or dev.get("name") or ""
+        ents[node_id] = []
+
+    for ent in entities:
+        if ent.get("platform") != "zwave_js":
+            continue
+        nid = dev_to_node.get(ent.get("device_id") or "")
+        if nid is None:
+            continue
+        eid = ent.get("entity_id") or ""
+        dclass = (
+            ent.get("device_class")
+            or ent.get("original_device_class")
+            or device_classes.get(eid)
+        )
+        ents[nid].append((eid.split(".", 1)[0], dclass))
+
+    return {
+        node_id: NodeContext(
+            device_id=dev_id,
+            name=names[node_id],
+            location=locations[node_id],
+            entities=ents[node_id],
+        )
+        for dev_id, node_id in dev_to_node.items()
+    }
+
+
+def _assemble_fleet(
+    node_dicts: list[dict[str, Any]],
+    contexts: dict[int, NodeContext],
+) -> list[NodeRead]:
+    """Each live node dict + its HA context through the shared
+    ``source.build_node_read``. Returns a list of ``NodeRead``."""
+
+    _ensure_integration_importable()
+    from blueprint_toolkit.zwave_parameter_manager.source import (  # noqa: PLC0415
+        build_node_read,
+    )
+    from zwave_js_server.model.node import Node  # noqa: PLC0415 - needs venv
+
+    fleet: list[NodeRead] = []
+    for data in node_dicts:
+        node = Node(None, data)
+        ctx = contexts.get(node.node_id)
+        fleet.append(
+            build_node_read(
+                node,
+                device_id=ctx.device_id if ctx else None,
+                name=(ctx.name if ctx else "") or node.name or "",
+                location=ctx.location if ctx else None,
+                entities=ctx.entities if ctx else [],
+                last_awake=None,
+            )
+        )
+    return fleet
+
+
+async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
+    """Acquire and assemble the param-manager fleet from the live sources."""
+
+    node_dicts = await _fetch_zwave_server_nodes()
+    entities, devices_by_id, areas_by_id = await fetch_ha_registries(api_key)
+    device_classes = await _fetch_state_device_classes(api_key)
+    contexts = _node_contexts(
+        devices_by_id, entities, areas_by_id, device_classes
+    )
+    return _assemble_fleet(node_dicts, contexts)
+
+
 def _param_manager_config(mode: str) -> int:
     """Render a Parameter Manager config view for ``mode``.
 
-    The fetch from the zwave-js server, the adapter onto the shared resolver /
-    convergence model, and the table renderer land in following commits.
+    Acquires the same fleet the ZPM handler reads -- this CLI's own access
+    layer feeding the shared ``build_node_read`` -- then (in a following
+    commit) plans it against the policy file and renders the table.
     """
 
+    if not API_KEY_FILE.exists():
+        print(f"API key file not found: {API_KEY_FILE}", file=sys.stderr)
+        return 2
+    api_key = API_KEY_FILE.read_text().strip()
+    try:
+        fleet = _read_param_manager_fleet_sync(api_key)
+    except _FleetReadError as e:
+        print(f"Error: could not read the Z-Wave fleet: {e}", file=sys.stderr)
+        print(
+            "Check that the Z-Wave JS add-on is running, the zwave-js server "
+            "is reachable on 3000, and the API key is valid.",
+            file=sys.stderr,
+        )
+        return 4
     print(
-        f"param-manager config {mode}: not yet implemented",
+        f"param-manager config {mode}: read {len(fleet)} device(s); "
+        "planning + rendering not yet implemented",
         file=sys.stderr,
     )
     return 1
+
+
+def _read_param_manager_fleet_sync(api_key: str) -> list[NodeRead]:
+    """The async fleet read, run to completion; transport failures (the 3000
+    socket or the HA API) surface as ``_FleetReadError`` so the caller prints
+    a clear message instead of a traceback."""
+
+    import aiohttp  # noqa: PLC0415 - needs venv
+    import websockets.exceptions as ws_exc  # noqa: PLC0415 - needs venv
+
+    try:
+        return asyncio.run(_read_param_manager_fleet(api_key))
+    except (
+        TimeoutError,
+        OSError,
+        RuntimeError,
+        aiohttp.ClientError,
+        ws_exc.WebSocketException,
+        # A malformed server frame: a bad JSON payload (ValueError, which
+        # json.JSONDecodeError subclasses) or a missing expected key.
+        ValueError,
+        KeyError,
+    ) as e:
+        raise _FleetReadError(str(e) or type(e).__name__) from e
 
 
 def do_pm_config_desired() -> int:
@@ -1971,6 +2248,14 @@ def do_pm_config_unused() -> int:
 # ships standalone to the HA host and cannot import shared first-party code.
 
 if TYPE_CHECKING:
+    # Imported under the ``blueprint_toolkit`` top-level name -- the name HA's
+    # loader and mypy both use for the package (``custom_components`` carries
+    # no ``__init__``) -- so the type resolves to the real dataclass instead of
+    # colliding under a second module name. ``_assemble_fleet`` imports the
+    # callables the same way at runtime (after putting the package root on
+    # sys.path).
+    from blueprint_toolkit.zwave_parameter_manager.source import NodeRead
+
     _SubParsersActionBase = argparse._SubParsersAction[argparse.ArgumentParser]
 else:
     _SubParsersActionBase = argparse._SubParsersAction  # noqa: SLF001

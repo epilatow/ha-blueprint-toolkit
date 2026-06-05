@@ -6,6 +6,7 @@
 #     "pytest-cov",
 #     "pytest-homeassistant-custom-component==0.13.357",
 #     "types-PyYAML",
+#     "zwave-js-server-python==0.73.0",
 # ]
 # ///
 # This is AI generated code
@@ -670,12 +671,12 @@ class TestBootstrapVenv:
         assert cmd[0].endswith("/pip")
         assert stamp.exists()
 
-    def test_stamp_present_is_noop(self, tmp_path: Path) -> None:
+    def test_matching_stamp_is_noop(self, tmp_path: Path) -> None:
         venv_dir = tmp_path / ".venv"
         (venv_dir / "bin").mkdir(parents=True)
         (venv_dir / "bin" / "python").touch()
         stamp = venv_dir / ".installed"
-        stamp.touch()
+        stamp.write_text("\n".join(zc.VENV_DEPS))
         with (
             patch.object(zc, "VENV_DIR", venv_dir),
             patch.object(zc, "VENV_STAMP", stamp),
@@ -683,6 +684,26 @@ class TestBootstrapVenv:
         ):
             zc.bootstrap_venv()
         mock_run.assert_not_called()
+
+    def test_stale_stamp_reinstalls(self, tmp_path: Path) -> None:
+        # A venv from an older zwavectl (fewer deps) must reinstall when
+        # VENV_DEPS gains a dependency -- otherwise the stamp is present and
+        # the new dep is silently never installed (an ImportError later).
+        venv_dir = tmp_path / ".venv"
+        (venv_dir / "bin").mkdir(parents=True)
+        (venv_dir / "bin" / "python").touch()
+        stamp = venv_dir / ".installed"
+        stamp.write_text("aiohttp")  # an older, smaller dep set
+        with (
+            patch.object(zc, "VENV_DIR", venv_dir),
+            patch.object(zc, "VENV_STAMP", stamp),
+            patch.object(zc.subprocess, "run", autospec=True) as mock_run,
+        ):
+            zc.bootstrap_venv()
+        assert mock_run.call_count == 1  # pip install re-ran
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0].endswith("/pip")
+        assert stamp.read_text() == "\n".join(zc.VENV_DEPS)
 
 
 # --- Row / ALL_COLUMNS consistency -----------------------------
@@ -1308,13 +1329,154 @@ class TestCli:
         assert "invalid choice" in capsys.readouterr().err
 
     def test_mode_dispatches_to_its_entry_point(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Each mode action routes to its own callback, which calls
+        # _param_manager_config with that mode.
+        seen: list[str] = []
+
+        def fake(mode: str) -> int:
+            seen.append(mode)
+            return 0
+
+        monkeypatch.setattr(zc, "_param_manager_config", fake)
+        self._argv(monkeypatch, ["param-manager", "config", "unused"])
+        assert zc.cli() == 0
+        assert seen == ["unused"]
+
+
+# --- Parameter Manager fleet read ------------------------------
+
+
+def _pm_node_dict(node_id: int, mfr: str, model: str) -> dict[str, Any]:
+    """A start_listening-shape node dict: a motion sensor with a sensitivity
+    config param plus a wakeUpInterval."""
+    return {
+        "nodeId": node_id,
+        "index": 0,
+        "status": 1,
+        "ready": True,
+        "isListening": False,
+        "isRouting": True,
+        "isSecure": False,
+        "name": f"node {node_id}",
+        "deviceConfig": {"manufacturer": mfr, "label": model},
+        "deviceClass": {
+            "basic": {"key": 3, "label": "x"},
+            "generic": {"key": 7, "label": "y"},
+            "specific": {"key": 0, "label": "z"},
+        },
+        "endpoints": [{"nodeId": node_id, "index": 0}],
+        "values": [
+            {
+                "endpoint": 0,
+                "commandClass": 112,
+                "commandClassName": "Configuration",
+                "property": 12,
+                "propertyName": "Motion Sensor Sensitivity",
+                "value": 8,
+                "metadata": {
+                    "type": "number",
+                    "label": "Motion Sensor Sensitivity",
+                    "min": 0,
+                    "max": 8,
+                    "writeable": True,
+                },
+            },
+            {
+                "endpoint": 0,
+                "commandClass": 132,
+                "commandClassName": "Wake Up",
+                "property": "wakeUpInterval",
+                "propertyName": "Wake-up interval",
+                "value": 3600,
+                "metadata": {
+                    "type": "number",
+                    "label": "Wake-up interval",
+                    "min": 0,
+                    "max": 86400,
+                    "writeable": True,
+                },
+            },
+        ],
+    }
+
+
+class TestParamManagerFleet:
+    def _registries(
+        self,
+    ) -> tuple[
+        dict[str, dict[str, Any]],
+        list[dict[str, Any]],
+        dict[str, dict[str, Any]],
+        dict[str, str | None],
+    ]:
+        devices_by_id: dict[str, dict[str, Any]] = {
+            "devA": {
+                "id": "devA",
+                "identifiers": [["zwave_js", "0xc0ffee-5"]],
+                "name": "Guest Bath Motion",
+                "area_id": "areaA",
+            }
+        }
+        entities: list[dict[str, Any]] = [
+            {
+                "platform": "zwave_js",
+                "device_id": "devA",
+                "entity_id": "binary_sensor.guest_bath_motion",
+                "device_class": None,
+                "original_device_class": None,
+            }
+        ]
+        areas_by_id: dict[str, dict[str, Any]] = {
+            "areaA": {"area_id": "areaA", "name": "Guest Bath"}
+        }
+        # zwave_js leaves the registry device_class unset; the state carries it.
+        device_classes: dict[str, str | None] = {
+            "binary_sensor.guest_bath_motion": "motion"
+        }
+        return devices_by_id, entities, areas_by_id, device_classes
+
+    def test_node_contexts_maps_device_name_location_and_class(self) -> None:
+        ctx = zc._node_contexts(*self._registries())
+        assert ctx[5].device_id == "devA"
+        assert ctx[5].name == "Guest Bath Motion"
+        assert ctx[5].location == "Guest Bath"
+        assert ctx[5].entities == [("binary_sensor", "motion")]
+
+    def test_assemble_fleet_uses_shared_build_node_read(self) -> None:
+        # The CLI's access layer feeds the SAME shared assembly the handler
+        # does, so the resulting read matches: identity off the node,
+        # device_types off the HA state device_class, context off the
+        # registries.
+        ctx = zc._node_contexts(*self._registries())
+        fleet = zc._assemble_fleet([_pm_node_dict(5, "Zooz", "ZSE11")], ctx)
+        assert len(fleet) == 1
+        read = fleet[0]
+        assert (read.device.node_id, read.device.model) == (5, "ZSE11")
+        assert {t.name for t in read.device.device_types} == {"MOTION"}
+        assert read.convergence.name == "Guest Bath Motion"
+        assert read.convergence.location == "Guest Bath"
+        assert read.convergence.wake_interval_seconds == 3600
+
+    def test_config_reports_fleet_read_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
     ) -> None:
-        self._argv(monkeypatch, ["param-manager", "config", "unused"])
-        assert zc.cli() == 1
-        assert "unused: not yet implemented" in capsys.readouterr().err
+        # A transport failure (3000 socket / HA API) surfaces a clear,
+        # exit-coded message rather than a traceback.
+        key = tmp_path / "api-key"
+        key.write_text("tok")
+        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+
+        def boom(_api_key: str) -> list[Any]:
+            raise zc._FleetReadError("connection refused")
+
+        monkeypatch.setattr(zc, "_read_param_manager_fleet_sync", boom)
+        assert zc._param_manager_config("desired") == 4
+        assert "could not read the Z-Wave fleet" in capsys.readouterr().err
 
 
 # --- Code quality ----------------------------------------------
