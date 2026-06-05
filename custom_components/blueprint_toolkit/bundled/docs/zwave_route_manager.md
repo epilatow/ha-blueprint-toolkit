@@ -368,16 +368,16 @@ implementation swaps from socket.io to the HA client.
 ### Known failure mode: controller serial-interface wedge
 
 Observed once so far, 2026-04-23, after inclusion of two Zooz ZSE11 Q Sensors
-as Z-Wave Long Range nodes (IDs 273 and 274). ZRM and the
-`zwave_network_info.py` probe were both issuing `getPriorityRoute` for every
-node including LR ones; upstream zwave-js-ui already skips LR for its own
-startup interview, so our code was the last remaining LR-priority-route caller
-in this install. At some point during that window the controller (HA Z-Wave JS
-addon 1.2.0) stopped ACKing the driver's serial commands entirely -- every
-call timed out, priority-route queries on mesh nodes and LR alike. zwave-js
-cycled unresponsive -> soft-reset-failed -> reopen-serial -> next command
-hangs, and the reconcile's own burst of queries re-triggered the wedge on each
-recovery, so the automation itself became part of what kept the stick wedged.
+as Z-Wave Long Range nodes (IDs 273 and 274). ZRM and the `zwavectl.py` probe
+were both issuing `getPriorityRoute` for every node including LR ones;
+upstream zwave-js-ui already skips LR for its own startup interview, so our
+code was the last remaining LR-priority-route caller in this install. At some
+point during that window the controller (HA Z-Wave JS addon 1.2.0) stopped
+ACKing the driver's serial commands entirely -- every call timed out,
+priority-route queries on mesh nodes and LR alike. zwave-js cycled
+unresponsive -> soft-reset-failed -> reopen-serial -> next command hangs, and
+the reconcile's own burst of queries re-triggered the wedge on each recovery,
+so the automation itself became part of what kept the stick wedged.
 
 What exactly triggered the wedge isn't conclusively known. Plausible
 candidates: an LR-node `getPriorityRoute` call hitting a firmware bug, the
@@ -388,12 +388,12 @@ reproduced a clean trigger.
 The two-part fix (shipped):
 
 1. **Skip LR nodes in the per-node route refresh**
-   (`zwave_js_ui_bridge.get_nodes_with_fresh_routes` and the mirror in
-   `scripts/zwave_network_info.py`). LR is a direct-star topology with no
-   mesh, no priority routes, and no SUC return routes, so the queries are
-   meaningless regardless of any firmware issue. If LR priority-route calls
-   were part of the trigger, this removes our contribution; if not, the calls
-   were still wasted round-trips worth eliminating.
+   (`zwave_js_ui_bridge.get_nodes_with_fresh_routes` and the mirror in the
+   bundled `zwavectl.py`). LR is a direct-star topology with no mesh, no
+   priority routes, and no SUC return routes, so the queries are meaningless
+   regardless of any firmware issue. If LR priority-route calls were part of
+   the trigger, this removes our contribution; if not, the calls were still
+   wasted round-trips worth eliminating.
 2. **Circuit breaker** (see above) so a wedge from any future trigger doesn't
    get amplified by subsequent reconciles.
 

@@ -45,7 +45,7 @@ def _make_bundled(root: Path) -> Path:
         parents=True,
     )
     (bundled / "www" / "blueprint_toolkit" / "docs").mkdir(parents=True)
-    (bundled / "cli").mkdir(parents=True)
+    (bundled / "bin").mkdir(parents=True)
 
     (
         bundled
@@ -64,7 +64,7 @@ def _make_bundled(root: Path) -> Path:
     (bundled / "www" / "blueprint_toolkit" / "docs" / "demo.html").write_text(
         "<html>demo</html>\n"
     )
-    (bundled / "cli" / "demo_cli.py").write_text(
+    (bundled / "bin" / "demo_cli.py").write_text(
         "#!/usr/bin/env python3\n",
     )
     return bundled

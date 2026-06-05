@@ -446,16 +446,16 @@ public API (ZwaveJsUiClient + typed methods) stays the same; the
 implementation swaps from socket.io to the HA client.</p>
 <h3>Known failure mode: controller serial-interface wedge</h3>
 <p>Observed once so far, 2026-04-23, after inclusion of two Zooz ZSE11 Q Sensors
-as Z-Wave Long Range nodes (IDs 273 and 274). ZRM and the
-<code>zwave_network_info.py</code> probe were both issuing <code>getPriorityRoute</code> for every
-node including LR ones; upstream zwave-js-ui already skips LR for its own
-startup interview, so our code was the last remaining LR-priority-route caller
-in this install. At some point during that window the controller (HA Z-Wave JS
-addon 1.2.0) stopped ACKing the driver's serial commands entirely -- every
-call timed out, priority-route queries on mesh nodes and LR alike. zwave-js
-cycled unresponsive -&gt; soft-reset-failed -&gt; reopen-serial -&gt; next command
-hangs, and the reconcile's own burst of queries re-triggered the wedge on each
-recovery, so the automation itself became part of what kept the stick wedged.</p>
+as Z-Wave Long Range nodes (IDs 273 and 274). ZRM and the <code>zwavectl.py</code> probe
+were both issuing <code>getPriorityRoute</code> for every node including LR ones;
+upstream zwave-js-ui already skips LR for its own startup interview, so our
+code was the last remaining LR-priority-route caller in this install. At some
+point during that window the controller (HA Z-Wave JS addon 1.2.0) stopped
+ACKing the driver's serial commands entirely -- every call timed out,
+priority-route queries on mesh nodes and LR alike. zwave-js cycled
+unresponsive -&gt; soft-reset-failed -&gt; reopen-serial -&gt; next command hangs, and
+the reconcile's own burst of queries re-triggered the wedge on each recovery,
+so the automation itself became part of what kept the stick wedged.</p>
 <p>What exactly triggered the wedge isn't conclusively known. Plausible
 candidates: an LR-node <code>getPriorityRoute</code> call hitting a firmware bug, the
 volume of concurrent priority-route commands saturating the controller queue,
@@ -464,12 +464,12 @@ reproduced a clean trigger.</p>
 <p>The two-part fix (shipped):</p>
 <ol>
 <li><strong>Skip LR nodes in the per-node route refresh</strong>
-(<code>zwave_js_ui_bridge.get_nodes_with_fresh_routes</code> and the mirror in
-<code>scripts/zwave_network_info.py</code>). LR is a direct-star topology with no
-mesh, no priority routes, and no SUC return routes, so the queries are
-meaningless regardless of any firmware issue. If LR priority-route calls
-were part of the trigger, this removes our contribution; if not, the calls
-were still wasted round-trips worth eliminating.</li>
+(<code>zwave_js_ui_bridge.get_nodes_with_fresh_routes</code> and the mirror in the
+bundled <code>zwavectl.py</code>). LR is a direct-star topology with no mesh, no
+priority routes, and no SUC return routes, so the queries are meaningless
+regardless of any firmware issue. If LR priority-route calls were part of
+the trigger, this removes our contribution; if not, the calls were still
+wasted round-trips worth eliminating.</li>
 <li><strong>Circuit breaker</strong> (see above) so a wedge from any future trigger doesn't
 get amplified by subsequent reconciles.</li>
 </ol>

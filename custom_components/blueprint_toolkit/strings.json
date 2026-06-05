@@ -18,7 +18,7 @@
           "cli_symlink_dir": "CLI symlink directory"
         },
         "data_description": {
-          "cli_symlink_dir": "Bundled CLI scripts (zwave_network_info.py) will be symlinked into this directory. Path must be writable by Home Assistant. On HAOS / Supervised, the integration runs in its own container -- use a shared-mount path like /config (paths like /root resolve inside HA's container, not the SSH add-on). Leave empty to skip."
+          "cli_symlink_dir": "Bundled CLI scripts (zwavectl.py) will be symlinked into this directory. Path must be writable by Home Assistant. On HAOS / Supervised, the integration runs in its own container -- use a shared-mount path like /config (paths like /root resolve inside HA's container, not the SSH add-on). Leave empty to skip."
         }
       }
     }

@@ -117,7 +117,7 @@ module = ["yaml"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# scripts/zwave_network_info.py bootstraps its own venv for
+# the bundled zwavectl.py CLI bootstraps its own venv for
 # these at runtime; the host dev environment may not have them
 # installed. The ZRM bridge module imports socketio lazily,
 # and the ZRM handler imports socketio.exceptions to classify
@@ -160,10 +160,10 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # scripts/render_docs.py, scripts/ha_ws_fetch.py,
 # scripts/hacc_upgrade.py, and the
-# bundled zwave_network_info CLI are bare scripts the test
+# bundled zwavectl CLI are bare scripts the test
 # files import off a runtime sys.path entry; mypy's import
 # resolver can't see them.
-module = ["render_docs", "zwave_network_info", "ha_ws_fetch", "hacc_upgrade"]
+module = ["render_docs", "zwavectl", "ha_ws_fetch", "hacc_upgrade"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

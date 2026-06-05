@@ -9,7 +9,7 @@
 # ]
 # ///
 # This is AI generated code
-"""Tests for the standalone zwave_network_info script.
+"""Tests for the standalone zwavectl script.
 
 The script bootstraps its own venv for socketio / aiohttp. Most
 tests exercise its pure logic (formatting, parsing, sorting, and
@@ -34,13 +34,13 @@ _SCRIPT_PATH = (
     / "custom_components"
     / "blueprint_toolkit"
     / "bundled"
-    / "cli"
-    / "zwave_network_info.py"
+    / "bin"
+    / "zwavectl.py"
 )
 
 sys.path.insert(0, str(_SCRIPT_PATH.parent))
 
-import zwave_network_info as zni  # noqa: E402
+import zwavectl as zc  # noqa: E402
 
 # --- fetch_zwave_nodes ------------------------------------------
 
@@ -79,24 +79,24 @@ def test_fetch_zwave_nodes_rejects_malformed_result() -> None:
 
 class TestParseNumeric:
     def test_int(self) -> None:
-        assert zni._parse_numeric("42") == 42
+        assert zc._parse_numeric("42") == 42
 
     def test_float_non_integer(self) -> None:
-        assert zni._parse_numeric("3.5") == 3.5
+        assert zc._parse_numeric("3.5") == 3.5
 
     def test_float_integer_value_collapses_to_int(self) -> None:
         # "100.0" comes back as 100 (int), not 100.0 (float), so
         # renderers don't show ".0" for whole numbers.
-        v = zni._parse_numeric("100.0")
+        v = zc._parse_numeric("100.0")
         assert v == 100
         assert isinstance(v, int)
 
     def test_none_and_sentinels(self) -> None:
         for raw in (None, "unavailable", "unknown", ""):
-            assert zni._parse_numeric(raw) is None
+            assert zc._parse_numeric(raw) is None
 
     def test_garbage(self) -> None:
-        assert zni._parse_numeric("not a number") is None
+        assert zc._parse_numeric("not a number") is None
 
 
 # --- _drop_rate / _fmt_drop_rate --------------------------------
@@ -104,64 +104,64 @@ class TestParseNumeric:
 
 class TestDropRate:
     def test_both_none(self) -> None:
-        assert zni._drop_rate(None, None) is None
+        assert zc._drop_rate(None, None) is None
 
     def test_no_activity_is_none(self) -> None:
         # 0 success + 0 drops is a meaningless rate, not 0%.
-        assert zni._drop_rate(0, 0) is None
+        assert zc._drop_rate(0, 0) is None
 
     def test_all_success(self) -> None:
-        assert zni._drop_rate(100, 0) == 0.0
+        assert zc._drop_rate(100, 0) == 0.0
 
     def test_all_drops(self) -> None:
-        assert zni._drop_rate(0, 100) == 1.0
+        assert zc._drop_rate(0, 100) == 1.0
 
     def test_mixed(self) -> None:
-        assert zni._drop_rate(90, 10) == pytest.approx(0.1)
+        assert zc._drop_rate(90, 10) == pytest.approx(0.1)
 
     def test_drops_only_counter_present(self) -> None:
         # When only the drops counter came back, treat the missing
         # success counter as 0 rather than None -- the rate is
         # still computable.
-        assert zni._drop_rate(None, 5) == 1.0
+        assert zc._drop_rate(None, 5) == 1.0
 
     def test_success_only_counter_present(self) -> None:
-        assert zni._drop_rate(5, None) == 0.0
+        assert zc._drop_rate(5, None) == 0.0
 
     def test_non_numeric_rejected(self) -> None:
         # Strings shouldn't creep into the arithmetic; treated
         # like None.
-        assert zni._drop_rate("5", "3") is None
+        assert zc._drop_rate("5", "3") is None
 
     def test_explicit_zero_counter_not_confused_with_none(self) -> None:
         # This is the bug the refactor fixed: 0 must not get
         # coerced to None by a truthiness check. We verify by
         # driving a rate computation that requires distinguishing
         # between "success=0, drops=5" (1.0) and "no data" (None).
-        assert zni._drop_rate(0, 5) == 1.0
-        assert zni._drop_rate(5, 0) == 0.0
+        assert zc._drop_rate(0, 5) == 1.0
+        assert zc._drop_rate(5, 0) == 0.0
 
 
 class TestFmtDropRate:
     def test_none(self) -> None:
-        assert zni._fmt_drop_rate(None, use_color=False) == zni.DASH
+        assert zc._fmt_drop_rate(None, use_color=False) == zc.DASH
 
     def test_zero(self) -> None:
-        assert zni._fmt_drop_rate(0.0, use_color=False) == "0"
+        assert zc._fmt_drop_rate(0.0, use_color=False) == "0"
 
     def test_sub_one_percent(self) -> None:
         # Non-zero rate that would round to 0 shows as "<1".
-        assert zni._fmt_drop_rate(0.001, use_color=False) == "<1"
+        assert zc._fmt_drop_rate(0.001, use_color=False) == "<1"
 
     def test_rounded_int_percent(self) -> None:
-        assert zni._fmt_drop_rate(0.03, use_color=False) == "3"
-        assert zni._fmt_drop_rate(0.10, use_color=False) == "10"
+        assert zc._fmt_drop_rate(0.03, use_color=False) == "3"
+        assert zc._fmt_drop_rate(0.10, use_color=False) == "10"
 
     def test_color_thresholds(self) -> None:
         # green < 1%, yellow 1-5%, red > 5%.
-        assert zni.ANSI_GREEN in zni._fmt_drop_rate(0.005, use_color=True)
-        assert zni.ANSI_YELLOW in zni._fmt_drop_rate(0.03, use_color=True)
-        assert zni.ANSI_RED in zni._fmt_drop_rate(0.20, use_color=True)
+        assert zc.ANSI_GREEN in zc._fmt_drop_rate(0.005, use_color=True)
+        assert zc.ANSI_YELLOW in zc._fmt_drop_rate(0.03, use_color=True)
+        assert zc.ANSI_RED in zc._fmt_drop_rate(0.20, use_color=True)
 
 
 # --- _ss_quality / _ss_color ------------------------------------
@@ -169,40 +169,40 @@ class TestFmtDropRate:
 
 class TestSsQuality:
     def test_mesh_buckets(self) -> None:
-        assert zni._ss_quality(-60, "Mesh") == "good"
-        assert zni._ss_quality(-75, "Mesh") == "fair"
-        assert zni._ss_quality(-90, "Mesh") == "poor"
+        assert zc._ss_quality(-60, "Mesh") == "good"
+        assert zc._ss_quality(-75, "Mesh") == "fair"
+        assert zc._ss_quality(-90, "Mesh") == "poor"
 
     def test_lr_buckets(self) -> None:
         # LR thresholds are ~15 dB weaker than Mesh. A value
         # that's "poor" on Mesh is often still "fair" on LR.
-        assert zni._ss_quality(-90, "LR") == "fair"
-        assert zni._ss_quality(-70, "LR") == "good"
-        assert zni._ss_quality(-105, "LR") == "poor"
+        assert zc._ss_quality(-90, "LR") == "fair"
+        assert zc._ss_quality(-70, "LR") == "good"
+        assert zc._ss_quality(-105, "LR") == "poor"
 
     def test_none_input(self) -> None:
-        assert zni._ss_quality(None, "Mesh") is None
+        assert zc._ss_quality(None, "Mesh") is None
 
     def test_unknown_protocol_falls_back_to_mesh(self) -> None:
-        assert zni._ss_quality(-60, None) == "good"
-        assert zni._ss_quality(-90, "unknown") == "poor"
+        assert zc._ss_quality(-60, None) == "good"
+        assert zc._ss_quality(-90, "unknown") == "poor"
 
     def test_boundary_values(self) -> None:
         # Boundaries: "> good_above" is good; "> fair_above" is
         # fair; otherwise poor. Exactly at the boundary lands in
         # the weaker bucket.
-        assert zni._ss_quality(-70, "Mesh") == "fair"
-        assert zni._ss_quality(-85, "Mesh") == "poor"
+        assert zc._ss_quality(-70, "Mesh") == "fair"
+        assert zc._ss_quality(-85, "Mesh") == "poor"
 
 
 class TestSsColor:
     def test_color_per_bucket(self) -> None:
-        assert zni._ss_color(-60, "Mesh") == zni.ANSI_GREEN
-        assert zni._ss_color(-75, "Mesh") == zni.ANSI_YELLOW
-        assert zni._ss_color(-90, "Mesh") == zni.ANSI_RED
+        assert zc._ss_color(-60, "Mesh") == zc.ANSI_GREEN
+        assert zc._ss_color(-75, "Mesh") == zc.ANSI_YELLOW
+        assert zc._ss_color(-90, "Mesh") == zc.ANSI_RED
 
     def test_none_input(self) -> None:
-        assert zni._ss_color(None, "Mesh") == ""
+        assert zc._ss_color(None, "Mesh") == ""
 
 
 # --- _fmt_last_seen ---------------------------------------------
@@ -210,16 +210,16 @@ class TestSsColor:
 
 class TestFmtLastSeen:
     def test_none(self) -> None:
-        assert zni._fmt_last_seen(None) == zni.DASH
+        assert zc._fmt_last_seen(None) == zc.DASH
 
     def test_unparseable(self) -> None:
-        assert zni._fmt_last_seen("this is not a timestamp") == zni.DASH
+        assert zc._fmt_last_seen("this is not a timestamp") == zc.DASH
 
     def test_naive_timestamp_assumed_utc(self) -> None:
         # Naive (no tz) input should be treated as UTC, not as
         # local time (which would give variable results per host).
         t = datetime.now(UTC) - timedelta(minutes=5)
-        assert zni._fmt_last_seen(t.replace(tzinfo=None).isoformat()) == "5m"
+        assert zc._fmt_last_seen(t.replace(tzinfo=None).isoformat()) == "5m"
 
     def test_zulu_suffix(self) -> None:
         # Python 3.11+ parses "Z" natively; the script's old
@@ -227,7 +227,7 @@ class TestFmtLastSeen:
         # want to make sure the native path still works.
         t = datetime.now(UTC) - timedelta(hours=2)
         stamp = t.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
-        assert zni._fmt_last_seen(stamp) == "2h"
+        assert zc._fmt_last_seen(stamp) == "2h"
 
     def test_tier_transitions(self) -> None:
         now = datetime.now(UTC)
@@ -241,13 +241,13 @@ class TestFmtLastSeen:
         ]
         for delta, expected in cases:
             stamp = (now - delta).isoformat()
-            assert zni._fmt_last_seen(stamp) == expected, expected
+            assert zc._fmt_last_seen(stamp) == expected, expected
 
     def test_future_clamped_to_now(self) -> None:
         # Clock skew / HA recording a state slightly in the
         # future shouldn't surface as a negative age.
         future = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
-        assert zni._fmt_last_seen(future) == "now"
+        assert zc._fmt_last_seen(future) == "now"
 
 
 # --- _fmt_update ------------------------------------------------
@@ -255,17 +255,17 @@ class TestFmtLastSeen:
 
 class TestFmtUpdate:
     def test_no_updates(self) -> None:
-        assert zni._fmt_update(None) == "no"
-        assert zni._fmt_update([]) == "no"
+        assert zc._fmt_update(None) == "no"
+        assert zc._fmt_update([]) == "no"
 
     def test_with_version(self) -> None:
-        assert zni._fmt_update([{"version": "7.21.0"}]) == "yes (v7.21.0)"
+        assert zc._fmt_update([{"version": "7.21.0"}]) == "yes (v7.21.0)"
 
     def test_without_version(self) -> None:
-        assert zni._fmt_update([{"other_field": "x"}]) == "yes"
+        assert zc._fmt_update([{"other_field": "x"}]) == "yes"
 
     def test_non_list(self) -> None:
-        assert zni._fmt_update("garbage") == "no"
+        assert zc._fmt_update("garbage") == "no"
 
 
 # --- _fmt_num / _fmt_battery / _fmt_version / _fmt_neighbors ---
@@ -273,83 +273,83 @@ class TestFmtUpdate:
 
 class TestFmtNum:
     def test_none(self) -> None:
-        assert zni._fmt_num(None) == zni.DASH
+        assert zc._fmt_num(None) == zc.DASH
 
     def test_int(self) -> None:
-        assert zni._fmt_num(42) == "42"
+        assert zc._fmt_num(42) == "42"
 
     def test_float_integer_value(self) -> None:
-        assert zni._fmt_num(42.0) == "42"
+        assert zc._fmt_num(42.0) == "42"
 
     def test_float_fractional(self) -> None:
-        assert zni._fmt_num(3.15) == "3.1"
+        assert zc._fmt_num(3.15) == "3.1"
 
 
 class TestFmtBattery:
     def test_none(self) -> None:
-        assert zni._fmt_battery(None) == zni.DASH
+        assert zc._fmt_battery(None) == zc.DASH
 
     def test_int(self) -> None:
-        assert zni._fmt_battery(75) == "75"
+        assert zc._fmt_battery(75) == "75"
 
     def test_float_truncates(self) -> None:
-        assert zni._fmt_battery(75.9) == "75"
+        assert zc._fmt_battery(75.9) == "75"
 
 
 class TestFmtVersion:
     def test_none(self) -> None:
-        assert zni._fmt_version(None) == zni.DASH
+        assert zc._fmt_version(None) == zc.DASH
 
     def test_empty(self) -> None:
-        assert zni._fmt_version("") == zni.DASH
+        assert zc._fmt_version("") == zc.DASH
 
     def test_value(self) -> None:
-        assert zni._fmt_version("1.2.3") == "v1.2.3"
+        assert zc._fmt_version("1.2.3") == "v1.2.3"
 
 
 class TestFmtNeighbors:
     def test_none(self) -> None:
-        assert zni._fmt_neighbors(None) == zni.DASH
+        assert zc._fmt_neighbors(None) == zc.DASH
 
     def test_empty(self) -> None:
-        assert zni._fmt_neighbors([]) == "none"
+        assert zc._fmt_neighbors([]) == "none"
 
     def test_list(self) -> None:
-        assert zni._fmt_neighbors([1, 17, 50]) == "1 17 50"
+        assert zc._fmt_neighbors([1, 17, 50]) == "1 17 50"
 
 
 class TestFmtRole:
     def test_none(self) -> None:
-        assert zni._fmt_role(None) == zni.DASH
+        assert zc._fmt_role(None) == zc.DASH
 
     def test_known(self) -> None:
-        assert zni._fmt_role(5) == "AlwaysOn"
+        assert zc._fmt_role(5) == "AlwaysOn"
 
     def test_unknown(self) -> None:
-        assert zni._fmt_role(99) == "?99"
+        assert zc._fmt_role(99) == "?99"
 
 
 class TestFmtRouteSpeed:
     def test_none(self) -> None:
-        assert zni._fmt_route_speed(None) == zni.DASH
+        assert zc._fmt_route_speed(None) == zc.DASH
 
     def test_known(self) -> None:
-        assert zni._fmt_route_speed(3) == "100k"
-        assert zni._fmt_route_speed(4) == "LR"
+        assert zc._fmt_route_speed(3) == "100k"
+        assert zc._fmt_route_speed(4) == "LR"
 
     def test_unknown(self) -> None:
-        assert zni._fmt_route_speed(99) == "?99"
+        assert zc._fmt_route_speed(99) == "?99"
 
 
 class TestFmtMaxSpeed:
     def test_none(self) -> None:
-        assert zni._fmt_max_speed(None) == zni.DASH
+        assert zc._fmt_max_speed(None) == zc.DASH
 
     def test_known(self) -> None:
-        assert zni._fmt_max_speed(100000) == "100k"
+        assert zc._fmt_max_speed(100000) == "100k"
 
     def test_unknown(self) -> None:
-        assert zni._fmt_max_speed(42000) == "?42000"
+        assert zc._fmt_max_speed(42000) == "?42000"
 
 
 # --- _visible_len / _pad ----------------------------------------
@@ -357,38 +357,38 @@ class TestFmtMaxSpeed:
 
 class TestVisibleLen:
     def test_plain(self) -> None:
-        assert zni._visible_len("hello") == 5
+        assert zc._visible_len("hello") == 5
 
     def test_with_ansi(self) -> None:
-        s = f"{zni.ANSI_GREEN}hello{zni.ANSI_RESET}"
-        assert zni._visible_len(s) == 5
+        s = f"{zc.ANSI_GREEN}hello{zc.ANSI_RESET}"
+        assert zc._visible_len(s) == 5
 
     def test_truncated_ansi_terminates(self) -> None:
         # Malformed/truncated escape shouldn't scan past the end
         # of string or hang; the exact fallback count isn't
         # important (alignment code only cares that it returns).
-        result = zni._visible_len("\033[3")
+        result = zc._visible_len("\033[3")
         assert isinstance(result, int)
         assert result >= 0
 
 
 class TestPad:
     def test_left_align(self) -> None:
-        assert zni._pad("hi", 5, right_align=False) == "hi   "
+        assert zc._pad("hi", 5, right_align=False) == "hi   "
 
     def test_right_align(self) -> None:
-        assert zni._pad("hi", 5, right_align=True) == "   hi"
+        assert zc._pad("hi", 5, right_align=True) == "   hi"
 
     def test_overflow(self) -> None:
-        assert zni._pad("abcdef", 3, right_align=False) == "abcdef"
+        assert zc._pad("abcdef", 3, right_align=False) == "abcdef"
 
     def test_visible_len_used_for_padding(self) -> None:
         # A colored 5-char string should pad to width 5, not
         # width-including-escape-codes.
-        colored = f"{zni.ANSI_GREEN}hello{zni.ANSI_RESET}"
-        padded = zni._pad(colored, 7, right_align=False)
+        colored = f"{zc.ANSI_GREEN}hello{zc.ANSI_RESET}"
+        padded = zc._pad(colored, 7, right_align=False)
         assert padded.endswith("  ")
-        assert zni._visible_len(padded) == 7
+        assert zc._visible_len(padded) == 7
 
 
 # --- _parse_columns / _parse_sort -------------------------------
@@ -396,53 +396,53 @@ class TestPad:
 
 class TestParseColumns:
     def test_empty_returns_defaults(self) -> None:
-        assert zni._parse_columns("") == zni._COLUMN_ALIASES["defaults"]
+        assert zc._parse_columns("") == zc._COLUMN_ALIASES["defaults"]
 
     def test_all(self) -> None:
-        assert zni._parse_columns("all") == zni.ALL_COLUMNS
+        assert zc._parse_columns("all") == zc.ALL_COLUMNS
 
     def test_alias_expansion(self) -> None:
-        assert zni._parse_columns("firmware") == zni._COLUMN_ALIASES["firmware"]
+        assert zc._parse_columns("firmware") == zc._COLUMN_ALIASES["firmware"]
 
     def test_mixed_alias_and_columns(self) -> None:
         # Aliases expand in place; duplicates are dropped.
-        out = zni._parse_columns("node,firmware,device")
+        out = zc._parse_columns("node,firmware,device")
         assert out == ["node", "firmware-dev", "firmware-sdk", "device"]
 
     def test_unknown_column_raises(self) -> None:
         with pytest.raises(SystemExit):
-            zni._parse_columns("not-a-real-column")
+            zc._parse_columns("not-a-real-column")
 
     def test_whitespace_and_case(self) -> None:
-        assert zni._parse_columns("  Node , Device ") == ["node", "device"]
+        assert zc._parse_columns("  Node , Device ") == ["node", "device"]
 
     def test_singular_default_alias_works(self) -> None:
         # 'default' is a back-compat singular synonym of 'defaults'.
-        assert zni._parse_columns("default") == zni._COLUMN_ALIASES["defaults"]
+        assert zc._parse_columns("default") == zc._COLUMN_ALIASES["defaults"]
 
 
 class TestParseSort:
     def test_default(self) -> None:
-        assert zni._parse_sort("node") == ["node"]
+        assert zc._parse_sort("node") == ["node"]
 
     def test_multi(self) -> None:
-        assert zni._parse_sort("location,device") == ["location", "device"]
+        assert zc._parse_sort("location,device") == ["location", "device"]
 
     def test_dedup(self) -> None:
-        assert zni._parse_sort("location,location") == ["location"]
+        assert zc._parse_sort("location,location") == ["location"]
 
     def test_unknown_raises(self) -> None:
         with pytest.raises(SystemExit):
-            zni._parse_sort("not-a-real-column")
+            zc._parse_sort("not-a-real-column")
 
     def test_alias_rejected(self) -> None:
         # --sort accepts real column names only, not aliases.
         with pytest.raises(SystemExit):
-            zni._parse_sort("firmware")
+            zc._parse_sort("firmware")
 
     def test_empty_falls_back_to_node(self) -> None:
-        assert zni._parse_sort("") == ["node"]
-        assert zni._parse_sort(" , ") == ["node"]
+        assert zc._parse_sort("") == ["node"]
+        assert zc._parse_sort(" , ") == ["node"]
 
 
 # --- _route_label -----------------------------------------------
@@ -450,30 +450,30 @@ class TestParseSort:
 
 class TestRouteLabel:
     def test_none(self) -> None:
-        assert zni._route_label(None, {}) == zni.DASH
+        assert zc._route_label(None, {}) == zc.DASH
 
     def test_no_repeaters(self) -> None:
-        assert zni._route_label({"repeaters": []}, {}) == zni.DASH
+        assert zc._route_label({"repeaters": []}, {}) == zc.DASH
 
     def test_repeater_resolves_to_device_name(self) -> None:
         node_to_ha = {
             50: {"device_name": "Hallway Switch", "stat_entities": {}},
         }
         assert (
-            zni._route_label({"repeaters": [50]}, node_to_ha)
+            zc._route_label({"repeaters": [50]}, node_to_ha)
             == "Hallway Switch"
         )
 
     def test_repeater_falls_back_to_node_label(self) -> None:
         # Unknown node id -> "node N".
-        assert zni._route_label({"repeaters": [99]}, {}) == "node 99"
+        assert zc._route_label({"repeaters": [99]}, {}) == "node 99"
 
     def test_multiple_hops_shows_count(self) -> None:
         node_to_ha = {
             50: {"device_name": "Repeater A", "stat_entities": {}},
         }
         assert (
-            zni._route_label({"repeaters": [50, 17, 13]}, node_to_ha)
+            zc._route_label({"repeaters": [50, 17, 13]}, node_to_ha)
             == "Repeater A (+2)"
         )
 
@@ -492,7 +492,7 @@ def _hist(times: list[tuple[str, str]]) -> list[dict[str, Any]]:
 
 class TestStateAtOrBefore:
     def test_empty_history(self) -> None:
-        assert zni._state_at_or_before([], datetime.now(UTC)) is None
+        assert zc._state_at_or_before([], datetime.now(UTC)) is None
 
     def test_returns_last_state_before_target(self) -> None:
         hist = _hist(
@@ -503,12 +503,12 @@ class TestStateAtOrBefore:
             ],
         )
         target = datetime(2026, 4, 7, tzinfo=UTC)
-        assert zni._state_at_or_before(hist, target) == "-80"
+        assert zc._state_at_or_before(hist, target) == "-80"
 
     def test_target_before_any_reading(self) -> None:
         hist = _hist([("2026-04-10T00:00:00+00:00", "-70")])
         target = datetime(2026, 4, 1, tzinfo=UTC)
-        assert zni._state_at_or_before(hist, target) is None
+        assert zc._state_at_or_before(hist, target) is None
 
     def test_skips_unavailable_states(self) -> None:
         hist = _hist(
@@ -519,12 +519,12 @@ class TestStateAtOrBefore:
             ],
         )
         target = datetime(2026, 4, 5, tzinfo=UTC)
-        assert zni._state_at_or_before(hist, target) == "-70"
+        assert zc._state_at_or_before(hist, target) == "-70"
 
     def test_zulu_timestamp_parses(self) -> None:
         hist = _hist([("2026-04-01T00:00:00Z", "-70")])
         target = datetime(2026, 4, 5, tzinfo=UTC)
-        assert zni._state_at_or_before(hist, target) == "-70"
+        assert zc._state_at_or_before(hist, target) == "-70"
 
     def test_malformed_timestamp_skipped(self) -> None:
         hist = [
@@ -532,14 +532,14 @@ class TestStateAtOrBefore:
             {"last_changed": "2026-04-01T00:00:00+00:00", "state": "-75"},
         ]
         target = datetime(2026, 4, 5, tzinfo=UTC)
-        assert zni._state_at_or_before(hist, target) == "-75"
+        assert zc._state_at_or_before(hist, target) == "-75"
 
     def test_last_updated_fallback(self) -> None:
         hist = [
             {"last_updated": "2026-04-01T00:00:00+00:00", "state": "-70"},
         ]
         target = datetime(2026, 4, 5, tzinfo=UTC)
-        assert zni._state_at_or_before(hist, target) == "-70"
+        assert zc._state_at_or_before(hist, target) == "-70"
 
 
 # --- _read_recorder_keep_days ----------------------------------
@@ -548,11 +548,11 @@ class TestStateAtOrBefore:
 class TestReadRecorderKeepDays:
     def test_missing_file(self, tmp_path: Path) -> None:
         with patch.object(
-            zni,
+            zc,
             "HA_CONFIG_YAML",
             tmp_path / "does-not-exist.yaml",
         ):
-            assert zni._read_recorder_keep_days() == 10
+            assert zc._read_recorder_keep_days() == 10
 
     def test_inline_block(self, tmp_path: Path) -> None:
         cfg = tmp_path / "configuration.yaml"
@@ -563,16 +563,16 @@ class TestReadRecorderKeepDays:
             "  purge_keep_days: 30\n"
             "  commit_interval: 5\n",
         )
-        with patch.object(zni, "HA_CONFIG_YAML", cfg):
-            assert zni._read_recorder_keep_days() == 30
+        with patch.object(zc, "HA_CONFIG_YAML", cfg):
+            assert zc._read_recorder_keep_days() == 30
 
     def test_include_file(self, tmp_path: Path) -> None:
         cfg = tmp_path / "configuration.yaml"
         included = tmp_path / "recorder.yaml"
         cfg.write_text("recorder: !include recorder.yaml\n")
         included.write_text("purge_keep_days: 45\ncommit_interval: 5\n")
-        with patch.object(zni, "HA_CONFIG_YAML", cfg):
-            assert zni._read_recorder_keep_days() == 45
+        with patch.object(zc, "HA_CONFIG_YAML", cfg):
+            assert zc._read_recorder_keep_days() == 45
 
     def test_include_dir_merge_named_falls_back_to_default(
         self,
@@ -584,20 +584,20 @@ class TestReadRecorderKeepDays:
         # over-estimates retention).
         cfg = tmp_path / "configuration.yaml"
         cfg.write_text("recorder: !include_dir_merge_named recorder_d\n")
-        with patch.object(zni, "HA_CONFIG_YAML", cfg):
-            assert zni._read_recorder_keep_days() == 10
+        with patch.object(zc, "HA_CONFIG_YAML", cfg):
+            assert zc._read_recorder_keep_days() == 10
 
     def test_no_recorder_key(self, tmp_path: Path) -> None:
         cfg = tmp_path / "configuration.yaml"
         cfg.write_text("default_config:\n")
-        with patch.object(zni, "HA_CONFIG_YAML", cfg):
-            assert zni._read_recorder_keep_days() == 10
+        with patch.object(zc, "HA_CONFIG_YAML", cfg):
+            assert zc._read_recorder_keep_days() == 10
 
     def test_recorder_without_purge_keep_days(self, tmp_path: Path) -> None:
         cfg = tmp_path / "configuration.yaml"
         cfg.write_text("recorder:\n  commit_interval: 5\n")
-        with patch.object(zni, "HA_CONFIG_YAML", cfg):
-            assert zni._read_recorder_keep_days() == 10
+        with patch.object(zc, "HA_CONFIG_YAML", cfg):
+            assert zc._read_recorder_keep_days() == 10
 
 
 # --- bootstrap_venv --------------------------------------------
@@ -633,16 +633,16 @@ class TestBootstrapVenv:
         venv_dir = tmp_path / ".venv"
         stamp = venv_dir / ".installed"
         with (
-            patch.object(zni, "VENV_DIR", venv_dir),
-            patch.object(zni, "VENV_STAMP", stamp),
+            patch.object(zc, "VENV_DIR", venv_dir),
+            patch.object(zc, "VENV_STAMP", stamp),
             patch.object(
-                zni.subprocess,
+                zc.subprocess,
                 "run",
                 autospec=True,
                 side_effect=_fake_venv_creator(venv_dir),
             ) as mock_run,
         ):
-            zni.bootstrap_venv()
+            zc.bootstrap_venv()
         # venv create + pip install.
         assert mock_run.call_count == 2
         assert stamp.exists()
@@ -660,11 +660,11 @@ class TestBootstrapVenv:
         (venv_dir / "bin" / "python").touch()
         stamp = venv_dir / ".installed"
         with (
-            patch.object(zni, "VENV_DIR", venv_dir),
-            patch.object(zni, "VENV_STAMP", stamp),
-            patch.object(zni.subprocess, "run", autospec=True) as mock_run,
+            patch.object(zc, "VENV_DIR", venv_dir),
+            patch.object(zc, "VENV_STAMP", stamp),
+            patch.object(zc.subprocess, "run", autospec=True) as mock_run,
         ):
-            zni.bootstrap_venv()
+            zc.bootstrap_venv()
         # Only pip install (no venv re-create).
         assert mock_run.call_count == 1
         cmd = mock_run.call_args[0][0]
@@ -678,11 +678,11 @@ class TestBootstrapVenv:
         stamp = venv_dir / ".installed"
         stamp.touch()
         with (
-            patch.object(zni, "VENV_DIR", venv_dir),
-            patch.object(zni, "VENV_STAMP", stamp),
-            patch.object(zni.subprocess, "run", autospec=True) as mock_run,
+            patch.object(zc, "VENV_DIR", venv_dir),
+            patch.object(zc, "VENV_STAMP", stamp),
+            patch.object(zc.subprocess, "run", autospec=True) as mock_run,
         ):
-            zni.bootstrap_venv()
+            zc.bootstrap_venv()
         mock_run.assert_not_called()
 
 
@@ -691,19 +691,19 @@ class TestBootstrapVenv:
 
 class TestRowSchema:
     def test_row_fields_match_all_columns(self) -> None:
-        # The import-time sanity check in zwave_network_info.py
+        # The import-time sanity check in zwavectl.py
         # already enforces this, but a test gives a clearer
         # failure message if someone adds a column without a
         # matching Row field.
         from dataclasses import fields
 
-        row_fields = {f.name for f in fields(zni.Row)}
-        expected = {zni._row_attr(c) for c in zni.ALL_COLUMNS}
+        row_fields = {f.name for f in fields(zc.Row)}
+        expected = {zc._row_attr(c) for c in zc.ALL_COLUMNS}
         assert row_fields == expected
 
     def test_row_attr_maps_dashes(self) -> None:
-        assert zni._row_attr("rx-drop-rate") == "rx_drop_rate"
-        assert zni._row_attr("node") == "node"
+        assert zc._row_attr("rx-drop-rate") == "rx_drop_rate"
+        assert zc._row_attr("node") == "node"
 
 
 # --- build_node_to_ha -------------------------------------------
@@ -739,7 +739,7 @@ class TestBuildNodeToHa:
                 "platform": "other",
             },
         ]
-        out = zni.build_node_to_ha(devices, areas, entities)
+        out = zc.build_node_to_ha(devices, areas, entities)
         assert 18 in out
         info = out[18]
         assert info["device_name"] == "Hallway Lock"
@@ -760,7 +760,7 @@ class TestBuildNodeToHa:
                 "identifiers": [["zwave_js", "1234-7-0"]],
             },
         }
-        out = zni.build_node_to_ha(devices, {}, [])
+        out = zc.build_node_to_ha(devices, {}, [])
         assert out[7]["device_name"] == "User Friendly"
 
     def test_skips_non_zwave_identifiers(self) -> None:
@@ -771,7 +771,7 @@ class TestBuildNodeToHa:
                 "identifiers": [["matter", "foo"]],
             },
         }
-        out = zni.build_node_to_ha(devices, {}, [])
+        out = zc.build_node_to_ha(devices, {}, [])
         assert out == {}
 
     def test_handles_unparseable_identifier(self) -> None:
@@ -782,7 +782,7 @@ class TestBuildNodeToHa:
                 "identifiers": [["zwave_js", "malformed"]],
             },
         }
-        out = zni.build_node_to_ha(devices, {}, [])
+        out = zc.build_node_to_ha(devices, {}, [])
         assert out == {}
 
 
@@ -793,7 +793,7 @@ def _make_stat_entities(
     node_name: str,
     cols: list[str],
 ) -> dict[str, str]:
-    return {col: f"sensor.{node_name}_{zni.ENTITY_SUFFIX[col]}" for col in cols}
+    return {col: f"sensor.{node_name}_{zc.ENTITY_SUFFIX[col]}" for col in cols}
 
 
 class TestBuildRows:
@@ -807,7 +807,7 @@ class TestBuildRows:
                 "statistics": {},
             },
         }
-        rows = zni.build_rows(
+        rows = zc.build_rows(
             zwave_nodes,
             {},
             {},
@@ -870,7 +870,7 @@ class TestBuildRows:
             "sensor.front_door_lock_battery_level": "88",
             "sensor.front_door_lock_node_status": "alive",
         }
-        rows = zni.build_rows(
+        rows = zc.build_rows(
             zwave_nodes,
             node_to_ha,
             current_states,
@@ -917,7 +917,7 @@ class TestBuildRows:
                 "statistics": {},
             },
         }
-        rows = zni.build_rows(
+        rows = zc.build_rows(
             zwave_nodes,
             {},
             {},
@@ -953,7 +953,7 @@ class TestBuildRows:
             "sensor.n18_signal_strength": {1: "-68", 2: "-80"},
         }
         current_states = {"sensor.n18_signal_strength": "-65"}
-        rows = zni.build_rows(
+        rows = zc.build_rows(
             zwave_nodes,
             node_to_ha,
             current_states,
@@ -989,7 +989,7 @@ class TestBuildRows:
         }
         rows_by_node = {
             r.node: r
-            for r in zni.build_rows(
+            for r in zc.build_rows(
                 zwave_nodes,
                 node_to_ha,
                 {},
@@ -1004,7 +1004,7 @@ class TestBuildRows:
 # --- _sort_rows -------------------------------------------------
 
 
-def _mk_row(**overrides: Any) -> zni.Row:
+def _mk_row(**overrides: Any) -> zc.Row:
     """Construct a Row with sane defaults, override any field."""
     defaults: dict[str, Any] = {
         "node": 0,
@@ -1043,13 +1043,13 @@ def _mk_row(**overrides: Any) -> zni.Row:
         "last_seen": None,
     }
     defaults.update(overrides)
-    return zni.Row(**defaults)
+    return zc.Row(**defaults)
 
 
 class TestSortRows:
     def test_sort_by_node_ascending(self) -> None:
         rows = [_mk_row(node=n) for n in [18, 2, 50]]
-        sorted_rows = zni._sort_rows(rows, ["node"], reverse=False)
+        sorted_rows = zc._sort_rows(rows, ["node"], reverse=False)
         assert [r.node for r in sorted_rows] == [2, 18, 50]
 
     def test_sort_by_device_case_insensitive(self) -> None:
@@ -1058,7 +1058,7 @@ class TestSortRows:
             _mk_row(node=2, device="apple"),
             _mk_row(node=3, device="Banana"),
         ]
-        sorted_rows = zni._sort_rows(rows, ["device"], reverse=False)
+        sorted_rows = zc._sort_rows(rows, ["device"], reverse=False)
         assert [r.device for r in sorted_rows] == ["apple", "Banana", "Zigbee"]
 
     def test_null_primary_always_last(self) -> None:
@@ -1068,11 +1068,11 @@ class TestSortRows:
             _mk_row(node=3, ss=-85),
         ]
         # Ascending: -85, -70, then null last.
-        asc = zni._sort_rows(rows, ["ss"], reverse=False)
+        asc = zc._sort_rows(rows, ["ss"], reverse=False)
         assert [r.node for r in asc] == [3, 1, 2]
         # Reverse: -70, -85, null still last (documented
         # invariant).
-        desc = zni._sort_rows(rows, ["ss"], reverse=True)
+        desc = zc._sort_rows(rows, ["ss"], reverse=True)
         assert [r.node for r in desc] == [1, 3, 2]
 
     def test_ss_quality_severity_sort(self) -> None:
@@ -1082,7 +1082,7 @@ class TestSortRows:
             _mk_row(node=2, ss_quality="poor"),
             _mk_row(node=3, ss_quality="fair"),
         ]
-        out = zni._sort_rows(rows, ["ss-quality"], reverse=False)
+        out = zc._sort_rows(rows, ["ss-quality"], reverse=False)
         assert [r.node for r in out] == [2, 3, 1]
 
     def test_historical_list_sort_on_latest(self) -> None:
@@ -1091,7 +1091,7 @@ class TestSortRows:
             _mk_row(node=2, ss=[-90, -85]),
             _mk_row(node=3, ss=[-60, -65]),
         ]
-        out = zni._sort_rows(rows, ["ss"], reverse=False)
+        out = zc._sort_rows(rows, ["ss"], reverse=False)
         # Latest values: -60, -70, -90. Ascending sort puts
         # -90 first.
         assert [r.node for r in out] == [2, 1, 3]
@@ -1102,7 +1102,7 @@ class TestSortRows:
             _mk_row(node=2, neighbors=[]),
             _mk_row(node=3, neighbors=[10, 20, 30]),
         ]
-        out = zni._sort_rows(rows, ["neighbors"], reverse=False)
+        out = zc._sort_rows(rows, ["neighbors"], reverse=False)
         assert [r.node for r in out] == [2, 1, 3]
 
     def test_secondary_key_tiebreaks(self) -> None:
@@ -1111,7 +1111,7 @@ class TestSortRows:
             _mk_row(node=2, location="Office", device="A"),
             _mk_row(node=3, location="Hall", device="C"),
         ]
-        out = zni._sort_rows(
+        out = zc._sort_rows(
             rows,
             ["location", "device"],
             reverse=False,
@@ -1125,7 +1125,7 @@ class TestSortRows:
 class TestFmtHistoryCell:
     def test_scalar_latest_only(self) -> None:
         assert (
-            zni._fmt_history_cell(
+            zc._fmt_history_cell(
                 -75,
                 "ss",
                 use_color=False,
@@ -1136,7 +1136,7 @@ class TestFmtHistoryCell:
 
     def test_scalar_rate(self) -> None:
         # Scalar rate cell (days=0) shows as percent int.
-        out = zni._fmt_history_cell(
+        out = zc._fmt_history_cell(
             0.03,
             "rx-drop-rate",
             use_color=False,
@@ -1145,7 +1145,7 @@ class TestFmtHistoryCell:
         assert out == "3"
 
     def test_list_joins_with_spaces(self) -> None:
-        out = zni._fmt_history_cell(
+        out = zc._fmt_history_cell(
             [-70, -75, None],
             "ss",
             use_color=False,
@@ -1157,7 +1157,7 @@ class TestFmtHistoryCell:
         # Widths cover each sub-position; the formatter should
         # right-pad each sub-value to match.
         widths = [3, 3, 3]
-        out = zni._fmt_history_cell(
+        out = zc._fmt_history_cell(
             [None, -80, -85],
             "ss",
             use_color=False,
@@ -1169,7 +1169,7 @@ class TestFmtHistoryCell:
         assert out == "  - -80 -85"
 
     def test_ss_quality_list_strings(self) -> None:
-        out = zni._fmt_history_cell(
+        out = zc._fmt_history_cell(
             ["poor", "fair", "good"],
             "ss-quality",
             use_color=False,
@@ -1184,7 +1184,7 @@ class TestFmtHistoryCell:
 class TestRenderTable:
     def test_minimal_table_has_header_and_divider(self) -> None:
         rows = [_mk_row(node=18, device="Hall Lock")]
-        out = zni.render_table(
+        out = zc.render_table(
             rows,
             ["node", "device"],
             use_color=False,
@@ -1199,7 +1199,7 @@ class TestRenderTable:
 
     def test_no_header_option(self) -> None:
         rows = [_mk_row(node=18, device="X")]
-        out = zni.render_table(
+        out = zc.render_table(
             rows,
             ["node", "device"],
             use_color=False,
@@ -1209,7 +1209,7 @@ class TestRenderTable:
         assert "Device" not in out
 
     def test_empty_table_still_prints_header(self) -> None:
-        out = zni.render_table(
+        out = zc.render_table(
             [],
             ["node", "device"],
             use_color=False,

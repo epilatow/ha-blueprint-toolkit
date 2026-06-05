@@ -107,9 +107,9 @@ def _destination_mapping(
     # integration will see broken /local/ doc links;
     # that's documented as a dev-install limitation.
 
-    # bundled/cli/*.py -> <cli_symlink_dir>/*.py (flat; optional)
+    # bundled/bin/*.py -> <cli_symlink_dir>/*.py (flat; optional)
     if cli_symlink_dir is not None:
-        src_dir = bundled_root / "cli"
+        src_dir = bundled_root / "bin"
         if src_dir.is_dir():
             for src in sorted(src_dir.glob("*.py")):
                 mapping[cli_symlink_dir / src.name] = src
@@ -282,7 +282,7 @@ def plan(
         bundled_root: Absolute path to
             ``.../custom_components/blueprint_toolkit/bundled/``.
         config_root: Absolute path to HA's ``/config/`` dir.
-        cli_symlink_dir: If given, install ``bundled/cli/*.py``
+        cli_symlink_dir: If given, install ``bundled/bin/*.py``
             into this directory. If None (default), CLI files
             are not installed.
         force_destinations: Destinations the caller explicitly

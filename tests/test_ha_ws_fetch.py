@@ -28,7 +28,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 
 # ha_ws_fetch is a bare script, imported off a runtime sys.path entry
-# the way the other script tests reach render_docs / zwave_network_info.
+# the way the other script tests reach render_docs / zwavectl.
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import ha_ws_fetch  # noqa: E402

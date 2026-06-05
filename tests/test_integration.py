@@ -215,7 +215,7 @@ class TestOptionsFlow:
         # re-runs async_setup_entry with the new option,
         # which makes the reconciler install the CLI
         # symlink at the new destination.
-        cli_dest = cli_dir / "zwave_network_info.py"
+        cli_dest = cli_dir / "zwavectl.py"
         assert cli_dest.is_symlink(), (
             "expected CLI symlink to land after options change; "
             "is the update listener wired up in __init__.py?"
