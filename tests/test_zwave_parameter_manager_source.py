@@ -47,6 +47,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
     ParamId,
 )
 from custom_components.blueprint_toolkit.zwave_parameter_manager.source import (  # noqa: E402, E501
+    build_node_read,
     read_fleet,
 )
 
@@ -164,6 +165,32 @@ def _install_fleet(hass: HomeAssistant, node: Node) -> str:
         original_name="Node status",
     )
     return status.entity_id
+
+
+def test_build_node_read_assembles_from_node_and_context() -> None:
+    # The shared assembly is pure (no hass): a Node plus the HA-context
+    # tuple the handler and the CLI each acquire on their own. Both feed it
+    # here and get an identical NodeRead.
+    node = _node()
+    read = build_node_read(
+        node,
+        device_id="dev-1",
+        name="Guest Bath Motion",
+        location="Guest Bath",
+        entities=[("binary_sensor", "motion")],
+        last_awake=None,
+    )
+    assert read.device.node_id == 5
+    assert read.device.device_types == frozenset({DeviceType.MOTION})
+    assert read.device.params and {p.id for p in read.device.params} == {
+        ParamId(112, 12),
+        ParamId(132, "wakeUpInterval"),
+    }
+    assert read.convergence.name == "Guest Bath Motion"
+    assert read.convergence.location == "Guest Bath"
+    assert read.convergence.wake_interval_seconds == 3600
+    assert read.convergence.last_awake_at is None
+    assert read.actuals[ParamId(132, "wakeUpInterval")] == 3600
 
 
 async def test_read_fleet_empty_without_zwave_js(hass: HomeAssistant) -> None:

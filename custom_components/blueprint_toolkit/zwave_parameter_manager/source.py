@@ -90,19 +90,32 @@ def get_driver(hass: HomeAssistant) -> Driver | None:
     return cast("Driver | None", entries[0].runtime_data.client.driver)
 
 
-async def _read_node(
-    hass: HomeAssistant, driver: Driver, node: Node
+def build_node_read(
+    node: Node,
+    *,
+    device_id: str | None,
+    name: str,
+    location: str | None,
+    entities: list[tuple[str, str | None]],
+    last_awake: datetime | None,
 ) -> NodeRead:
-    device_id, name, location, entities = _registry_context(hass, driver, node)
+    """Assemble a node's ``NodeRead`` from its live ``Node`` plus the HA
+    context: ``device_id`` / display ``name`` / ``location``, each entity's
+    ``(domain, device_class)`` (for ``derive_device_types``), and the last
+    wake time.
+
+    Pure -- no ``hass``, no driver -- so the in-process handler
+    (``read_fleet``) and the standalone CLI both feed it from their own
+    access layer (the in-process driver + HA registries / recorder, or a
+    zwave-js-server socket + the HA API) and get an identical read.
+    """
+
     device = build_device(
         node,
         device_id=device_id,
         device_types=derive_device_types(entities),
     )
     actuals = actual_values(node)
-    last_awake = (
-        await _last_awake(hass, device_id) if device_id is not None else None
-    )
     convergence = ConvergenceDevice(
         node_id=node.node_id,
         name=name,
@@ -112,6 +125,23 @@ async def _read_node(
         last_awake_at=last_awake,
     )
     return NodeRead(device=device, convergence=convergence, actuals=actuals)
+
+
+async def _read_node(
+    hass: HomeAssistant, driver: Driver, node: Node
+) -> NodeRead:
+    device_id, name, location, entities = _registry_context(hass, driver, node)
+    last_awake = (
+        await _last_awake(hass, device_id) if device_id is not None else None
+    )
+    return build_node_read(
+        node,
+        device_id=device_id,
+        name=name,
+        location=location,
+        entities=entities,
+        last_awake=last_awake,
+    )
 
 
 def _registry_context(
