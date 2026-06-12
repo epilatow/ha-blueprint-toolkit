@@ -813,52 +813,41 @@ async def fetch_ha_states(api_key: str) -> dict[str, str]:
     return {s["entity_id"]: s["state"] for s in states}
 
 
-async def fetch_ha_history(
+async def _fetch_entity_history(
     api_key: str,
     entity_ids: list[str],
-    day_offsets: list[int],
-) -> dict[str, dict[int, str]]:
-    """Fetch state at each day_offset for each entity.
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[HaState]]:
+    """Raw HA history for a set of entities over ``[start, end]``.
 
-    Returns ``{entity_id: {day_offset: state_string}}``. Missing
-    readings are simply absent from the inner dict.
+    Returns ``{entity_id: [HaState, ...]}`` for each entity with any history
+    in the window (entities with none are absent). One batched
+    ``/api/history/period`` request per 30 entities keeps the
+    ``filter_entity_id`` URL parameter within HA's request-size limits.
 
-    Strategy: for each entity batch, issue a single history
-    query covering the full window (oldest target -> now), then
-    for each target day pick the last state with
-    ``last_changed <= target`` -- i.e., the state that was
-    active at that time. This handles sleepy nodes that only
-    transmit once per N days: if there's any reading in the
-    full window older than the target, it's used.
-
-    Entities are batched to keep the filter_entity_id URL
-    parameter within HA's request-size limits.
+    The shared history transport. Callers apply their own extraction to the
+    per-entity state lists this returns -- e.g. the state active at a target
+    time, or the last transition to a given state.
     """
     # Keep this local: the dependency is installed only in the
     # bootstrapped script venv after re-exec.
     import aiohttp
 
-    if not entity_ids or not day_offsets:
-        return {eid: {} for eid in entity_ids}
+    if not entity_ids:
+        return {}
 
     headers = {"Authorization": f"Bearer {api_key}"}
     batch_size = 30
-    now = datetime.now(UTC)
-    max_day = max(day_offsets)
-    # 12h slack lets us find a state that was active at the
-    # oldest target even if the most recent change was slightly
-    # before our window starts.
-    fetch_start = now - timedelta(days=max_day + 1, hours=12)
-    targets = {day: now - timedelta(days=day) for day in day_offsets}
-    out: dict[str, dict[int, str]] = {eid: {} for eid in entity_ids}
+    out: dict[str, list[HaState]] = {}
 
     async with aiohttp.ClientSession() as session:
         for i in range(0, len(entity_ids), batch_size):
             chunk = entity_ids[i : i + batch_size]
-            url = f"{HA_URL}/api/history/period/{fetch_start.isoformat()}"
+            url = f"{HA_URL}/api/history/period/{start.isoformat()}"
             params = {
                 "filter_entity_id": ",".join(chunk),
-                "end_time": now.isoformat(),
+                "end_time": end.isoformat(),
                 "minimal_response": "true",
                 "no_attributes": "true",
             }
@@ -876,12 +865,48 @@ async def fetch_ha_history(
                     continue
                 ent_hist = cast("list[HaState]", ent_hist_raw)
                 eid = ent_hist[0].get("entity_id")
-                if eid not in out:
-                    continue
-                for day, target in targets.items():
-                    state = _state_at_or_before(ent_hist, target)
-                    if state is not None:
-                        out[eid][day] = state
+                if eid is not None:
+                    out[eid] = ent_hist
+    return out
+
+
+async def fetch_ha_history(
+    api_key: str,
+    entity_ids: list[str],
+    day_offsets: list[int],
+) -> dict[str, dict[int, str]]:
+    """Fetch state at each day_offset for each entity.
+
+    Returns ``{entity_id: {day_offset: state_string}}``. Missing
+    readings are simply absent from the inner dict.
+
+    Strategy: query the full window (oldest target -> now) once via
+    ``_fetch_entity_history``, then for each target day pick the last state
+    with ``last_changed <= target`` -- i.e., the state that was active at
+    that time. This handles sleepy nodes that only transmit once per N days:
+    if there's any reading in the full window older than the target, it's
+    used.
+    """
+    if not entity_ids or not day_offsets:
+        return {eid: {} for eid in entity_ids}
+
+    now = datetime.now(UTC)
+    max_day = max(day_offsets)
+    # 12h slack lets us find a state that was active at the
+    # oldest target even if the most recent change was slightly
+    # before our window starts.
+    fetch_start = now - timedelta(days=max_day + 1, hours=12)
+    targets = {day: now - timedelta(days=day) for day in day_offsets}
+    out: dict[str, dict[int, str]] = {eid: {} for eid in entity_ids}
+
+    history = await _fetch_entity_history(api_key, entity_ids, fetch_start, now)
+    for eid, ent_hist in history.items():
+        if eid not in out:
+            continue
+        for day, target in targets.items():
+            state = _state_at_or_before(ent_hist, target)
+            if state is not None:
+                out[eid][day] = state
     return out
 
 
