@@ -73,8 +73,15 @@ automations. Live in the bundled payload and run from the HA host.
   configured priority routes, and opt-in stat columns (RX/TX counts, drop
   counts, drop rates, RTT, battery, status, neighbors, firmware, etc.).
   Historical columns pull from HA's recorder; current state comes from
-  zwave-js-ui. Self-bootstraps a venv on first run; see `zwavectl list --help`
-  for the full column list and aliases.
+  zwave-js-ui. `zwavectl param-manager config {desired|pending|unused}` plans
+  the live fleet against the Z-Wave Parameter Manager policy file (the same
+  one the blueprint uses; override with `--config`) and prints the writes a
+  policy resolves (`desired`), the not-yet-converged subset (`pending`), or
+  the policies / settings that matched no device (`unused`). `--cols` reshapes
+  the table (generic concept columns by default, opt-in device-raw and wake
+  columns). Self-bootstraps a venv on first run; see `zwavectl list --help`
+  for its column list and aliases, and
+  `zwavectl param-manager config desired --help` for its column list.
 
 ## Prerequisites
 

@@ -2287,6 +2287,7 @@ class NodeContext:
     name: str
     location: str | None
     entities: list[tuple[str, str | None]]
+    status_entity_id: str | None = None
 
 
 def _node_contexts(
@@ -2302,6 +2303,7 @@ def _node_contexts(
     names: dict[int, str] = {}
     locations: dict[int, str | None] = {}
     ents: dict[int, list[tuple[str, str | None]]] = {}
+    status_eids: dict[int, str | None] = {}
     for dev_id, node_id in dev_to_node.items():
         dev = devices_by_id[dev_id]
         area_id = dev.get("area_id")
@@ -2312,7 +2314,9 @@ def _node_contexts(
         )
         names[node_id] = dev.get("name_by_user") or dev.get("name") or ""
         ents[node_id] = []
+        status_eids[node_id] = None
 
+    status_suffix = f"_{ENTITY_SUFFIX['status']}"
     for ent in entities:
         if ent.get("platform") != "zwave_js":
             continue
@@ -2326,6 +2330,8 @@ def _node_contexts(
             or device_classes.get(eid)
         )
         ents[nid].append((eid.split(".", 1)[0], dclass))
+        if eid.endswith(status_suffix):
+            status_eids[nid] = eid
 
     return {
         node_id: NodeContext(
@@ -2333,6 +2339,7 @@ def _node_contexts(
             name=names[node_id],
             location=locations[node_id],
             entities=ents[node_id],
+            status_entity_id=status_eids[node_id],
         )
         for dev_id, node_id in dev_to_node.items()
     }
@@ -2341,9 +2348,11 @@ def _node_contexts(
 def _assemble_fleet(
     node_dicts: list[dict[str, Any]],
     contexts: dict[int, NodeContext],
+    last_awake_by_node: dict[int, datetime] | None = None,
 ) -> list[NodeRead]:
     """Each live node dict + its HA context through the shared
-    ``source.build_node_read``. Returns a list of ``NodeRead``."""
+    ``source.build_node_read``. ``last_awake_by_node`` supplies each node's
+    last wake time (absent -> unknown). Returns a list of ``NodeRead``."""
 
     _ensure_integration_importable()
     from blueprint_toolkit.zwave_parameter_manager.source import (  # noqa: PLC0415
@@ -2355,6 +2364,7 @@ def _assemble_fleet(
         NodeDataType,
     )
 
+    awake = last_awake_by_node or {}
     fleet: list[NodeRead] = []
     for data in node_dicts:
         # We only read values off the node; the client is never touched, so a
@@ -2368,10 +2378,62 @@ def _assemble_fleet(
                 name=(ctx.name if ctx else "") or node.name or "",
                 location=ctx.location if ctx else None,
                 entities=ctx.entities if ctx else [],
-                last_awake=None,
+                last_awake=awake.get(node.node_id),
             )
         )
     return fleet
+
+
+# Lookback for a node-status entity's last "awake" transition, mirroring
+# zwave_parameter_manager.source._WAKE_LOOKBACK (the recorder-side window the
+# in-process handler reads): spans the fleet's longest wake interval with
+# headroom. A node that has not woken inside the window reads as
+# last-awake-unknown, which just drops the expected-next-wake estimate.
+_WAKE_LOOKBACK = timedelta(days=2)
+
+
+async def fetch_last_awake(
+    api_key: str, status_entity_ids: list[str]
+) -> dict[str, datetime]:
+    """Each node-status entity's last ``awake`` transition time from the HA
+    history API, over the wake lookback window.
+
+    Returns ``{entity_id: last_awake_datetime}``; an entity with no ``awake``
+    state in the window is simply absent. This is the CLI's recorder-free
+    stand-in for the handler's ``source._last_awake`` -- both read the same
+    node-status entity's last wake, so the convergence reports match.
+    """
+
+    now = datetime.now(UTC)
+    history = await _fetch_entity_history(
+        api_key, status_entity_ids, now - _WAKE_LOOKBACK, now
+    )
+    out: dict[str, datetime] = {}
+    for eid, ent_hist in history.items():
+        when = _last_awake_at(ent_hist)
+        if when is not None:
+            out[eid] = when
+    return out
+
+
+def _last_awake_at(history: list[HaState]) -> datetime | None:
+    """The ``last_changed`` of the most recent ``awake`` state in a node-
+    status entity's history, or ``None`` when it never reads ``awake``."""
+
+    best: datetime | None = None
+    for s in history:
+        if s.get("state") != "awake":
+            continue
+        lc_str = s.get("last_changed") or s.get("last_updated")
+        if not lc_str:
+            continue
+        try:
+            lc = datetime.fromisoformat(lc_str)
+        except ValueError:
+            continue
+        if best is None or lc > best:
+            best = lc
+    return best
 
 
 async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
@@ -2383,7 +2445,19 @@ async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
     contexts = _node_contexts(
         devices_by_id, entities, areas_by_id, device_classes
     )
-    return _assemble_fleet(node_dicts, contexts)
+    status_eids = [
+        ctx.status_entity_id
+        for ctx in contexts.values()
+        if ctx.status_entity_id is not None
+    ]
+    awake_by_eid = await fetch_last_awake(api_key, status_eids)
+    last_awake_by_node = {
+        node_id: awake_by_eid[ctx.status_entity_id]
+        for node_id, ctx in contexts.items()
+        if ctx.status_entity_id is not None
+        and ctx.status_entity_id in awake_by_eid
+    }
+    return _assemble_fleet(node_dicts, contexts, last_awake_by_node)
 
 
 @dataclass(frozen=True)
@@ -2459,6 +2533,37 @@ def _pm_property_current(r: _PmRow) -> str:
     return "" if r.raw_current is None else str(r.raw_current)
 
 
+# Wake columns render through the shared ``zwave.formatting`` helpers the
+# handler's notification uses, so the CLI table and the automation body format
+# a wake interval / timestamp identically. Imported lazily -- the package is on
+# sys.path by render time (the fleet read put it there).
+def _pm_wake_interval(r: _PmRow) -> str:
+    from blueprint_toolkit.zwave.formatting import (  # noqa: PLC0415
+        humanize_duration,
+    )
+
+    secs = r.device.wake_interval_seconds
+    return "" if secs is None else humanize_duration(secs)
+
+
+def _pm_wake_last(r: _PmRow) -> str:
+    from blueprint_toolkit.zwave.formatting import (  # noqa: PLC0415
+        format_wake_time,
+    )
+
+    when = r.device.last_awake_at
+    return "" if when is None else format_wake_time(when)
+
+
+def _pm_wake_next(r: _PmRow) -> str:
+    from blueprint_toolkit.zwave.formatting import (  # noqa: PLC0415
+        format_wake_time,
+    )
+
+    when = r.device.expected_next_wake
+    return "" if when is None else format_wake_time(when)
+
+
 # ``parameter`` / ``desired`` / ``current`` are the generic concept view;
 # the device-specific raw values are the optional ``property-*`` columns.
 _PM_COLUMNS: dict[str, _PmCol] = {
@@ -2473,6 +2578,9 @@ _PM_COLUMNS: dict[str, _PmCol] = {
     "make": _PmCol("make", _pm_make),
     "model": _PmCol("model", _pm_model),
     "power": _PmCol("power", _pm_power),
+    "wake-interval": _PmCol("wake-interval", _pm_wake_interval),
+    "wake-last": _PmCol("wake-last", _pm_wake_last),
+    "wake-next": _PmCol("wake-next", _pm_wake_next),
     "command-class": _PmCol("command-class", _pm_command_class, right=True),
     "property": _PmCol("property", _pm_property),
     "property-key": _PmCol("property-key", _pm_property_key, right=True),

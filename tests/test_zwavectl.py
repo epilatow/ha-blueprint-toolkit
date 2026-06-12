@@ -1444,7 +1444,14 @@ class TestParamManagerFleet:
                 "entity_id": "binary_sensor.guest_bath_motion",
                 "device_class": None,
                 "original_device_class": None,
-            }
+            },
+            {
+                "platform": "zwave_js",
+                "device_id": "devA",
+                "entity_id": "sensor.guest_bath_motion_node_status",
+                "device_class": None,
+                "original_device_class": None,
+            },
         ]
         areas_by_id: dict[str, zc.AreaRow] = {
             "areaA": {"area_id": "areaA", "name": "Guest Bath"}
@@ -1460,7 +1467,16 @@ class TestParamManagerFleet:
         assert ctx[5].device_id == "devA"
         assert ctx[5].name == "Guest Bath Motion"
         assert ctx[5].location == "Guest Bath"
-        assert ctx[5].entities == [("binary_sensor", "motion")]
+        assert ctx[5].entities == [
+            ("binary_sensor", "motion"),
+            ("sensor", None),
+        ]
+
+    def test_node_contexts_captures_the_node_status_entity(self) -> None:
+        # wake-last / wake-next need each node's node-status entity so the
+        # fleet read can look up its last "awake" transition.
+        ctx = zc._node_contexts(*self._registries())
+        assert ctx[5].status_entity_id == "sensor.guest_bath_motion_node_status"
 
     def test_assemble_fleet_uses_shared_build_node_read(self) -> None:
         # The CLI's access layer feeds the SAME shared assembly the handler
@@ -1476,6 +1492,85 @@ class TestParamManagerFleet:
         assert read.convergence.name == "Guest Bath Motion"
         assert read.convergence.location == "Guest Bath"
         assert read.convergence.wake_interval_seconds == 3600
+
+    def test_assemble_fleet_threads_last_awake(self) -> None:
+        # The last-awake map (fetched off the node-status history) lands on the
+        # convergence device so it can drive the wake columns.
+        ctx = zc._node_contexts(*self._registries())
+        when = datetime(2026, 6, 9, 14, 30, tzinfo=UTC)
+        fleet = zc._assemble_fleet(
+            [_pm_node_dict(5, "Zooz", "ZSE11")], ctx, {5: when}
+        )
+        assert fleet[0].convergence.last_awake_at == when
+
+    def test_last_awake_at_picks_the_most_recent_awake(self) -> None:
+        history: list[zc.HaState] = [
+            {"state": "asleep", "last_changed": "2026-06-09T10:00:00+00:00"},
+            {"state": "awake", "last_changed": "2026-06-09T12:00:00+00:00"},
+            {"state": "asleep", "last_changed": "2026-06-09T12:05:00+00:00"},
+            {"state": "awake", "last_changed": "2026-06-09T13:00:00+00:00"},
+        ]
+        assert zc._last_awake_at(history) == datetime(
+            2026, 6, 9, 13, 0, tzinfo=UTC
+        )
+
+    def test_last_awake_at_none_when_never_awake(self) -> None:
+        history: list[zc.HaState] = [
+            {"state": "asleep", "last_changed": "2026-06-09T10:00:00+00:00"},
+        ]
+        assert zc._last_awake_at(history) is None
+
+    def test_wake_lookback_mirrors_the_handler_window(self) -> None:
+        # The CLI derives last-awake from the HA history API over its own
+        # lookback constant; the handler reads the recorder over
+        # source._WAKE_LOOKBACK. The two must stay equal or the CLI and the
+        # automation would disagree on which wake is "last".
+        zc._ensure_integration_importable()
+        from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415
+            source,
+        )
+
+        assert zc._WAKE_LOOKBACK == source._WAKE_LOOKBACK
+
+    def test_wake_columns_render_via_shared_formatting(self) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        # The extractors import the shared zwave.formatting helpers; the fleet
+        # read normally puts the package on sys.path, so do it explicitly here.
+        zc._ensure_integration_importable()
+        device = SimpleNamespace(
+            wake_interval_seconds=3600,
+            last_awake_at=datetime(2026, 6, 9, 14, 30, tzinfo=UTC),
+            expected_next_wake=datetime(2026, 6, 9, 15, 30, tzinfo=UTC),
+        )
+        row = zc._PmRow(
+            device=device,
+            param=SimpleNamespace(),
+            write=None,
+            raw_current=None,
+        )
+        assert zc._PM_COLUMNS["wake-interval"].extract(row) == "1 hour"
+        assert zc._PM_COLUMNS["wake-last"].extract(row) == "2026-06-09 14:30"
+        assert zc._PM_COLUMNS["wake-next"].extract(row) == "2026-06-09 15:30"
+
+    def test_wake_columns_blank_when_unknown(self) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        zc._ensure_integration_importable()
+        device = SimpleNamespace(
+            wake_interval_seconds=None,
+            last_awake_at=None,
+            expected_next_wake=None,
+        )
+        row = zc._PmRow(
+            device=device,
+            param=SimpleNamespace(),
+            write=None,
+            raw_current=None,
+        )
+        assert zc._PM_COLUMNS["wake-interval"].extract(row) == ""
+        assert zc._PM_COLUMNS["wake-last"].extract(row) == ""
+        assert zc._PM_COLUMNS["wake-next"].extract(row) == ""
 
     def _seed_config(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
