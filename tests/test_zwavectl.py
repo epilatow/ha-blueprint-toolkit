@@ -712,6 +712,15 @@ class TestBootstrapVenv:
         assert cmd[0].endswith("/pip")
         assert stamp.read_text() == "\n".join(zc.VENV_DEPS)
 
+    def test_venv_deps_cover_the_pipeline_yaml_import(self) -> None:
+        # param-manager config imports the integration pipeline, which loads
+        # the policy file with PyYAML; without it in the bootstrapped host
+        # venv the command crashes with ModuleNotFoundError at import time.
+        names = {
+            d.lower().split("==")[0].replace("-", "") for d in zc.VENV_DEPS
+        }
+        assert "pyyaml" in names
+
 
 # --- Row / ALL_COLUMNS consistency -----------------------------
 
@@ -1468,6 +1477,25 @@ class TestParamManagerFleet:
         assert read.convergence.location == "Guest Bath"
         assert read.convergence.wake_interval_seconds == 3600
 
+    def _seed_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Point the CLI at a temp API key + a valid one-policy config so the
+        config / mapping load succeed and the flow reaches the fleet read."""
+        key = tmp_path / "api-key"
+        key.write_text("tok")
+        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+        cfg = tmp_path / "zpm.yaml"
+        cfg.write_text(
+            "policies:\n"
+            "  - name: hourly\n"
+            "    match:\n"
+            "      power: battery\n"
+            "    settings:\n"
+            "      wake_up_interval: 3600\n"
+        )
+        monkeypatch.setattr(zc, "PM_CONFIG_DEFAULT", cfg)
+
     def test_config_reports_fleet_read_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -1476,9 +1504,7 @@ class TestParamManagerFleet:
     ) -> None:
         # A transport failure (3000 socket / HA API) surfaces a clear,
         # exit-coded message rather than a traceback.
-        key = tmp_path / "api-key"
-        key.write_text("tok")
-        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+        self._seed_config(monkeypatch, tmp_path)
 
         def boom(_api_key: str) -> list[Any]:
             raise zc._FleetReadError("connection refused")
@@ -1486,6 +1512,192 @@ class TestParamManagerFleet:
         monkeypatch.setattr(zc, "_read_param_manager_fleet_sync", boom)
         assert zc._param_manager_config("desired") == 4
         assert "could not read the Z-Wave fleet" in capsys.readouterr().err
+
+    def test_config_missing_policy_file_is_a_clear_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        key = tmp_path / "api-key"
+        key.write_text("tok")
+        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+        monkeypatch.setattr(zc, "PM_CONFIG_DEFAULT", tmp_path / "absent.yaml")
+        assert zc._param_manager_config("desired") == 2
+        assert "Policy file not found" in capsys.readouterr().err
+
+    def test_desired_wires_pipeline_over_an_empty_fleet(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        # End-to-end over the REAL shared pipeline (load policies + the shipped
+        # mapping, plan, render); an empty fleet renders just the header.
+        self._seed_config(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            zc, "_read_param_manager_fleet_sync", lambda _api_key: []
+        )
+        assert zc._param_manager_config("desired") == 0
+        header = capsys.readouterr().out.splitlines()[0].split()
+        assert header == [
+            "node",
+            "device",
+            "location",
+            "parameter",
+            "desired",
+            "policy",
+        ]
+
+    def test_pm_desired_table_renders_a_row(self) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        report = SimpleNamespace(
+            devices=[
+                SimpleNamespace(
+                    device=SimpleNamespace(
+                        node_id=5,
+                        name="Guest Bath Motion",
+                        location="Guest Bath",
+                    ),
+                    params=[
+                        SimpleNamespace(
+                            concept="motion_sensitivity", concept_desired="8"
+                        )
+                    ],
+                )
+            ]
+        )
+        plan = SimpleNamespace(
+            writes=[
+                SimpleNamespace(
+                    device=SimpleNamespace(node_id=5),
+                    concept="motion_sensitivity",
+                    policy="q-motion",
+                )
+            ]
+        )
+        out = zc._pm_desired_table(report, plan)
+        row = out.splitlines()[2]
+        assert row.split() == [
+            "5",
+            "Guest",
+            "Bath",
+            "Motion",
+            "Guest",
+            "Bath",
+            "motion_sensitivity",
+            "8",
+            "q-motion",
+        ]
+
+    def test_pm_pending_table_shows_current(self) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        param = SimpleNamespace(
+            concept="motion_sensitivity", concept_desired="8", actual="6"
+        )
+        report = SimpleNamespace(
+            pending_devices=[
+                SimpleNamespace(
+                    device=SimpleNamespace(
+                        node_id=5, name="Bath", location="Hall"
+                    ),
+                    pending_params=[param],
+                )
+            ]
+        )
+        plan = SimpleNamespace(
+            writes=[
+                SimpleNamespace(
+                    device=SimpleNamespace(node_id=5),
+                    concept="motion_sensitivity",
+                    policy="q",
+                )
+            ]
+        )
+        lines = zc._pm_pending_table(report, plan).splitlines()
+        assert lines[0].split() == [
+            "node",
+            "device",
+            "location",
+            "parameter",
+            "desired",
+            "current",
+            "policy",
+        ]
+        # desired (generic 8) and current (device live 6) sit side by side.
+        assert lines[2].split() == [
+            "5",
+            "Bath",
+            "Hall",
+            "motion_sensitivity",
+            "8",
+            "6",
+            "q",
+        ]
+
+    def test_pending_wires_over_an_empty_fleet(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        self._seed_config(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            zc, "_read_param_manager_fleet_sync", lambda _api_key: []
+        )
+        assert zc._param_manager_config("pending") == 0
+        assert capsys.readouterr().out.splitlines()[0].split() == [
+            "node",
+            "device",
+            "location",
+            "parameter",
+            "desired",
+            "current",
+            "policy",
+        ]
+
+    def test_unused_lists_a_policy_that_matched_nothing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        # The seeded `hourly` policy matches no device in an empty fleet, so
+        # the real planner surfaces it as unused.
+        self._seed_config(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            zc, "_read_param_manager_fleet_sync", lambda _api_key: []
+        )
+        assert zc._param_manager_config("unused") == 0
+        out = capsys.readouterr().out
+        assert out.splitlines()[0].split() == ["policy", "parameter", "reason"]
+        assert "hourly" in out
+
+    def test_pm_unused_table_renders_named_setting_and_whole_policy(
+        self,
+    ) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        plan = SimpleNamespace(
+            unused=[
+                SimpleNamespace(
+                    policy="q-motion",
+                    concept="motion_sensitivity",
+                    reason="no matching parameter",
+                ),
+                SimpleNamespace(
+                    policy="dead-policy",
+                    concept=None,
+                    reason="matched no devices",
+                ),
+            ]
+        )
+        lines = zc._pm_unused_table(plan).splitlines()
+        # A named inert setting shows its concept; a whole inert policy "-".
+        assert lines[2].split()[:2] == ["q-motion", "motion_sensitivity"]
+        assert lines[3].split()[:2] == ["dead-policy", "-"]
 
 
 # --- Code quality ----------------------------------------------

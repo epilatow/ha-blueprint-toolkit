@@ -206,6 +206,10 @@ VENV_DIR = pathlib.Path("/root/.zwavectl_venv")
 # newly-added dependency.
 VENV_STAMP = VENV_DIR / ".installed"
 API_KEY_FILE = pathlib.Path("/root/api-key")
+# The policy file the param-manager view plans against. Defaults to the same
+# file the blueprint targets (its ``config_file_path`` input defaults to
+# ``zwave_parameter_manager.yaml``, which HA resolves under ``/config``).
+PM_CONFIG_DEFAULT = pathlib.Path("/config/zwave_parameter_manager.yaml")
 HA_URL = "http://homeassistant:8123"
 ZWAVE_URL = "http://core-zwave-js:8091"
 # The zwave-js *server* (not the 8091 zwave-js-ui socket): its
@@ -228,6 +232,9 @@ VENV_DEPS = [
     # down to what this client parses (capped at MAX_SERVER_SCHEMA_VERSION),
     # and the integration code runs here against the client it was tested with.
     "zwave-js-server-python==0.73.0",
+    # param-manager config: the shared pipeline loads the policy file with
+    # PyYAML, so the host venv must carry it.
+    "pyyaml",
 ]
 
 # Columns that carry a list of days+1 values (latest first).
@@ -1711,6 +1718,41 @@ def _history_position_widths(
     return widths
 
 
+def _format_table(
+    header_cells: list[str],
+    data_cells: list[list[str]],
+    right_align: list[bool],
+    *,
+    show_header: bool,
+) -> str:
+    """Lay out a header + pre-rendered string cells into an aligned,
+    space-padded table. Column-agnostic, so every table view (``list`` plus
+    the param-manager views) shares one layout."""
+
+    widths = [_visible_len(h) for h in header_cells]
+    for row_cells in data_cells:
+        for i, c in enumerate(row_cells):
+            widths[i] = max(widths[i], _visible_len(c))
+
+    lines: list[str] = []
+    if show_header:
+        lines.append(
+            "  ".join(
+                _pad(header_cells[i], widths[i], right_align=False)
+                for i in range(len(header_cells))
+            ),
+        )
+        lines.append("  ".join("-" * w for w in widths))
+    for row_cells in data_cells:
+        lines.append(
+            "  ".join(
+                _pad(row_cells[i], widths[i], right_align[i])
+                for i in range(len(row_cells))
+            ),
+        )
+    return "\n".join(lines)
+
+
 def render_table(
     rows: list[Row],
     columns: list[str],
@@ -1727,33 +1769,10 @@ def render_table(
         [_cell(r, c, use_color, position_widths_by_col.get(c)) for c in columns]
         for r in rows
     ]
-
-    widths = [_visible_len(h) for h in header_cells]
-    for row_cells in data_cells:
-        for i, c in enumerate(row_cells):
-            widths[i] = max(widths[i], _visible_len(c))
-
-    lines: list[str] = []
-    if show_header:
-        lines.append(
-            "  ".join(
-                _pad(header_cells[i], widths[i], right_align=False)
-                for i in range(len(columns))
-            ),
-        )
-        lines.append("  ".join("-" * w for w in widths))
-    for row_cells in data_cells:
-        lines.append(
-            "  ".join(
-                _pad(
-                    row_cells[i],
-                    widths[i],
-                    columns[i] in _CELL_RIGHT_ALIGNED,
-                )
-                for i in range(len(columns))
-            ),
-        )
-    return "\n".join(lines)
+    right_align = [c in _CELL_RIGHT_ALIGNED for c in columns]
+    return _format_table(
+        header_cells, data_cells, right_align, show_header=show_header
+    )
 
 
 # --- Sorting ----------------------------------------------------
@@ -2342,18 +2361,124 @@ async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
     return _assemble_fleet(node_dicts, contexts)
 
 
-def _param_manager_config(mode: str) -> int:
-    """Render a Parameter Manager config view for ``mode``.
+def _pm_desired_table(
+    report: ConvergenceReport,
+    plan: Plan,
+    *,
+    show_header: bool = True,
+) -> str:
+    """The ``desired`` view: one row per planned write -- every device a
+    policy applies to -- showing the generic concept + the value the policy
+    set, plus the policy that set it."""
 
-    Acquires the same fleet the ZPM handler reads -- this CLI's own access
-    layer feeding the shared ``build_node_read`` -- then (in a following
-    commit) plans it against the policy file and renders the table.
-    """
+    policy_by = {
+        (w.device.node_id, str(w.concept)): w.policy for w in plan.writes
+    }
+    headers = ["node", "device", "location", "parameter", "desired", "policy"]
+    right_align = [True, False, False, False, False, False]
+    data: list[list[str]] = [
+        [
+            str(dc.device.node_id),
+            dc.device.name,
+            dc.device.location or "",
+            p.concept,
+            p.concept_desired,
+            policy_by.get((dc.device.node_id, p.concept), ""),
+        ]
+        for dc in report.devices
+        for p in dc.params
+    ]
+    return _format_table(headers, data, right_align, show_header=show_header)
+
+
+def _pm_pending_table(
+    report: ConvergenceReport,
+    plan: Plan,
+    *,
+    show_header: bool = True,
+) -> str:
+    """The ``pending`` view: one row per non-converged write, adding the live
+    ``current`` value next to the desired one. ``current`` is the device's
+    rendered live value (there is no generic ``current`` without a raw ->
+    concept inverse, which we deliberately do not build)."""
+
+    policy_by = {
+        (w.device.node_id, str(w.concept)): w.policy for w in plan.writes
+    }
+    headers = [
+        "node",
+        "device",
+        "location",
+        "parameter",
+        "desired",
+        "current",
+        "policy",
+    ]
+    right_align = [True, False, False, False, False, False, False]
+    data: list[list[str]] = [
+        [
+            str(dc.device.node_id),
+            dc.device.name,
+            dc.device.location or "",
+            p.concept,
+            p.concept_desired,
+            p.actual or "",
+            policy_by.get((dc.device.node_id, p.concept), ""),
+        ]
+        for dc in report.pending_devices
+        for p in dc.pending_params
+    ]
+    return _format_table(headers, data, right_align, show_header=show_header)
+
+
+def _pm_unused_table(plan: Plan, *, show_header: bool = True) -> str:
+    """The ``unused`` view: configured policies / settings that landed on no
+    device. ``parameter`` is the inert setting, or ``-`` when the whole policy
+    matched nothing; ``reason`` is the explanation."""
+
+    headers = ["policy", "parameter", "reason"]
+    right_align = [False, False, False]
+    data: list[list[str]] = [
+        [
+            u.policy,
+            "-" if u.concept is None else str(u.concept),
+            u.reason,
+        ]
+        for u in plan.unused
+    ]
+    return _format_table(headers, data, right_align, show_header=show_header)
+
+
+def _param_manager_config(mode: str) -> int:
+    """Plan the live fleet against the policy file and render the ``mode``
+    view. Reads the fleet via this CLI's own access layer feeding the shared
+    ``build_node_read`` -- the same convergence the ZPM handler computes."""
 
     if not API_KEY_FILE.exists():
         print(f"API key file not found: {API_KEY_FILE}", file=sys.stderr)
         return 2
     api_key = API_KEY_FILE.read_text().strip()
+
+    if not PM_CONFIG_DEFAULT.exists():
+        print(f"Policy file not found: {PM_CONFIG_DEFAULT}", file=sys.stderr)
+        return 2
+
+    _ensure_integration_importable()
+    from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415
+        pipeline,
+    )
+
+    policies, config_errors = pipeline.load_policies(PM_CONFIG_DEFAULT)
+    if config_errors:
+        print("Policy config errors:", file=sys.stderr)
+        for err in config_errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 2
+    mapping, mapping_err = pipeline.load_mapping()
+    if mapping is None:
+        print(f"Error loading mapping: {mapping_err}", file=sys.stderr)
+        return 2
+
     try:
         fleet = _read_param_manager_fleet_sync(api_key)
     except _FleetReadError as e:
@@ -2364,12 +2489,16 @@ def _param_manager_config(mode: str) -> int:
             file=sys.stderr,
         )
         return 4
-    print(
-        f"param-manager config {mode}: read {len(fleet)} device(s); "
-        "planning + rendering not yet implemented",
-        file=sys.stderr,
-    )
-    return 1
+
+    plan, report = pipeline.plan_and_report(fleet, policies, mapping)
+
+    if mode == "desired":
+        print(_pm_desired_table(report, plan))
+    elif mode == "pending":
+        print(_pm_pending_table(report, plan))
+    else:  # "unused" -- argparse restricts mode to these three
+        print(_pm_unused_table(plan))
+    return 0
 
 
 def _read_param_manager_fleet_sync(api_key: str) -> list[NodeRead]:
@@ -2419,6 +2548,8 @@ if TYPE_CHECKING:
     # colliding under a second module name. ``_assemble_fleet`` imports the
     # callables the same way at runtime (after putting the package root on
     # sys.path).
+    from blueprint_toolkit.zwave.convergence import ConvergenceReport
+    from blueprint_toolkit.zwave_parameter_manager.logic import Plan
     from blueprint_toolkit.zwave_parameter_manager.source import NodeRead
 
     _SubParsersActionBase = argparse._SubParsersAction[argparse.ArgumentParser]
