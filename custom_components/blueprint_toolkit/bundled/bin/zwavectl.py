@@ -2361,74 +2361,191 @@ async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
     return _assemble_fleet(node_dicts, contexts)
 
 
-def _pm_desired_table(
+@dataclass(frozen=True)
+class _PmRow:
+    """One param-manager table row for the ``desired`` / ``pending`` views.
+
+    ``device`` is the report's wake-context device, ``param`` its rendered
+    desired-vs-actual row (generic + device views), ``write`` the planned write
+    behind it (the raw target + ``Device`` make/model/power/types + ``ParamId``)
+    and ``raw_current`` the live raw value off the fleet -- the union of
+    everything any column can show.
+    """
+
+    device: ConvergenceDevice
+    param: ParamConvergence
+    write: PlannedWrite | None
+    raw_current: int | None
+
+
+@dataclass(frozen=True)
+class _PmCol:
+    """A param-manager column: header, a row -> cell-string extractor, and
+    whether it right-aligns (numeric)."""
+
+    header: str
+    extract: Callable[[_PmRow], str]
+    right: bool = False
+
+
+def _pm_policy(r: _PmRow) -> str:
+    return r.write.policy if r.write is not None else ""
+
+
+def _pm_device_type(r: _PmRow) -> str:
+    if r.write is None:
+        return ""
+    return ",".join(sorted(str(t) for t in r.write.device.device_types))
+
+
+def _pm_make(r: _PmRow) -> str:
+    return r.write.device.manufacturer if r.write is not None else ""
+
+
+def _pm_model(r: _PmRow) -> str:
+    return r.write.device.model if r.write is not None else ""
+
+
+def _pm_power(r: _PmRow) -> str:
+    if r.write is None:
+        return ""
+    return "Mains" if r.write.device.is_listening else "Battery"
+
+
+def _pm_command_class(r: _PmRow) -> str:
+    return str(r.write.id.command_class) if r.write is not None else ""
+
+
+def _pm_property(r: _PmRow) -> str:
+    return str(r.write.id.property_) if r.write is not None else ""
+
+
+def _pm_property_key(r: _PmRow) -> str:
+    if r.write is None or r.write.id.property_key is None:
+        return ""
+    return str(r.write.id.property_key)
+
+
+def _pm_property_pending(r: _PmRow) -> str:
+    return str(r.write.value) if r.write is not None else ""
+
+
+def _pm_property_current(r: _PmRow) -> str:
+    return "" if r.raw_current is None else str(r.raw_current)
+
+
+# ``parameter`` / ``desired`` / ``current`` are the generic concept view;
+# the device-specific raw values are the optional ``property-*`` columns.
+_PM_COLUMNS: dict[str, _PmCol] = {
+    "node": _PmCol("node", lambda r: str(r.device.node_id), right=True),
+    "device": _PmCol("device", lambda r: r.device.name),
+    "location": _PmCol("location", lambda r: r.device.location or ""),
+    "parameter": _PmCol("parameter", lambda r: r.param.concept),
+    "desired": _PmCol("desired", lambda r: r.param.concept_desired),
+    "current": _PmCol("current", lambda r: r.param.actual or ""),
+    "policy": _PmCol("policy", _pm_policy),
+    "device-type": _PmCol("device-type", _pm_device_type),
+    "make": _PmCol("make", _pm_make),
+    "model": _PmCol("model", _pm_model),
+    "power": _PmCol("power", _pm_power),
+    "command-class": _PmCol("command-class", _pm_command_class, right=True),
+    "property": _PmCol("property", _pm_property),
+    "property-key": _PmCol("property-key", _pm_property_key, right=True),
+    "property-pending": _PmCol(
+        "property-pending", _pm_property_pending, right=True
+    ),
+    "property-current": _PmCol(
+        "property-current", _pm_property_current, right=True
+    ),
+}
+
+_PM_DESIRED_COLS = [
+    "node",
+    "device",
+    "location",
+    "parameter",
+    "desired",
+    "policy",
+]
+_PM_PENDING_COLS = [
+    "node",
+    "device",
+    "location",
+    "parameter",
+    "desired",
+    "current",
+    "policy",
+]
+
+# Generated from the registry so the --cols help can never drift from the
+# columns _pm_parse_cols actually accepts. Both views accept any registry
+# column; only the default set differs.
+_PM_COLS_HELP = (
+    "comma-separated ordered columns. Default for desired: "
+    f"{','.join(_PM_DESIRED_COLS)}; for pending: "
+    f"{','.join(_PM_PENDING_COLS)}. Available: "
+    f"{', '.join(_PM_COLUMNS)}."
+)
+
+
+def _pm_parse_cols(
+    spec: str, default: list[str]
+) -> tuple[list[str], str | None]:
+    """A ``--cols`` spec -> ordered column list (``default`` when the spec
+    names no columns, i.e. empty or only separators / whitespace), or
+    ``([], error)`` when a name is unknown."""
+
+    cols = [c.strip() for c in spec.split(",") if c.strip()]
+    if not cols:
+        return list(default), None
+    unknown = [c for c in cols if c not in _PM_COLUMNS]
+    if unknown:
+        return [], f"unknown column(s): {', '.join(unknown)}"
+    return cols, None
+
+
+def _pm_write_rows(
     report: ConvergenceReport,
     plan: Plan,
+    fleet: list[NodeRead],
     *,
-    show_header: bool = True,
-) -> str:
-    """The ``desired`` view: one row per planned write -- every device a
-    policy applies to -- showing the generic concept + the value the policy
-    set, plus the policy that set it."""
+    pending: bool,
+) -> list[_PmRow]:
+    """Assemble ``_PmRow`` objects for the ``desired`` (all) or ``pending``
+    (non-converged) writes, joining the report rows to their planned write +
+    live raw value by ``(node_id, concept)`` / ``(node_id, ParamId)``."""
 
-    policy_by = {
-        (w.device.node_id, str(w.concept)): w.policy for w in plan.writes
+    write_by = {(w.device.node_id, str(w.concept)): w for w in plan.writes}
+    actuals_by = {
+        (rd.device.node_id, pid): v
+        for rd in fleet
+        for pid, v in rd.actuals.items()
     }
-    headers = ["node", "device", "location", "parameter", "desired", "policy"]
-    right_align = [True, False, False, False, False, False]
-    data: list[list[str]] = [
-        [
-            str(dc.device.node_id),
-            dc.device.name,
-            dc.device.location or "",
-            p.concept,
-            p.concept_desired,
-            policy_by.get((dc.device.node_id, p.concept), ""),
-        ]
-        for dc in report.devices
-        for p in dc.params
-    ]
-    return _format_table(headers, data, right_align, show_header=show_header)
+    devices = report.pending_devices if pending else report.devices
+    rows: list[_PmRow] = []
+    for dc in devices:
+        params = dc.pending_params if pending else dc.params
+        for p in params:
+            write = write_by.get((dc.device.node_id, p.concept))
+            raw = (
+                actuals_by.get((dc.device.node_id, write.id))
+                if write is not None
+                else None
+            )
+            rows.append(
+                _PmRow(device=dc.device, param=p, write=write, raw_current=raw)
+            )
+    return rows
 
 
-def _pm_pending_table(
-    report: ConvergenceReport,
-    plan: Plan,
-    *,
-    show_header: bool = True,
+def _pm_write_table(
+    rows: list[_PmRow], columns: list[str], *, show_header: bool = True
 ) -> str:
-    """The ``pending`` view: one row per non-converged write, adding the live
-    ``current`` value next to the desired one. ``current`` is the device's
-    rendered live value (there is no generic ``current`` without a raw ->
-    concept inverse, which we deliberately do not build)."""
-
-    policy_by = {
-        (w.device.node_id, str(w.concept)): w.policy for w in plan.writes
-    }
-    headers = [
-        "node",
-        "device",
-        "location",
-        "parameter",
-        "desired",
-        "current",
-        "policy",
-    ]
-    right_align = [True, False, False, False, False, False, False]
-    data: list[list[str]] = [
-        [
-            str(dc.device.node_id),
-            dc.device.name,
-            dc.device.location or "",
-            p.concept,
-            p.concept_desired,
-            p.actual or "",
-            policy_by.get((dc.device.node_id, p.concept), ""),
-        ]
-        for dc in report.pending_devices
-        for p in dc.pending_params
-    ]
-    return _format_table(headers, data, right_align, show_header=show_header)
+    cols = [_PM_COLUMNS[c] for c in columns]
+    headers = [c.header for c in cols]
+    right = [c.right for c in cols]
+    data = [[c.extract(r) for c in cols] for r in rows]
+    return _format_table(headers, data, right, show_header=show_header)
 
 
 def _pm_unused_table(plan: Plan, *, show_header: bool = True) -> str:
@@ -2449,18 +2566,31 @@ def _pm_unused_table(plan: Plan, *, show_header: bool = True) -> str:
     return _format_table(headers, data, right_align, show_header=show_header)
 
 
-def _param_manager_config(mode: str) -> int:
+def _param_manager_config(
+    mode: str,
+    *,
+    config: str = "",
+    cols: str = "",
+    no_header: bool = False,
+) -> int:
     """Plan the live fleet against the policy file and render the ``mode``
     view. Reads the fleet via this CLI's own access layer feeding the shared
     ``build_node_read`` -- the same convergence the ZPM handler computes."""
+
+    config_path = pathlib.Path(config) if config else PM_CONFIG_DEFAULT
+    default_cols = _PM_PENDING_COLS if mode == "pending" else _PM_DESIRED_COLS
+    columns, cols_err = _pm_parse_cols(cols, default_cols)
+    if cols_err is not None:
+        print(f"Error: {cols_err}", file=sys.stderr)
+        return 2
 
     if not API_KEY_FILE.exists():
         print(f"API key file not found: {API_KEY_FILE}", file=sys.stderr)
         return 2
     api_key = API_KEY_FILE.read_text().strip()
 
-    if not PM_CONFIG_DEFAULT.exists():
-        print(f"Policy file not found: {PM_CONFIG_DEFAULT}", file=sys.stderr)
+    if not config_path.exists():
+        print(f"Policy file not found: {config_path}", file=sys.stderr)
         return 2
 
     _ensure_integration_importable()
@@ -2468,7 +2598,7 @@ def _param_manager_config(mode: str) -> int:
         pipeline,
     )
 
-    policies, config_errors = pipeline.load_policies(PM_CONFIG_DEFAULT)
+    policies, config_errors = pipeline.load_policies(config_path)
     if config_errors:
         print("Policy config errors:", file=sys.stderr)
         for err in config_errors:
@@ -2491,13 +2621,13 @@ def _param_manager_config(mode: str) -> int:
         return 4
 
     plan, report = pipeline.plan_and_report(fleet, policies, mapping)
+    show_header = not no_header
 
-    if mode == "desired":
-        print(_pm_desired_table(report, plan))
-    elif mode == "pending":
-        print(_pm_pending_table(report, plan))
-    else:  # "unused" -- argparse restricts mode to these three
-        print(_pm_unused_table(plan))
+    if mode == "unused":
+        print(_pm_unused_table(plan, show_header=show_header))
+        return 0
+    rows = _pm_write_rows(report, plan, fleet, pending=mode == "pending")
+    print(_pm_write_table(rows, columns, show_header=show_header))
     return 0
 
 
@@ -2525,16 +2655,20 @@ def _read_param_manager_fleet_sync(api_key: str) -> list[NodeRead]:
         raise _FleetReadError(str(e) or type(e).__name__) from e
 
 
-def do_pm_config_desired() -> int:
-    return _param_manager_config("desired")
+def do_pm_config_desired(*, config: str, cols: str, no_header: bool) -> int:
+    return _param_manager_config(
+        "desired", config=config, cols=cols, no_header=no_header
+    )
 
 
-def do_pm_config_pending() -> int:
-    return _param_manager_config("pending")
+def do_pm_config_pending(*, config: str, cols: str, no_header: bool) -> int:
+    return _param_manager_config(
+        "pending", config=config, cols=cols, no_header=no_header
+    )
 
 
-def do_pm_config_unused() -> int:
-    return _param_manager_config("unused")
+def do_pm_config_unused(*, config: str, no_header: bool) -> int:
+    return _param_manager_config("unused", config=config, no_header=no_header)
 
 
 # --- Argparse: strict subparsers + auto-help on a missing action ----
@@ -2548,8 +2682,15 @@ if TYPE_CHECKING:
     # colliding under a second module name. ``_assemble_fleet`` imports the
     # callables the same way at runtime (after putting the package root on
     # sys.path).
-    from blueprint_toolkit.zwave.convergence import ConvergenceReport
-    from blueprint_toolkit.zwave_parameter_manager.logic import Plan
+    from blueprint_toolkit.zwave.convergence import (
+        ConvergenceDevice,
+        ConvergenceReport,
+        ParamConvergence,
+    )
+    from blueprint_toolkit.zwave_parameter_manager.logic import (
+        Plan,
+        PlannedWrite,
+    )
     from blueprint_toolkit.zwave_parameter_manager.source import NodeRead
 
     _SubParsersActionBase = argparse._SubParsersAction[argparse.ArgumentParser]
@@ -2672,16 +2813,50 @@ def build_parser() -> _StrictArgumentParser:
         help="show the desired / pending / unused parameter config",
     )
     config_sub = _action_subparsers(config_parser, level=3)
-    config_sub.add_parser(
-        "desired", help="every device + param a policy applies to"
+    _add_pm_config_args(
+        config_sub.add_parser(
+            "desired",
+            help="every device + param a policy resolves a write for",
+        ),
+        with_cols=True,
     )
-    config_sub.add_parser(
-        "pending", help="only the not-yet-converged device + params"
+    _add_pm_config_args(
+        config_sub.add_parser(
+            "pending", help="only the not-yet-converged device + params"
+        ),
+        with_cols=True,
     )
-    config_sub.add_parser(
-        "unused", help="policies / settings that match no device"
+    _add_pm_config_args(
+        config_sub.add_parser(
+            "unused", help="policies / settings that match no device"
+        ),
+        with_cols=False,
     )
     return parser
+
+
+def _add_pm_config_args(
+    parser: argparse.ArgumentParser, *, with_cols: bool
+) -> None:
+    """Attach the shared param-manager-config flags. ``--cols`` only applies
+    to the column-selectable views (``desired`` / ``pending``)."""
+
+    parser.add_argument(
+        "--config",
+        default="",
+        metavar="PATH",
+        help=(
+            "policy file to plan against "
+            "(default: /config/zwave_parameter_manager.yaml)"
+        ),
+    )
+    parser.add_argument(
+        "--no-header",
+        action="store_true",
+        help="omit the table header row",
+    )
+    if with_cols:
+        parser.add_argument("--cols", default="", help=_PM_COLS_HELP)
 
 
 COMMAND_CALLBACKS: dict[str, Callable[..., int]] = {

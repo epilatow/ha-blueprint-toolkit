@@ -1353,7 +1353,7 @@ class TestCli:
         # _param_manager_config with that mode.
         seen: list[str] = []
 
-        def fake(mode: str) -> int:
+        def fake(mode: str, **_kw: object) -> int:
             seen.append(mode)
             return 0
 
@@ -1549,7 +1549,7 @@ class TestParamManagerFleet:
             "policy",
         ]
 
-    def test_pm_desired_table_renders_a_row(self) -> None:
+    def test_pm_desired_rows_render_default_columns(self) -> None:
         from types import SimpleNamespace  # noqa: PLC0415
 
         report = SimpleNamespace(
@@ -1562,7 +1562,9 @@ class TestParamManagerFleet:
                     ),
                     params=[
                         SimpleNamespace(
-                            concept="motion_sensitivity", concept_desired="8"
+                            concept="motion_sensitivity",
+                            concept_desired="8",
+                            actual="6",
                         )
                     ],
                 )
@@ -1574,11 +1576,12 @@ class TestParamManagerFleet:
                     device=SimpleNamespace(node_id=5),
                     concept="motion_sensitivity",
                     policy="q-motion",
+                    id="pid",
                 )
             ]
         )
-        out = zc._pm_desired_table(report, plan)
-        row = out.splitlines()[2]
+        rows = zc._pm_write_rows(report, plan, [], pending=False)
+        row = zc._pm_write_table(rows, zc._PM_DESIRED_COLS).splitlines()[2]
         assert row.split() == [
             "5",
             "Guest",
@@ -1591,7 +1594,7 @@ class TestParamManagerFleet:
             "q-motion",
         ]
 
-    def test_pm_pending_table_shows_current(self) -> None:
+    def test_pm_pending_rows_show_current(self) -> None:
         from types import SimpleNamespace  # noqa: PLC0415
 
         param = SimpleNamespace(
@@ -1613,10 +1616,12 @@ class TestParamManagerFleet:
                     device=SimpleNamespace(node_id=5),
                     concept="motion_sensitivity",
                     policy="q",
+                    id="pid",
                 )
             ]
         )
-        lines = zc._pm_pending_table(report, plan).splitlines()
+        rows = zc._pm_write_rows(report, plan, [], pending=True)
+        lines = zc._pm_write_table(rows, zc._PM_PENDING_COLS).splitlines()
         assert lines[0].split() == [
             "node",
             "device",
@@ -1636,6 +1641,124 @@ class TestParamManagerFleet:
             "6",
             "q",
         ]
+
+    def test_pm_optional_columns_render(self) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+        from typing import NamedTuple  # noqa: PLC0415
+
+        # The actuals dict is keyed by ParamId, so the fake must be hashable
+        # (and the same object) for the property-current lookup to land.
+        class _Pid(NamedTuple):
+            command_class: int
+            property_: int
+            property_key: int
+
+        pid = _Pid(112, 12, 255)
+        write = SimpleNamespace(
+            device=SimpleNamespace(
+                node_id=5,
+                manufacturer="Zooz",
+                model="ZSE11",
+                is_listening=False,
+                device_types=["motion"],
+            ),
+            concept="motion_sensitivity",
+            policy="q",
+            id=pid,
+            value=8,
+        )
+        report = SimpleNamespace(
+            devices=[
+                SimpleNamespace(
+                    device=SimpleNamespace(
+                        node_id=5, name="Bath", location="Hall"
+                    ),
+                    params=[
+                        SimpleNamespace(
+                            concept="motion_sensitivity",
+                            concept_desired="8",
+                            actual="6",
+                        )
+                    ],
+                )
+            ]
+        )
+        plan = SimpleNamespace(writes=[write])
+        # The live raw value (property-current) comes off the fleet's actuals.
+        fleet = [
+            SimpleNamespace(device=SimpleNamespace(node_id=5), actuals={pid: 6})
+        ]
+        rows = zc._pm_write_rows(report, plan, fleet, pending=False)
+        cols = [
+            "node",
+            "make",
+            "model",
+            "power",
+            "device-type",
+            "command-class",
+            "property",
+            "property-key",
+            "property-pending",
+            "property-current",
+        ]
+        row = zc._pm_write_table(rows, cols).splitlines()[2]
+        assert row.split() == [
+            "5",
+            "Zooz",
+            "ZSE11",
+            "Battery",
+            "motion",
+            "112",
+            "12",
+            "255",
+            "8",
+            "6",
+        ]
+
+    def test_cols_rejects_an_unknown_column(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        self._seed_config(monkeypatch, tmp_path)
+        assert zc._param_manager_config("desired", cols="node,bogus") == 2
+        assert "unknown column(s): bogus" in capsys.readouterr().err
+
+    def test_cols_with_no_real_names_falls_back_to_default(self) -> None:
+        # A spec that is only separators / whitespace names no columns, so it
+        # falls back to the mode default rather than rendering an empty table.
+        cols, err = zc._pm_parse_cols(" , ", zc._PM_DESIRED_COLS)
+        assert err is None
+        assert cols == zc._PM_DESIRED_COLS
+
+    def test_cols_help_enumerates_every_registry_column(self) -> None:
+        # The --cols help is generated from the registry, so a column added to
+        # _PM_COLUMNS can never silently drift out of the help text.
+        for name in zc._PM_COLUMNS:
+            assert name in zc._PM_COLS_HELP
+
+    def test_config_override_and_no_header(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        key = tmp_path / "api-key"
+        key.write_text("tok")
+        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+        cfg = tmp_path / "custom.yaml"
+        cfg.write_text("policies: []\n")
+        monkeypatch.setattr(
+            zc, "_read_param_manager_fleet_sync", lambda _api_key: []
+        )
+        # --config points at the custom (empty) policy file; --no-header omits
+        # the header, so an empty fleet prints nothing at all.
+        assert (
+            zc._param_manager_config("desired", config=str(cfg), no_header=True)
+            == 0
+        )
+        assert capsys.readouterr().out == "\n"
 
     def test_pending_wires_over_an_empty_fleet(
         self,
