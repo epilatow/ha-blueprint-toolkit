@@ -58,6 +58,7 @@ def _write(value: int) -> PlannedWrite:
         policy="p1",
         id=_MOTION,
         value=value,
+        generic_value=value,
     )
 
 

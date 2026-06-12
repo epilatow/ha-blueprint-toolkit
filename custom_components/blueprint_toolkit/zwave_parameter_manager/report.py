@@ -87,7 +87,21 @@ def _param_row(write: PlannedWrite, actual: int | None) -> ParamConvergence:
         param=label,
         desired=_render_value(meta, write.value),
         actual=None if actual is None else _render_value(meta, actual),
+        concept=str(write.concept),
+        concept_desired=_render_generic(write.generic_value),
     )
+
+
+def _render_generic(value: bool | int | float) -> str:
+    """The generic concept value (what the policy set) as a display string.
+
+    ``bool`` is checked first -- it is an ``int`` subclass -- so a boolean
+    concept renders ``true`` / ``false`` rather than ``1`` / ``0``.
+    """
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def _render_value(meta: ParamMeta | None, value: int) -> str:

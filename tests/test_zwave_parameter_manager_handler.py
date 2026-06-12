@@ -354,6 +354,7 @@ class TestDispatchWrites:
                 policy="p",
                 id=ParamId(112, 12),
                 value=8,
+                generic_value=8,
             ),
             PlannedWrite(
                 device=dev,
@@ -361,6 +362,7 @@ class TestDispatchWrites:
                 policy="p",
                 id=ParamId(132, "wakeUpInterval"),
                 value=3600,
+                generic_value=3600,
             ),
         )
         h = _CapturingHass()
@@ -402,6 +404,7 @@ class TestDispatchWrites:
                 policy="p",
                 id=ParamId(112, 12, 255),
                 value=1,
+                generic_value=True,
             ),
         )
         h = _CapturingHass()
@@ -432,6 +435,7 @@ class TestDispatchWrites:
                 policy="p",
                 id=ParamId(112, 12),
                 value=8,
+                generic_value=8,
             ),
         )
         h = _CapturingHass()

@@ -72,7 +72,12 @@ def _write(
     device: Device, concept: GenericParamNames, pid: ParamId, value: int
 ) -> PlannedWrite:
     return PlannedWrite(
-        device=device, concept=concept, policy="p1", id=pid, value=value
+        device=device,
+        concept=concept,
+        policy="p1",
+        id=pid,
+        value=value,
+        generic_value=value,
     )
 
 
@@ -115,11 +120,41 @@ def test_build_report_joins_desired_and_actual() -> None:
     )
     assert wake.converged is False
 
+    # The generic (concept) view rides alongside the device view.
+    assert (motion.concept, motion.concept_desired) == (
+        "motion_sensitivity",
+        "8",
+    )
+    assert (wake.concept, wake.concept_desired) == (
+        "wake_up_interval",
+        "3600",
+    )
+
     assert dc.converged is False
     assert dc.pending_params == (wake,)
     assert report.converged_count == 1
     assert report.pending_count == 1
     assert report.pending_devices == (dc,)
+
+
+def test_bool_concept_renders_generic_value_as_word() -> None:
+    # A boolean concept's generic value renders true/false, not 1/0 (bool is
+    # an int subclass, so the renderer must check it first).
+    device = _device(_MOTION_META)
+    plan = Plan(
+        writes=(
+            PlannedWrite(
+                device=device,
+                concept=GenericParamNames.LIGHT_ON_MOTION,
+                policy="p1",
+                id=_MOTION,
+                value=1,
+                generic_value=True,
+            ),
+        )
+    )
+    row = build_report(plan, {}, {}).devices[0].params[0]
+    assert (row.concept, row.concept_desired) == ("light_on_motion", "true")
 
 
 def test_unread_actual_is_pending() -> None:

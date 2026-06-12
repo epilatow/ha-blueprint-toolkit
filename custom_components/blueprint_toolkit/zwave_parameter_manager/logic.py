@@ -941,7 +941,10 @@ class PlannedWrite:
     """One concrete parameter write planned for a device.
 
     Carries the resolved ``Device`` (not just its node id) so reports
-    and the apply path can name + address the device directly.
+    and the apply path can name + address the device directly. ``value`` is
+    the device-specific raw target; ``generic_value`` is the concept value the
+    policy set (the same value before it was resolved onto this device's
+    parameter), so a report can show either the generic or the device view.
     """
 
     device: Device
@@ -949,6 +952,7 @@ class PlannedWrite:
     policy: str
     id: ParamId
     value: int
+    generic_value: bool | int | float
 
 
 @dataclass(frozen=True)
@@ -1050,6 +1054,7 @@ def evaluate_policies(
                     device,
                     concept_name,
                     policy,
+                    value.value,
                     res,
                     writes,
                     warnings,
@@ -1108,6 +1113,7 @@ def _record(
     device: Device,
     concept_name: GenericParamNames,
     policy: Policy,
+    generic_value: bool | int | float,
     res: Resolution,
     writes: list[PlannedWrite],
     warnings: list[PlanIssue],
@@ -1123,6 +1129,7 @@ def _record(
                 policy=policy.name,
                 id=res.id,
                 value=res.value,
+                generic_value=generic_value,
             )
         )
     elif res.status is ResolutionStatus.NOT_APPLICABLE:
