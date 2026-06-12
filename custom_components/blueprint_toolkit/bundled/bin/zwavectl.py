@@ -20,7 +20,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 HA_CONFIG_YAML = pathlib.Path("/config/configuration.yaml")
 DEFAULT_RECORDER_KEEP_DAYS = 10  # HA built-in default when unset
@@ -449,9 +449,154 @@ class ZwaveApiError(RuntimeError):
 _ROUTE_REFRESH_CONCURRENCY = 2
 
 
+# --- API payload shapes -----------------------------------------
+#
+# TypedDicts over the read-only JSON blobs this tool inspects: HA
+# registry rows, the zwave-js node model, HA state / history
+# entries, and the zwave-js-ui / HA / zwave-js-server reply
+# envelopes. They declare only the keys this tool reads
+# (``total=False`` -- the real payloads carry many more), so a typo
+# in a key name is a type error instead of a silent miss. Raw blobs
+# we never inspect (e.g. the start_listening node state handed
+# straight to ``zwave_js_server``'s ``Node``) stay untyped.
+
+
+class DeviceRow(TypedDict, total=False):
+    """An HA device-registry row."""
+
+    id: str
+    identifiers: list[list[str]]
+    area_id: str | None
+    name: str | None
+    name_by_user: str | None
+
+
+class EntityRow(TypedDict, total=False):
+    """An HA entity-registry row."""
+
+    platform: str
+    device_id: str | None
+    entity_id: str
+    device_class: str | None
+    original_device_class: str | None
+
+
+class AreaRow(TypedDict, total=False):
+    """An HA area-registry row."""
+
+    area_id: str
+    name: str | None
+
+
+class HaStateAttributes(TypedDict, total=False):
+    """The subset of an HA state's ``attributes`` this tool reads."""
+
+    device_class: str | None
+
+
+class HaState(TypedDict, total=False):
+    """An HA state object (``/api/states``) or minimal history entry
+    (``/api/history``)."""
+
+    entity_id: str
+    state: str
+    last_changed: str
+    last_updated: str
+    attributes: HaStateAttributes
+
+
+class Route(TypedDict, total=False):
+    """A zwave-js priority / SUC-return route."""
+
+    repeaters: list[int]
+
+
+class Lwr(TypedDict, total=False):
+    """A node's last-working-route statistics."""
+
+    protocolDataRate: int
+
+
+class NodeStatistics(TypedDict, total=False):
+    """The subset of a node's ``statistics`` block this tool reads."""
+
+    lwr: Lwr
+
+
+class FirmwareUpdate(TypedDict, total=False):
+    """An ``availableFirmwareUpdates`` entry."""
+
+    version: str
+
+
+class ZwaveNode(TypedDict, total=False):
+    """The subset of a zwave-js node model this tool reads."""
+
+    id: int
+    name: str
+    protocol: int
+    isListening: bool
+    statistics: NodeStatistics
+    applicationRoute: Route | None
+    prioritySUCReturnRoute: Route | None
+    zwavePlusVersion: int
+    zwavePlusRoleType: int
+    manufacturer: str
+    productDescription: str
+    productLabel: str
+    security: str
+    supportsBeaming: bool
+    firmwareVersion: str
+    sdkVersion: str
+    interviewStage: str
+    maxDataRate: int
+    availableFirmwareUpdates: list[FirmwareUpdate]
+
+
+class ZwaveApiResponse(TypedDict, total=False):
+    """A zwave-js-ui socketio ``ZWAVE_API`` reply envelope."""
+
+    success: bool
+    message: str
+    result: Any
+
+
+class HaWsResponse(TypedDict, total=False):
+    """An HA websocket reply envelope."""
+
+    type: str
+    result: Any
+
+
+class ServerState(TypedDict, total=False):
+    """The ``state`` block of a zwave-js-server ``start_listening``."""
+
+    nodes: list[dict[str, Any]]
+
+
+class ServerResult(TypedDict, total=False):
+    """The ``result`` block of a zwave-js-server message."""
+
+    state: ServerState
+
+
+class ServerMessage(TypedDict, total=False):
+    """A zwave-js-server (port 3000) message frame."""
+
+    messageId: str
+    maxSchemaVersion: int
+    result: ServerResult
+
+
+def _api_response(raw: Any) -> ZwaveApiResponse:
+    """Coerce a raw zwave-js-ui socketio reply to the envelope shape; a
+    non-dict reply becomes an empty (all-keys-absent) envelope."""
+    return cast("ZwaveApiResponse", raw) if isinstance(raw, dict) else {}
+
+
 async def fetch_zwave_nodes(
     use_snapshot_data: bool = False,
-) -> dict[int, dict[str, Any]]:
+) -> dict[int, ZwaveNode]:
     """Bulk node fetch with route fields refreshed per-node.
 
     The bulk ``getNodes`` snapshot's ``applicationRoute`` and
@@ -487,10 +632,12 @@ async def fetch_zwave_nodes(
     sio = socketio.AsyncClient()
     await sio.connect(ZWAVE_URL, socketio_path="/socket.io")
     try:
-        resp = await sio.call(
-            "ZWAVE_API",
-            {"api": "getNodes", "args": []},
-            timeout=10.0,
+        resp = _api_response(
+            await sio.call(
+                "ZWAVE_API",
+                {"api": "getNodes", "args": []},
+                timeout=10.0,
+            )
         )
         # zwave-js-ui envelope: ``success`` False with a
         # ``message`` means the addon is up but the driver
@@ -500,16 +647,18 @@ async def fetch_zwave_nodes(
         # dedicated exception so the top-level handler can
         # print a clean message with controller-recovery
         # guidance instead of a traceback.
-        if isinstance(resp, dict) and resp.get("success") is False:
+        if resp.get("success") is False:
             message = str(resp.get("message") or "no message")
             raise ZwaveApiError(f"getNodes failed: {message}")
-        result = resp.get("result") if isinstance(resp, dict) else None
+        result = resp.get("result")
         if not isinstance(result, list):
             raise TypeError(
                 f"getNodes returned unexpected shape: {resp!r}",
             )
-        nodes = {
-            n["id"]: n for n in result if isinstance(n, dict) and "id" in n
+        nodes: dict[int, ZwaveNode] = {
+            n["id"]: cast("ZwaveNode", n)
+            for n in result
+            if isinstance(n, dict) and "id" in n
         }
         if use_snapshot_data:
             return nodes
@@ -517,7 +666,7 @@ async def fetch_zwave_nodes(
 
         async def _refresh(nid: int) -> None:
             async with sem:
-                ar_resp, psr_resp = await asyncio.gather(
+                ar_raw, psr_raw = await asyncio.gather(
                     sio.call(
                         "ZWAVE_API",
                         {"api": "getPriorityRoute", "args": [nid]},
@@ -532,16 +681,10 @@ async def fetch_zwave_nodes(
                         timeout=5.0,
                     ),
                 )
-            ar = (
-                ar_resp.get("result")
-                if isinstance(ar_resp, dict) and ar_resp.get("success")
-                else None
-            )
-            psr = (
-                psr_resp.get("result")
-                if isinstance(psr_resp, dict) and psr_resp.get("success")
-                else None
-            )
+            ar_resp = _api_response(ar_raw)
+            psr_resp = _api_response(psr_raw)
+            ar = ar_resp.get("result") if ar_resp.get("success") else None
+            psr = psr_resp.get("result") if psr_resp.get("success") else None
             nodes[nid]["applicationRoute"] = ar
             nodes[nid]["prioritySUCReturnRoute"] = psr
 
@@ -581,12 +724,14 @@ async def fetch_zwave_neighbors(
     await sio.connect(ZWAVE_URL, socketio_path="/socket.io")
     try:
         for nid in node_ids:
-            r = await sio.call(
-                "ZWAVE_API",
-                {"api": "getNodeNeighbors", "args": [nid]},
-                timeout=5.0,
+            r = _api_response(
+                await sio.call(
+                    "ZWAVE_API",
+                    {"api": "getNodeNeighbors", "args": [nid]},
+                    timeout=5.0,
+                )
             )
-            if isinstance(r, dict) and r.get("success"):
+            if r.get("success"):
                 result = r.get("result")
                 if isinstance(result, list):
                     out[nid] = [x for x in result if isinstance(x, int)]
@@ -597,9 +742,7 @@ async def fetch_zwave_neighbors(
 
 async def fetch_ha_registries(
     api_key: str,
-) -> tuple[
-    list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]
-]:
+) -> tuple[list[EntityRow], dict[str, DeviceRow], dict[str, AreaRow]]:
     """Return (entities, devices_by_id, areas_by_id)."""
     # Keep this local: the dependency is installed only in the
     # bootstrapped script venv after re-exec.
@@ -611,7 +754,7 @@ async def fetch_ha_registries(
     ):
         await ws.receive_json()  # auth_required
         await ws.send_json({"type": "auth", "access_token": api_key})
-        auth_resp = await ws.receive_json()
+        auth_resp = cast("HaWsResponse", await ws.receive_json())
         if auth_resp.get("type") != "auth_ok":
             raise RuntimeError(
                 f"HA WebSocket auth failed: {auth_resp!r}",
@@ -625,16 +768,20 @@ async def fetch_ha_registries(
         # and its response. If a future change adds an
         # event subscription, this will need to correlate
         # responses by ``id`` instead.
-        async def call(command: str) -> list[dict[str, Any]]:
+        async def call(command: str) -> Any:
             nonlocal next_id
             next_id += 1
             await ws.send_json({"id": next_id, "type": command})
-            resp = await ws.receive_json()
+            resp = cast("HaWsResponse", await ws.receive_json())
             return resp.get("result") or []
 
-        entities = await call("config/entity_registry/list")
-        devices = await call("config/device_registry/list")
-        areas = await call("config/area_registry/list")
+        entities = cast(
+            "list[EntityRow]", await call("config/entity_registry/list")
+        )
+        devices = cast(
+            "list[DeviceRow]", await call("config/device_registry/list")
+        )
+        areas = cast("list[AreaRow]", await call("config/area_registry/list"))
 
     return (
         entities,
@@ -655,8 +802,8 @@ async def fetch_ha_states(api_key: str) -> dict[str, str]:
         session.get(f"{HA_URL}/api/states", headers=headers) as r,
     ):
         r.raise_for_status()
-        states = await r.json()
-    return {s["entity_id"]: s.get("state") for s in states}
+        states = cast("list[HaState]", await r.json())
+    return {s["entity_id"]: s["state"] for s in states}
 
 
 async def fetch_ha_history(
@@ -717,9 +864,10 @@ async def fetch_ha_history(
                 data = await r.json()
             if not isinstance(data, list):
                 continue
-            for ent_hist in data:
-                if not isinstance(ent_hist, list) or not ent_hist:
+            for ent_hist_raw in data:
+                if not isinstance(ent_hist_raw, list) or not ent_hist_raw:
                     continue
+                ent_hist = cast("list[HaState]", ent_hist_raw)
                 eid = ent_hist[0].get("entity_id")
                 if eid not in out:
                     continue
@@ -774,7 +922,7 @@ def _read_recorder_keep_days() -> int:
 
 
 def _state_at_or_before(
-    history: list[dict[str, Any]],
+    history: list[HaState],
     target: datetime,
 ) -> str | None:
     """Return the state that was active at ``target``.
@@ -806,7 +954,7 @@ def _state_at_or_before(
 
 
 def node_ids_by_device(
-    devices_by_id: dict[str, dict[str, Any]],
+    devices_by_id: dict[str, DeviceRow],
 ) -> dict[str, int]:
     """Map HA ``device_id`` -> zwave ``node_id`` by reverse-parsing each
     device's ``("zwave_js", "<home_id>-<node_id>")`` identifier.
@@ -833,32 +981,38 @@ def node_ids_by_device(
     return dev_to_node
 
 
-def build_node_to_ha(
-    devices_by_id: dict[str, dict[str, Any]],
-    areas_by_id: dict[str, dict[str, Any]],
-    entities: list[dict[str, Any]],
-) -> dict[int, dict[str, Any]]:
-    """Map zwave node_id -> {device_name, area_name, stat_entities}.
+@dataclass(frozen=True)
+class NodeHaInfo:
+    """HA-derived per-node context for the list view: display name, area, and
+    the ``{col_key: entity_id}`` map of per-node diagnostic stat sensors
+    (signal_strength, round_trip_time, etc). An absent stat entry means the
+    entity doesn't exist for that node -- rendered as ``--``."""
 
-    ``stat_entities`` is a ``{col_key: entity_id}`` mapping for
-    the per-node HA diagnostic sensors (signal_strength,
-    round_trip_time, etc). Absent entries mean the entity
-    doesn't exist for that node -- rendered as ``--``.
-    """
+    device_name: str
+    area_name: str
+    stat_entities: dict[str, str]
+
+
+def build_node_to_ha(
+    devices_by_id: dict[str, DeviceRow],
+    areas_by_id: dict[str, AreaRow],
+    entities: list[EntityRow],
+) -> dict[int, NodeHaInfo]:
+    """Map each zwave node_id to its ``NodeHaInfo``."""
     dev_to_node = node_ids_by_device(devices_by_id)
 
-    out: dict[int, dict[str, Any]] = {}
+    out: dict[int, NodeHaInfo] = {}
     for dev_id, node_id in dev_to_node.items():
         dev = devices_by_id[dev_id]
         area_id = dev.get("area_id")
         area_name = ""
         if area_id and area_id in areas_by_id:
             area_name = areas_by_id[area_id].get("name") or ""
-        out[node_id] = {
-            "device_name": dev.get("name_by_user") or dev.get("name") or "",
-            "area_name": area_name,
-            "stat_entities": {},
-        }
+        out[node_id] = NodeHaInfo(
+            device_name=dev.get("name_by_user") or dev.get("name") or "",
+            area_name=area_name,
+            stat_entities={},
+        )
 
     # Attach per-node stat entity_ids by matching on device_id and
     # entity_id suffix.
@@ -877,7 +1031,7 @@ def build_node_to_ha(
             # otherwise so this is still at most one match per
             # column per entity.
             if eid.endswith(f"_{suffix}"):
-                out[node_id]["stat_entities"][col] = eid
+                out[node_id].stat_entities[col] = eid
     return out
 
 
@@ -973,8 +1127,8 @@ def _parse_numeric(state: str | None) -> int | float | None:
 
 
 def _route_label(
-    route: dict[str, Any] | None,
-    node_to_ha: dict[int, dict[str, Any]],
+    route: Route | None,
+    node_to_ha: dict[int, NodeHaInfo],
 ) -> str:
     """Human label for a zwave-js ``applicationRoute`` or
     ``prioritySUCReturnRoute`` dict.
@@ -989,15 +1143,16 @@ def _route_label(
     if not isinstance(reps, list) or not reps:
         return DASH
     rid = reps[0]
-    label = node_to_ha.get(rid, {}).get("device_name") or f"node {rid}"
+    info = node_to_ha.get(rid)
+    label = (info.device_name if info else "") or f"node {rid}"
     if len(reps) > 1:
         label += f" (+{len(reps) - 1})"
     return label
 
 
 def build_rows(
-    zwave_nodes: dict[int, dict[str, Any]],
-    node_to_ha: dict[int, dict[str, Any]],
+    zwave_nodes: dict[int, ZwaveNode],
+    node_to_ha: dict[int, NodeHaInfo],
     current_states: dict[str, str],
     history: dict[str, dict[int, str]],
     day_offsets: list[int],
@@ -1015,16 +1170,18 @@ def build_rows(
         if nid == 1:
             continue
         stats = n.get("statistics") or {}
-        ha = node_to_ha.get(nid, {})
-        stat_ents: dict[str, str] = ha.get("stat_entities") or {}
+        ha = node_to_ha.get(nid)
+        stat_ents: dict[str, str] = ha.stat_entities if ha else {}
         plus_ver = n.get("zwavePlusVersion")
         # Internal working dict keyed by public column name
         # (dashes). Converted to underscore keys when the Row
         # dataclass is constructed at the bottom of the loop.
         cells: dict[str, Any] = {
             "node": nid,
-            "device": ha.get("device_name") or n.get("name") or f"node {nid}",
-            "location": ha.get("area_name") or "",
+            "device": (ha.device_name if ha else "")
+            or n.get("name")
+            or f"node {nid}",
+            "location": ha.area_name if ha else "",
             "protocol": "LR" if n.get("protocol") == 1 else "Mesh",
             "priority-route": _route_label(
                 n.get("applicationRoute"),
@@ -1331,7 +1488,7 @@ def _fmt_drop_rate(rate: float | None, use_color: bool) -> str:
     return f"{color}{s}{ANSI_RESET}"
 
 
-def _fmt_update(updates: Any) -> str:
+def _fmt_update(updates: list[FirmwareUpdate] | None) -> str:
     """Format ``availableFirmwareUpdates`` into a cell string.
 
     ``None`` / empty list -> ``"no"``. Otherwise surface the
@@ -1341,8 +1498,7 @@ def _fmt_update(updates: Any) -> str:
     """
     if not isinstance(updates, list) or not updates:
         return "no"
-    first = updates[0]
-    ver = first.get("version") if isinstance(first, dict) else None
+    ver = updates[0].get("version")
     if ver:
         return f"yes (v{ver})"
     return "yes"
@@ -1744,8 +1900,8 @@ async def _run(
     columns: list[str],
     use_snapshot_data: bool = False,
 ) -> tuple[
-    dict[int, dict[str, Any]],
-    dict[int, dict[str, Any]],
+    dict[int, ZwaveNode],
+    dict[int, NodeHaInfo],
     dict[str, str],
     dict[str, dict[int, str]],
     dict[int, list[int]],
@@ -1786,7 +1942,7 @@ async def _run(
     needed_entity_ids: list[str] = []
     for info in node_to_ha.values():
         for col in historical_cols_to_fetch:
-            eid = info.get("stat_entities", {}).get(col)
+            eid = info.stat_entities.get(col)
             if eid:
                 needed_entity_ids.append(eid)
     needed_entity_ids = sorted(set(needed_entity_ids))
@@ -2022,9 +2178,12 @@ async def _fetch_zwave_server_nodes() -> list[dict[str, Any]]:
 
     async with websockets.connect(ZWAVE_SERVER_URL, max_size=None) as ws:
 
-        async def recv() -> Any:
-            return json.loads(
-                await asyncio.wait_for(ws.recv(), ZWAVE_SERVER_RECV_TIMEOUT)
+        async def recv() -> ServerMessage:
+            return cast(
+                "ServerMessage",
+                json.loads(
+                    await asyncio.wait_for(ws.recv(), ZWAVE_SERVER_RECV_TIMEOUT)
+                ),
             )
 
         hello = await recv()
@@ -2066,7 +2225,7 @@ async def _fetch_state_device_classes(api_key: str) -> dict[str, str | None]:
     async with aiohttp.ClientSession() as session:
         async with session.get(f"{HA_URL}/api/states", headers=headers) as r:
             r.raise_for_status()
-            states = await r.json()
+            states = cast("list[HaState]", await r.json())
     return {
         s["entity_id"]: s.get("attributes", {}).get("device_class")
         for s in states
@@ -2087,9 +2246,9 @@ class NodeContext:
 
 
 def _node_contexts(
-    devices_by_id: dict[str, dict[str, Any]],
-    entities: list[dict[str, Any]],
-    areas_by_id: dict[str, dict[str, Any]],
+    devices_by_id: dict[str, DeviceRow],
+    entities: list[EntityRow],
+    areas_by_id: dict[str, AreaRow],
     device_classes: dict[str, str | None],
 ) -> dict[int, NodeContext]:
     """Map each zwave node_id to its ``NodeContext``."""
@@ -2146,11 +2305,17 @@ def _assemble_fleet(
     from blueprint_toolkit.zwave_parameter_manager.source import (  # noqa: PLC0415
         build_node_read,
     )
+    from zwave_js_server.client import Client  # noqa: PLC0415 - needs venv
     from zwave_js_server.model.node import Node  # noqa: PLC0415 - needs venv
+    from zwave_js_server.model.node.data_model import (  # noqa: PLC0415
+        NodeDataType,
+    )
 
     fleet: list[NodeRead] = []
     for data in node_dicts:
-        node = Node(None, data)
+        # We only read values off the node; the client is never touched, so a
+        # cast supplies the read-only construction without a live Client.
+        node = Node(cast(Client, None), cast(NodeDataType, data))
         ctx = contexts.get(node.node_id)
         fleet.append(
             build_node_read(

@@ -20,6 +20,7 @@ row assembly); focused mocks cover important fetcher error paths.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -263,10 +264,12 @@ class TestFmtUpdate:
         assert zc._fmt_update([{"version": "7.21.0"}]) == "yes (v7.21.0)"
 
     def test_without_version(self) -> None:
-        assert zc._fmt_update([{"other_field": "x"}]) == "yes"
+        assert zc._fmt_update([{}]) == "yes"
 
     def test_non_list(self) -> None:
-        assert zc._fmt_update("garbage") == "no"
+        # The runtime guard defends against a non-list (the node cast could
+        # be a lie); pass a deliberately wrong type to exercise it.
+        assert zc._fmt_update("garbage") == "no"  # type: ignore[arg-type]
 
 
 # --- _fmt_num / _fmt_battery / _fmt_version / _fmt_neighbors ---
@@ -458,7 +461,9 @@ class TestRouteLabel:
 
     def test_repeater_resolves_to_device_name(self) -> None:
         node_to_ha = {
-            50: {"device_name": "Hallway Switch", "stat_entities": {}},
+            50: zc.NodeHaInfo(
+                device_name="Hallway Switch", area_name="", stat_entities={}
+            ),
         }
         assert (
             zc._route_label({"repeaters": [50]}, node_to_ha) == "Hallway Switch"
@@ -470,7 +475,9 @@ class TestRouteLabel:
 
     def test_multiple_hops_shows_count(self) -> None:
         node_to_ha = {
-            50: {"device_name": "Repeater A", "stat_entities": {}},
+            50: zc.NodeHaInfo(
+                device_name="Repeater A", area_name="", stat_entities={}
+            ),
         }
         assert (
             zc._route_label({"repeaters": [50, 17, 13]}, node_to_ha)
@@ -481,7 +488,7 @@ class TestRouteLabel:
 # --- _state_at_or_before ----------------------------------------
 
 
-def _hist(times: list[tuple[str, str]]) -> list[dict[str, Any]]:
+def _hist(times: list[tuple[str, str]]) -> list[zc.HaState]:
     """Build a minimal HA history payload.
 
     Each ``(timestamp, state)`` pair becomes a row. Sorted
@@ -527,7 +534,7 @@ class TestStateAtOrBefore:
         assert zc._state_at_or_before(hist, target) == "-70"
 
     def test_malformed_timestamp_skipped(self) -> None:
-        hist = [
+        hist: list[zc.HaState] = [
             {"last_changed": "not-a-timestamp", "state": "-70"},
             {"last_changed": "2026-04-01T00:00:00+00:00", "state": "-75"},
         ]
@@ -535,7 +542,7 @@ class TestStateAtOrBefore:
         assert zc._state_at_or_before(hist, target) == "-75"
 
     def test_last_updated_fallback(self) -> None:
-        hist = [
+        hist: list[zc.HaState] = [
             {"last_updated": "2026-04-01T00:00:00+00:00", "state": "-70"},
         ]
         target = datetime(2026, 4, 5, tzinfo=UTC)
@@ -636,7 +643,7 @@ class TestBootstrapVenv:
             patch.object(zc, "VENV_DIR", venv_dir),
             patch.object(zc, "VENV_STAMP", stamp),
             patch.object(
-                zc.subprocess,
+                subprocess,
                 "run",
                 autospec=True,
                 side_effect=_fake_venv_creator(venv_dir),
@@ -662,7 +669,7 @@ class TestBootstrapVenv:
         with (
             patch.object(zc, "VENV_DIR", venv_dir),
             patch.object(zc, "VENV_STAMP", stamp),
-            patch.object(zc.subprocess, "run", autospec=True) as mock_run,
+            patch.object(subprocess, "run", autospec=True) as mock_run,
         ):
             zc.bootstrap_venv()
         # Only pip install (no venv re-create).
@@ -680,7 +687,7 @@ class TestBootstrapVenv:
         with (
             patch.object(zc, "VENV_DIR", venv_dir),
             patch.object(zc, "VENV_STAMP", stamp),
-            patch.object(zc.subprocess, "run", autospec=True) as mock_run,
+            patch.object(subprocess, "run", autospec=True) as mock_run,
         ):
             zc.bootstrap_venv()
         mock_run.assert_not_called()
@@ -697,7 +704,7 @@ class TestBootstrapVenv:
         with (
             patch.object(zc, "VENV_DIR", venv_dir),
             patch.object(zc, "VENV_STAMP", stamp),
-            patch.object(zc.subprocess, "run", autospec=True) as mock_run,
+            patch.object(subprocess, "run", autospec=True) as mock_run,
         ):
             zc.bootstrap_venv()
         assert mock_run.call_count == 1  # pip install re-ran
@@ -731,7 +738,7 @@ class TestRowSchema:
 
 class TestBuildNodeToHa:
     def test_maps_zwave_device_to_node_id(self) -> None:
-        devices = {
+        devices: dict[str, zc.DeviceRow] = {
             "dev_A": {
                 "id": "dev_A",
                 "name": "Hallway Lock",
@@ -740,8 +747,10 @@ class TestBuildNodeToHa:
                 "identifiers": [["zwave_js", "1234-18-0"]],
             },
         }
-        areas = {"area_hallway": {"area_id": "area_hallway", "name": "Hall"}}
-        entities = [
+        areas: dict[str, zc.AreaRow] = {
+            "area_hallway": {"area_id": "area_hallway", "name": "Hall"}
+        }
+        entities: list[zc.EntityRow] = [
             {
                 "entity_id": "sensor.hallway_lock_signal_strength",
                 "device_id": "dev_A",
@@ -762,17 +771,17 @@ class TestBuildNodeToHa:
         out = zc.build_node_to_ha(devices, areas, entities)
         assert 18 in out
         info = out[18]
-        assert info["device_name"] == "Hallway Lock"
-        assert info["area_name"] == "Hall"
-        assert info["stat_entities"]["ss"] == (
+        assert info.device_name == "Hallway Lock"
+        assert info.area_name == "Hall"
+        assert info.stat_entities["ss"] == (
             "sensor.hallway_lock_signal_strength"
         )
-        assert info["stat_entities"]["battery"] == (
+        assert info.stat_entities["battery"] == (
             "sensor.hallway_lock_battery_level"
         )
 
     def test_prefers_name_by_user(self) -> None:
-        devices = {
+        devices: dict[str, zc.DeviceRow] = {
             "dev_A": {
                 "id": "dev_A",
                 "name": "Raw Device Name",
@@ -781,10 +790,10 @@ class TestBuildNodeToHa:
             },
         }
         out = zc.build_node_to_ha(devices, {}, [])
-        assert out[7]["device_name"] == "User Friendly"
+        assert out[7].device_name == "User Friendly"
 
     def test_skips_non_zwave_identifiers(self) -> None:
-        devices = {
+        devices: dict[str, zc.DeviceRow] = {
             "dev_A": {
                 "id": "dev_A",
                 "name": "Something",
@@ -795,7 +804,7 @@ class TestBuildNodeToHa:
         assert out == {}
 
     def test_handles_unparseable_identifier(self) -> None:
-        devices = {
+        devices: dict[str, zc.DeviceRow] = {
             "dev_A": {
                 "id": "dev_A",
                 "name": "Something",
@@ -818,7 +827,7 @@ def _make_stat_entities(
 
 class TestBuildRows:
     def test_skips_controller(self) -> None:
-        zwave_nodes = {
+        zwave_nodes: dict[int, zc.ZwaveNode] = {
             1: {"id": 1, "protocol": 0, "isListening": True},
             18: {
                 "id": 18,
@@ -837,7 +846,7 @@ class TestBuildRows:
         assert [r.node for r in rows] == [18]
 
     def test_basic_row_population(self) -> None:
-        zwave_nodes = {
+        zwave_nodes: dict[int, zc.ZwaveNode] = {
             18: {
                 "id": 18,
                 "protocol": 1,  # LR
@@ -858,10 +867,10 @@ class TestBuildRows:
             },
         }
         node_to_ha = {
-            18: {
-                "device_name": "Front Door Lock",
-                "area_name": "Entry",
-                "stat_entities": _make_stat_entities(
+            18: zc.NodeHaInfo(
+                device_name="Front Door Lock",
+                area_name="Entry",
+                stat_entities=_make_stat_entities(
                     "front_door_lock",
                     [
                         "ss",
@@ -877,7 +886,7 @@ class TestBuildRows:
                         "last-seen",
                     ],
                 ),
-            },
+            ),
         }
         current_states = {
             "sensor.front_door_lock_signal_strength": "-75",
@@ -929,7 +938,7 @@ class TestBuildRows:
         assert row.update == "no"
 
     def test_battery_node_shows_battery_power(self) -> None:
-        zwave_nodes = {
+        zwave_nodes: dict[int, zc.ZwaveNode] = {
             18: {
                 "id": 18,
                 "protocol": 0,
@@ -949,7 +958,7 @@ class TestBuildRows:
 
     def test_historical_list_shape(self) -> None:
         # --days 2 -> list of 3 values [latest, -1d, -2d].
-        zwave_nodes = {
+        zwave_nodes: dict[int, zc.ZwaveNode] = {
             18: {
                 "id": 18,
                 "protocol": 0,
@@ -958,14 +967,14 @@ class TestBuildRows:
             },
         }
         node_to_ha = {
-            18: {
-                "device_name": "Node 18",
-                "area_name": "",
-                "stat_entities": {
+            18: zc.NodeHaInfo(
+                device_name="Node 18",
+                area_name="",
+                stat_entities={
                     "ss": "sensor.n18_signal_strength",
                     "ss-quality": "sensor.n18_signal_strength",
                 },
-            },
+            ),
         }
         history = {
             # -68 is "good" on Mesh (> -70); -80 is "fair" (in
@@ -984,7 +993,7 @@ class TestBuildRows:
         assert rows[0].ss_quality == ["good", "good", "fair"]
 
     def test_routes_rendered_via_node_to_ha(self) -> None:
-        zwave_nodes = {
+        zwave_nodes: dict[int, zc.ZwaveNode] = {
             18: {
                 "id": 18,
                 "protocol": 0,
@@ -1001,11 +1010,11 @@ class TestBuildRows:
             },
         }
         node_to_ha = {
-            50: {
-                "device_name": "Hallway",
-                "area_name": "",
-                "stat_entities": {},
-            },
+            50: zc.NodeHaInfo(
+                device_name="Hallway",
+                area_name="",
+                stat_entities={},
+            ),
         }
         rows_by_node = {
             r.node: r
@@ -1406,12 +1415,12 @@ class TestParamManagerFleet:
     def _registries(
         self,
     ) -> tuple[
-        dict[str, dict[str, Any]],
-        list[dict[str, Any]],
-        dict[str, dict[str, Any]],
+        dict[str, zc.DeviceRow],
+        list[zc.EntityRow],
+        dict[str, zc.AreaRow],
         dict[str, str | None],
     ]:
-        devices_by_id: dict[str, dict[str, Any]] = {
+        devices_by_id: dict[str, zc.DeviceRow] = {
             "devA": {
                 "id": "devA",
                 "identifiers": [["zwave_js", "0xc0ffee-5"]],
@@ -1419,7 +1428,7 @@ class TestParamManagerFleet:
                 "area_id": "areaA",
             }
         }
-        entities: list[dict[str, Any]] = [
+        entities: list[zc.EntityRow] = [
             {
                 "platform": "zwave_js",
                 "device_id": "devA",
@@ -1428,7 +1437,7 @@ class TestParamManagerFleet:
                 "original_device_class": None,
             }
         ]
-        areas_by_id: dict[str, dict[str, Any]] = {
+        areas_by_id: dict[str, zc.AreaRow] = {
             "areaA": {"area_id": "areaA", "name": "Guest Bath"}
         }
         # zwave_js leaves the registry device_class unset; the state carries it.

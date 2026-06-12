@@ -103,6 +103,11 @@ strict = true
 # resolve those imports; run ``uv run pytest _repo_shared/tests``
 # instead.
 cache_dir = "/tmp/mypy_cache"
+# The bundled CLI (custom_components/.../bundled/bin) and the repo scripts
+# (scripts/) are bare modules the test files import off a runtime sys.path
+# entry. Putting their dirs on mypy_path lets the resolver find them, so the
+# tests type-check against the real modules instead of treating them as Any.
+mypy_path = ["custom_components/blueprint_toolkit/bundled/bin", "scripts"]
 
 [[tool.mypy.overrides]]
 module = ["homeassistant.*"]
@@ -155,15 +160,6 @@ ignore_missing_imports = true
 # ``[import-untyped]``. The HA-coupled test files import
 # ``MockConfigEntry`` / ``ClientSessionGenerator`` from it.
 module = ["pytest_homeassistant_custom_component.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-# scripts/render_docs.py, scripts/ha_ws_fetch.py,
-# scripts/hacc_upgrade.py, and the
-# bundled zwavectl CLI are bare scripts the test
-# files import off a runtime sys.path entry; mypy's import
-# resolver can't see them.
-module = ["render_docs", "zwavectl", "ha_ws_fetch", "hacc_upgrade"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
