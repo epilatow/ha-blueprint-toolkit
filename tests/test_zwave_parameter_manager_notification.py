@@ -67,8 +67,16 @@ def _report() -> ConvergenceReport:
                     wake_interval_seconds=3600,
                     last_awake_at=WOKE,
                 ),
-                # param, desired, actual -> actual 8 != desired 6: pending.
-                params=(ParamConvergence("motion_sensitivity", "6", "8"),),
+                # generic 8; device live 4 != target 6 -> pending.
+                params=(
+                    ParamConvergence(
+                        param="Motion Sensitivity",
+                        desired="6",
+                        actual="4",
+                        concept="motion_sensitivity",
+                        concept_desired="8",
+                    ),
+                ),
             ),
             DeviceConvergence(
                 device=ConvergenceDevice(
@@ -76,7 +84,17 @@ def _report() -> ConvergenceReport:
                     name="Hall Contact",
                     device_id="dev-7",
                 ),
-                params=(ParamConvergence("wake_up_interval", "3600", "3600"),),
+                # generic 3600 seconds; device live 3600 == target 3600.
+                params=(
+                    ParamConvergence(
+                        param="Wake-up interval",
+                        desired="3600",
+                        actual="3600",
+                        concept="wake_up_interval",
+                        concept_desired="3600",
+                        concept_unit="seconds",
+                    ),
+                ),
             ),
         ),
     )
@@ -86,9 +104,9 @@ def test_desired_lists_every_device_and_param() -> None:
     body = render_report_body(_report(), pending_only=False)
     assert device_link("Guest Bath Motion", "dev-42") in body
     assert device_link("Hall Contact", "dev-7") in body
-    assert "- `motion_sensitivity`: `8` -> `6`" in body
+    assert "- motion_sensitivity: 8 (dev: 4 -> 6)" in body
     # A converged param is still shown in the desired report.
-    assert "- `wake_up_interval`: `3600` -> `3600`" in body
+    assert "- wake_up_interval: 3600 seconds (dev: 3600 -> 3600)" in body
 
 
 def test_desired_annotations_for_sleeping_device() -> None:
@@ -102,11 +120,10 @@ def test_desired_annotations_for_sleeping_device() -> None:
     assert body.count("next wake") == 1
 
 
-def test_param_line_recomposes_the_device_unit() -> None:
-    # A unit-bearing value is stored split (value + unit); the body must
-    # recompose "value unit" for BOTH sides, so a dropped space or unit in the
-    # recomposition is caught (the empty-unit path is covered by _report's
-    # bare-int rows above).
+def test_param_line_shows_concept_unit_on_the_desired_value() -> None:
+    # The concept unit rides on the generic desired value up front; the device
+    # live/target values in the parenthetical are bare (their unit lives in the
+    # CLI's dev-units column, not the notification line).
     report = ConvergenceReport(
         subsystem="Parameter Manager",
         devices=(
@@ -116,24 +133,27 @@ def test_param_line_recomposes_the_device_unit() -> None:
                 ),
                 params=(
                     ParamConvergence(
-                        "wake_up_interval",
-                        "3600",
-                        "1800",
+                        param="Wake-up interval",
+                        desired="3600",
+                        actual="1800",
                         desired_unit="seconds",
                         actual_unit="seconds",
+                        concept="wake_up_interval",
+                        concept_desired="3600",
+                        concept_unit="seconds",
                     ),
                 ),
             ),
         ),
     )
     body = render_report_body(report, pending_only=False)
-    assert "- `wake_up_interval`: `1800 seconds` -> `3600 seconds`" in body
+    assert "- wake_up_interval: 3600 seconds (dev: 1800 -> 3600)" in body
 
 
 def test_pending_filters_to_unconverged_rows() -> None:
     body = render_report_body(_report(), pending_only=True)
     assert device_link("Guest Bath Motion", "dev-42") in body
-    assert "- `motion_sensitivity`: `8` -> `6`" in body
+    assert "- motion_sensitivity: 8 (dev: 4 -> 6)" in body
     # The fully-converged device drops out entirely.
     assert "Hall Contact" not in body
     assert "wake_up_interval" not in body
@@ -145,12 +165,20 @@ def test_unread_actual_renders_as_unread() -> None:
         devices=(
             DeviceConvergence(
                 device=ConvergenceDevice(node_id=9, name="Den"),
-                params=(ParamConvergence("motion_sensitivity", "6"),),
+                params=(
+                    ParamConvergence(
+                        param="Motion Sensitivity",
+                        desired="6",
+                        actual=None,
+                        concept="motion_sensitivity",
+                        concept_desired="8",
+                    ),
+                ),
             ),
         ),
     )
     body = render_report_body(report, pending_only=True)
-    assert "- `motion_sensitivity`: unread -> `6`" in body
+    assert "- motion_sensitivity: 8 (dev: unread -> 6)" in body
 
 
 def test_location_is_md_escaped() -> None:
@@ -159,7 +187,15 @@ def test_location_is_md_escaped() -> None:
         devices=(
             DeviceConvergence(
                 device=ConvergenceDevice(node_id=1, name="X", location="A [B]"),
-                params=(ParamConvergence("motion_sensitivity", "6", "8"),),
+                params=(
+                    ParamConvergence(
+                        param="Motion Sensitivity",
+                        desired="6",
+                        actual="8",
+                        concept="motion_sensitivity",
+                        concept_desired="8",
+                    ),
+                ),
             ),
         ),
     )

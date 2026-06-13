@@ -78,19 +78,23 @@ def _device_block(dc: DeviceConvergence, *, pending_only: bool) -> str:
 
 
 def _with_unit(value: str, unit: str) -> str:
-    """Compose a device value and its unit back into the display string
+    """Compose a value and its unit into a display string
     (``"3600" + "seconds" -> "3600 seconds"``; no unit -> the value as-is)."""
 
     return f"{value} {unit}" if unit else value
 
 
 def _param_line(param: ParamConvergence) -> str:
-    if param.actual is None:
-        actual = "unread"
-    else:
-        actual = f"`{_with_unit(param.actual, param.actual_unit)}`"
-    desired = f"`{_with_unit(param.desired, param.desired_unit)}`"
-    return f"- `{param.param}`: {actual} -> {desired}"
+    """``- concept: <desired> <unit> (dev: <current> -> <pending>)`` as normal
+    text: the generic policy value (with its concept unit) up front, then the
+    device's live and target values in the parenthetical -- the same
+    generic/device split the CLI table shows."""
+
+    label = param.concept or param.param
+    desired = md_escape(_with_unit(param.concept_desired, param.concept_unit))
+    current = "unread" if param.actual is None else md_escape(param.actual)
+    pending = md_escape(param.desired)
+    return f"- {md_escape(label)}: {desired} (dev: {current} -> {pending})"
 
 
 def render_unused_body(unused: Sequence[UnusedSetting]) -> str:
