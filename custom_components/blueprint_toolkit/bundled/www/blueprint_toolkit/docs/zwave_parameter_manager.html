@@ -226,17 +226,22 @@ everything still mismatched -- the conservative recovery for a queue flush
 that may have happened while Core was down. ZPM does not depend on the add-on
 de-duplicating its queue.</p>
 <h3>Reporting</h3>
-<p>The pending report (<code>...__pending</code>) refreshes every reconcile while any device
-is unconverged and dismisses on convergence. The desired-config report
-(<code>...__desired</code>) re-fires only when the policy file changes or a
-newly-configured node appears, so convergence progress does not re-bubble it.
-The unused-config report (<code>...__unused</code>) lists each policy or setting that
-applied to no device (a selector matching nothing, or a setting no matched
-device exposes). It re-evaluates every reconcile, but its body carries no live
-values, so the notification updates only when the unused set actually changes
-and dismisses when every policy and setting lands somewhere. Policy conflicts
-and unmappable concepts surface as their own notification; a config-file parse
-error and a &quot;Z-Wave JS unavailable&quot; state each have theirs.</p>
+<p>The pending report (<code>...__pending</code>) lists every device still waiting to apply
+its writes and dismisses on full convergence. It re-publishes only when the
+set of pending parameters or their values actually changes -- a device
+converging, a new mismatch appearing -- not on every reconcile: its body
+annotates each sleeping device with an estimated next wake, and that estimate
+drifts forward every time a device wakes, so re-publishing on each reconcile
+would bubble the notification to the top of the panel continuously. The
+desired-config report (<code>...__desired</code>) re-fires only when the policy file
+changes or a newly-configured node appears, so convergence progress does not
+re-bubble it. The unused-config report (<code>...__unused</code>) lists each policy or
+setting that applied to no device (a selector matching nothing, or a setting
+no matched device exposes). It re-evaluates every reconcile, but its body
+carries no live values, so the notification updates only when the unused set
+actually changes and dismisses when every policy and setting lands somewhere.
+Policy conflicts and unmappable concepts surface as their own notification; a
+config-file parse error and a &quot;Z-Wave JS unavailable&quot; state each have theirs.</p>
 <h3>Diagnostic state entity</h3>
 <p><code>blueprint_toolkit.zpm_&lt;slug&gt;_state</code> carries, per reconcile: <code>last_run</code>,
 <code>runtime</code>, <code>last_trigger</code>, <code>last_config_mtime</code>, <code>devices</code>, <code>writes_planned</code>,

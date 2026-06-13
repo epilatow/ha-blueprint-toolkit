@@ -254,6 +254,41 @@ async def test_reconcile_dispatches_wake_interval_write(hass: Any) -> None:
     assert state.attributes["devices"] == 1
 
 
+async def test_pending_notification_dismisses_on_convergence(
+    hass: Any,
+) -> None:
+    # The pending notification appears while a write is unconverged, and the
+    # convergence-gated re-publish dismisses it once the device applies the
+    # write rather than leaving it stuck on the panel.
+    _write_policy(hass, _WAKE_POLICY)
+    _install_zwave_js(hass)
+    _capture_zwave_services(hass)
+    await _setup_integration(hass)
+
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+    notifs = _async_get_or_create_notifications(hass)
+    assert any(nid.endswith("__pending") for nid in notifs), list(notifs)
+
+    # Simulate the sleeping device waking and applying the write: swap in a
+    # node already at the policy's target, so the next reconcile sees it
+    # converged -- the pending set empties and the notification is dismissed.
+    driver = hass.config_entries.async_entries("zwave_js")[
+        0
+    ].runtime_data.client.driver
+    converged = _node(3600)
+    driver.controller.nodes = {converged.node_id: converged}
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+    notifs = _async_get_or_create_notifications(hass)
+    assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
+
+
 async def test_invalid_policy_emits_config_error(hass: Any) -> None:
     _write_policy(hass, "policies: not-a-list\n")
     _install_zwave_js(hass)

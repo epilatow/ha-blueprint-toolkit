@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +55,12 @@ from conftest import (  # noqa: E402
 
 install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
+from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E402, E501
+    ConvergenceDevice,
+    ConvergenceReport,
+    DeviceConvergence,
+    ParamConvergence,
+)
 from custom_components.blueprint_toolkit.zwave_parameter_manager import (  # noqa: E402, E501
     handler,
 )
@@ -286,6 +292,67 @@ class TestRenderHelpers:
         out = handler._pending_summary(pending)
         assert "node 5 cc112/12=8" in out
         assert "node 7 cc132/wakeUpInterval=3600" in out
+
+    def _pending_report(
+        self,
+        *,
+        actual: str,
+        wake_interval: int,
+        last_awake: datetime,
+    ) -> ConvergenceReport:
+        return ConvergenceReport(
+            subsystem="ZPM",
+            devices=(
+                DeviceConvergence(
+                    device=ConvergenceDevice(
+                        node_id=7,
+                        name="Hall Contact",
+                        wake_interval_seconds=wake_interval,
+                        last_awake_at=last_awake,
+                    ),
+                    params=(
+                        ParamConvergence(
+                            "Wake-up interval",
+                            "14400",
+                            actual,
+                            desired_unit="seconds",
+                            actual_unit="seconds",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def test_pending_signature_ignores_wake_drift(self) -> None:
+        # The same pending param under different wake context (a later wake,
+        # a different interval) yields the SAME signature -- so a drifting
+        # next-wake estimate doesn't re-fire the pending notification.
+        a = self._pending_report(
+            actual="3600",
+            wake_interval=3600,
+            last_awake=datetime(2026, 6, 12, 8, 0, tzinfo=UTC),
+        )
+        b = self._pending_report(
+            actual="3600",
+            wake_interval=7200,
+            last_awake=datetime(2026, 6, 12, 9, 30, tzinfo=UTC),
+        )
+        assert handler._pending_signature(a) == handler._pending_signature(b)
+
+    def test_pending_signature_changes_with_the_actual_value(self) -> None:
+        # A real progress change (the device's live value moved) DOES change
+        # the signature, so the notification re-publishes.
+        a = self._pending_report(
+            actual="3600",
+            wake_interval=3600,
+            last_awake=datetime(2026, 6, 12, 8, 0, tzinfo=UTC),
+        )
+        c = self._pending_report(
+            actual="7200",
+            wake_interval=3600,
+            last_awake=datetime(2026, 6, 12, 8, 0, tzinfo=UTC),
+        )
+        assert handler._pending_signature(a) != handler._pending_signature(c)
 
     def test_issue_line_escapes_and_formats(self) -> None:
         issue = PlanIssue(

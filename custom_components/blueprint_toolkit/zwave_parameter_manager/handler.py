@@ -28,9 +28,12 @@ restart the map starts empty, so the first reconcile re-issues every
 mismatched write -- the conservative recovery for a flush that happened
 while Core was down.
 
-Reporting: the pending report fires every reconcile while anything is
-pending (and dismisses on convergence); the desired-config report fires
-only when the policy file changes or a newly-configured node appears.
+Reporting: the pending report re-fires only when the set of pending
+parameters or their values changes (and dismisses on full convergence),
+NOT on every reconcile -- its body's per-device wake estimates drift as
+sleeping devices wake, so re-publishing each cycle would churn it to the
+top of the panel. The desired-config report fires only when the policy
+file changes or a newly-configured node appears.
 """
 
 from __future__ import annotations
@@ -73,7 +76,13 @@ from . import logic as zpm_logic
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
+    from ..zwave.convergence import ConvergenceReport
     from .logic import ParamId, PlanIssue, PlannedWrite
+
+# A stable fingerprint of the pending report's content: per pending param, its
+# (node, device-param, desired, actual, desired-unit, actual-unit). Gates when
+# the pending notification re-fires (see _pending_signature).
+_PendingSig = tuple[tuple[int, str, str, str, str, str], ...]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,6 +121,13 @@ class ZpmInstanceState:
     queue_flushed: bool = False
     last_config_mtime: float = 0.0
     last_configured_nodes: frozenset[int] = frozenset()
+    # Last published pending-report fingerprint; gates when the pending
+    # notification re-fires so a drifting wake estimate doesn't re-bubble it.
+    # ``None`` (a fresh instance, e.g. after an entry reload) is distinct from
+    # the empty-tuple "nothing pending" signature, so the first reconcile after
+    # a reset always reconciles the notification -- dismissing a stale pending
+    # PN that converged while the instance was gone.
+    last_pending_sig: _PendingSig | None = None
     last_reconcile_dt: datetime | None = None
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
@@ -359,17 +375,25 @@ async def _do_reconcile(
         )
         state.last_configured_nodes = configured
 
-    # Pending report: every reconcile while anything is unconverged.
-    pending_body = notification.render_report_body(rep, pending_only=True)
-    await _dispatch_single(
-        hass,
-        prefix,
-        "pending",
-        instance_id,
-        "Z-Wave Parameter Manager: pending configuration",
-        pending_body,
-        active=bool(pending_body),
-    )
+    # Pending report: re-fire only when the pending set or its values change,
+    # NOT when a per-device wake estimate drifts. A fleet of sleeping devices
+    # waking on their own schedules advances ``last_awake`` (and so the body's
+    # "next wake ~..." annotations) on most reconciles; gating on the content
+    # fingerprint keeps that from re-bubbling the notification every cycle,
+    # while convergence progress and config edits still re-publish it.
+    pending_sig = _pending_signature(rep)
+    if pending_sig != state.last_pending_sig:
+        pending_body = notification.render_report_body(rep, pending_only=True)
+        await _dispatch_single(
+            hass,
+            prefix,
+            "pending",
+            instance_id,
+            "Z-Wave Parameter Manager: pending configuration",
+            pending_body,
+            active=bool(pending_body),
+        )
+        state.last_pending_sig = pending_sig
 
     # Unused-config report: configured policies / settings that landed on no
     # device (typos, mis-scoped selectors, stale concepts). Re-evaluated every
@@ -512,6 +536,34 @@ def _issue_line(issue: PlanIssue) -> str:
     return (
         f"- `{md_escape(issue.device.name)}` / "
         f"`{issue.concept}`: {md_escape(issue.reason)}"
+    )
+
+
+def _pending_signature(report: ConvergenceReport) -> _PendingSig:
+    """A stable fingerprint of WHAT is pending -- each pending param's node,
+    device-param label, and desired / actual values + units -- deliberately
+    excluding the per-device wake-time annotations the body also carries.
+
+    The pending notification re-fires only when this changes, so a device
+    converging (its param drops out) or a new mismatch (a param appears)
+    re-publishes it, but a ``next wake ~...`` estimate ticking forward as a
+    sleeping device wakes does not. Sorted so report-order changes don't
+    register as content changes.
+    """
+
+    return tuple(
+        sorted(
+            (
+                dc.device.node_id,
+                p.param,
+                p.desired,
+                p.actual or "",
+                p.desired_unit,
+                p.actual_unit,
+            )
+            for dc in report.pending_devices
+            for p in dc.pending_params
+        )
     )
 
 
