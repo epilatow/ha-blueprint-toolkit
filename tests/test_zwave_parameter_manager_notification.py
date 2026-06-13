@@ -102,6 +102,34 @@ def test_desired_annotations_for_sleeping_device() -> None:
     assert body.count("next wake") == 1
 
 
+def test_param_line_recomposes_the_device_unit() -> None:
+    # A unit-bearing value is stored split (value + unit); the body must
+    # recompose "value unit" for BOTH sides, so a dropped space or unit in the
+    # recomposition is caught (the empty-unit path is covered by _report's
+    # bare-int rows above).
+    report = ConvergenceReport(
+        subsystem="Parameter Manager",
+        devices=(
+            DeviceConvergence(
+                device=ConvergenceDevice(
+                    node_id=7, name="Hall Contact", device_id="dev-7"
+                ),
+                params=(
+                    ParamConvergence(
+                        "wake_up_interval",
+                        "3600",
+                        "1800",
+                        desired_unit="seconds",
+                        actual_unit="seconds",
+                    ),
+                ),
+            ),
+        ),
+    )
+    body = render_report_body(report, pending_only=False)
+    assert "- `wake_up_interval`: `1800 seconds` -> `3600 seconds`" in body
+
+
 def test_pending_filters_to_unconverged_rows() -> None:
     body = render_report_body(_report(), pending_only=True)
     assert device_link("Guest Bath Motion", "dev-42") in body

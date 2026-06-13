@@ -77,9 +77,20 @@ def _device_block(dc: DeviceConvergence, *, pending_only: bool) -> str:
     return f"{header}\n\n{body}"
 
 
+def _with_unit(value: str, unit: str) -> str:
+    """Compose a device value and its unit back into the display string
+    (``"3600" + "seconds" -> "3600 seconds"``; no unit -> the value as-is)."""
+
+    return f"{value} {unit}" if unit else value
+
+
 def _param_line(param: ParamConvergence) -> str:
-    actual = f"`{param.actual}`" if param.actual is not None else "unread"
-    return f"- `{param.param}`: {actual} -> `{param.desired}`"
+    if param.actual is None:
+        actual = "unread"
+    else:
+        actual = f"`{_with_unit(param.actual, param.actual_unit)}`"
+    desired = f"`{_with_unit(param.desired, param.desired_unit)}`"
+    return f"- `{param.param}`: {actual} -> {desired}"
 
 
 def render_unused_body(unused: Sequence[UnusedSetting]) -> str:

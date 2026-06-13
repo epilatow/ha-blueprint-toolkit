@@ -68,23 +68,34 @@ class ConvergenceDevice:
 class ParamConvergence:
     """One (param, desired, actual) row for a device.
 
-    ``param`` / ``desired`` / ``actual`` are the device-specific view --
-    canonical display strings the subsystem renders; ``actual`` is ``None``
-    when the live value is unread. ``concept`` / ``concept_desired`` are the
-    optional generic view (the higher-level concept name + the value the
-    config set, in ZPM); empty when there is no generic layer (ZRM routes).
-    Convergence is computed on the device view (``desired`` vs ``actual``).
+    The device view is split value-from-unit: ``desired`` / ``actual`` are the
+    device value display strings WITHOUT the unit (an option value keeps its
+    ``Label (n)`` form; ``actual`` is ``None`` when the live value is unread),
+    and ``desired_unit`` / ``actual_unit`` carry the device unit (``""`` for an
+    option / unitless value). A renderer either composes ``value unit`` (the
+    notification) or shows the value and unit in separate columns (the CLI).
+
+    ``concept`` / ``concept_desired`` / ``concept_unit`` are the optional
+    generic view (the higher-level concept name, the value the config set, and
+    the concept's own unit, in ZPM); empty when there is no generic layer (ZRM
+    routes). Convergence is computed on the device view (value plus unit).
     """
 
     param: str
     desired: str
     actual: str | None = None
+    desired_unit: str = ""
+    actual_unit: str = ""
     concept: str = ""
     concept_desired: str = ""
+    concept_unit: str = ""
 
     @property
     def converged(self) -> bool:
-        return self.actual == self.desired
+        return (
+            self.actual == self.desired
+            and self.actual_unit == self.desired_unit
+        )
 
 
 @dataclass(frozen=True)

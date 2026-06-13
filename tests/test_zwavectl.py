@@ -1547,7 +1547,6 @@ class TestParamManagerFleet:
             device=device,
             param=SimpleNamespace(),
             write=None,
-            raw_current=None,
         )
         assert zc._PM_COLUMNS["wake-interval"].extract(row) == "1 hour"
         assert zc._PM_COLUMNS["wake-last"].extract(row) == "2026-06-09 14:30"
@@ -1566,7 +1565,6 @@ class TestParamManagerFleet:
             device=device,
             param=SimpleNamespace(),
             write=None,
-            raw_current=None,
         )
         assert zc._PM_COLUMNS["wake-interval"].extract(row) == ""
         assert zc._PM_COLUMNS["wake-last"].extract(row) == ""
@@ -1641,6 +1639,8 @@ class TestParamManagerFleet:
             "location",
             "parameter",
             "desired",
+            "dev-current",
+            "dev-pending",
             "policy",
         ]
 
@@ -1659,7 +1659,11 @@ class TestParamManagerFleet:
                         SimpleNamespace(
                             concept="motion_sensitivity",
                             concept_desired="8",
-                            actual="6",
+                            concept_unit="",
+                            actual="4",
+                            actual_unit="",
+                            desired="6",
+                            desired_unit="",
                         )
                     ],
                 )
@@ -1675,8 +1679,10 @@ class TestParamManagerFleet:
                 )
             ]
         )
-        rows = zc._pm_write_rows(report, plan, [], pending=False)
-        row = zc._pm_write_table(rows, zc._PM_DESIRED_COLS).splitlines()[2]
+        rows = zc._pm_write_rows(report, plan, pending=False)
+        row = zc._pm_write_table(rows, zc._PM_DEFAULT_COLS).splitlines()[2]
+        # desired (generic 8), dev-current (device live 4), dev-pending
+        # (device target 6).
         assert row.split() == [
             "5",
             "Guest",
@@ -1686,6 +1692,8 @@ class TestParamManagerFleet:
             "Bath",
             "motion_sensitivity",
             "8",
+            "4",
+            "6",
             "q-motion",
         ]
 
@@ -1693,7 +1701,13 @@ class TestParamManagerFleet:
         from types import SimpleNamespace  # noqa: PLC0415
 
         param = SimpleNamespace(
-            concept="motion_sensitivity", concept_desired="8", actual="6"
+            concept="motion_sensitivity",
+            concept_desired="8",
+            concept_unit="",
+            actual="4",
+            actual_unit="",
+            desired="6",
+            desired_unit="",
         )
         report = SimpleNamespace(
             pending_devices=[
@@ -1715,40 +1729,34 @@ class TestParamManagerFleet:
                 )
             ]
         )
-        rows = zc._pm_write_rows(report, plan, [], pending=True)
-        lines = zc._pm_write_table(rows, zc._PM_PENDING_COLS).splitlines()
+        rows = zc._pm_write_rows(report, plan, pending=True)
+        lines = zc._pm_write_table(rows, zc._PM_DEFAULT_COLS).splitlines()
         assert lines[0].split() == [
             "node",
             "device",
             "location",
             "parameter",
             "desired",
-            "current",
+            "dev-current",
+            "dev-pending",
             "policy",
         ]
-        # desired (generic 8) and current (device live 6) sit side by side.
+        # desired (generic 8), dev-current (device live 4), dev-pending
+        # (device target 6).
         assert lines[2].split() == [
             "5",
             "Bath",
             "Hall",
             "motion_sensitivity",
             "8",
+            "4",
             "6",
             "q",
         ]
 
     def test_pm_optional_columns_render(self) -> None:
         from types import SimpleNamespace  # noqa: PLC0415
-        from typing import NamedTuple  # noqa: PLC0415
 
-        # The actuals dict is keyed by ParamId, so the fake must be hashable
-        # (and the same object) for the property-current lookup to land.
-        class _Pid(NamedTuple):
-            command_class: int
-            property_: int
-            property_key: int
-
-        pid = _Pid(112, 12, 255)
         write = SimpleNamespace(
             device=SimpleNamespace(
                 node_id=5,
@@ -1757,10 +1765,12 @@ class TestParamManagerFleet:
                 is_listening=False,
                 device_types=["motion"],
             ),
-            concept="motion_sensitivity",
+            concept="wake_up_interval",
             policy="q",
-            id=pid,
-            value=8,
+            id=SimpleNamespace(
+                command_class=112, property_=12, property_key=255
+            ),
+            value=14400,
         )
         report = SimpleNamespace(
             devices=[
@@ -1770,31 +1780,33 @@ class TestParamManagerFleet:
                     ),
                     params=[
                         SimpleNamespace(
-                            concept="motion_sensitivity",
-                            concept_desired="8",
-                            actual="6",
+                            concept="wake_up_interval",
+                            concept_desired="14400",
+                            concept_unit="seconds",
+                            actual="3600",
+                            actual_unit="seconds",
+                            desired="14400",
+                            desired_unit="seconds",
                         )
                     ],
                 )
             ]
         )
         plan = SimpleNamespace(writes=[write])
-        # The live raw value (property-current) comes off the fleet's actuals.
-        fleet = [
-            SimpleNamespace(device=SimpleNamespace(node_id=5), actuals={pid: 6})
-        ]
-        rows = zc._pm_write_rows(report, plan, fleet, pending=False)
+        rows = zc._pm_write_rows(report, plan, pending=False)
         cols = [
             "node",
             "make",
             "model",
             "power",
             "device-type",
-            "command-class",
-            "property",
-            "property-key",
-            "property-pending",
-            "property-current",
+            "units",
+            "dev-units",
+            "dev-cc",
+            "dev-property",
+            "dev-key",
+            "dev-current",
+            "dev-pending",
         ]
         row = zc._pm_write_table(rows, cols).splitlines()[2]
         assert row.split() == [
@@ -1803,11 +1815,13 @@ class TestParamManagerFleet:
             "ZSE11",
             "Battery",
             "motion",
+            "seconds",
+            "seconds",
             "112",
             "12",
             "255",
-            "8",
-            "6",
+            "3600",
+            "14400",
         ]
 
     def test_cols_rejects_an_unknown_column(
@@ -1820,12 +1834,26 @@ class TestParamManagerFleet:
         assert zc._param_manager_config("desired", cols="node,bogus") == 2
         assert "unknown column(s): bogus" in capsys.readouterr().err
 
+    def test_cols_defaults_alias_expands_inline(self) -> None:
+        # `defaults,<col>` expands the default set then appends the extra,
+        # de-duplicating (a default column named again is not repeated).
+        cols, err = zc._pm_parse_cols(
+            "defaults,device-type,node", zc._PM_DEFAULT_COLS
+        )
+        assert err is None
+        assert cols == [*zc._PM_DEFAULT_COLS, "device-type"]
+
+    def test_cols_all_alias_expands_to_every_column(self) -> None:
+        cols, err = zc._pm_parse_cols("all", zc._PM_DEFAULT_COLS)
+        assert err is None
+        assert cols == list(zc._PM_COLUMNS)
+
     def test_cols_with_no_real_names_falls_back_to_default(self) -> None:
         # A spec that is only separators / whitespace names no columns, so it
         # falls back to the mode default rather than rendering an empty table.
-        cols, err = zc._pm_parse_cols(" , ", zc._PM_DESIRED_COLS)
+        cols, err = zc._pm_parse_cols(" , ", zc._PM_DEFAULT_COLS)
         assert err is None
-        assert cols == zc._PM_DESIRED_COLS
+        assert cols == zc._PM_DEFAULT_COLS
 
     def test_cols_help_enumerates_every_registry_column(self) -> None:
         # The --cols help is generated from the registry, so a column added to
@@ -1872,7 +1900,8 @@ class TestParamManagerFleet:
             "location",
             "parameter",
             "desired",
-            "current",
+            "dev-current",
+            "dev-pending",
             "policy",
         ]
 

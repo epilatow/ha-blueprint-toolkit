@@ -106,28 +106,36 @@ def test_build_report_joins_desired_and_actual() -> None:
     assert dc.device is cd
 
     motion, wake = dc.params
+    # The device value is split from its unit: a unitless RANGE param carries
+    # no device unit on either side.
     assert (motion.param, motion.desired, motion.actual) == (
         "Motion Sensor Sensitivity",
         "8",
         "8",
     )
+    assert (motion.desired_unit, motion.actual_unit) == ("", "")
     assert motion.converged is True
-    # Unit-bearing values render with their unit; a mismatch is pending.
+    # A unit-bearing value is the bare int plus its device unit; a value
+    # mismatch is pending.
     assert (wake.param, wake.desired, wake.actual) == (
         "Wake-up interval",
-        "3600 seconds",
-        "1800 seconds",
+        "3600",
+        "1800",
     )
+    assert (wake.desired_unit, wake.actual_unit) == ("seconds", "seconds")
     assert wake.converged is False
 
-    # The generic (concept) view rides alongside the device view.
-    assert (motion.concept, motion.concept_desired) == (
+    # The generic (concept) view rides alongside the device view: name, the
+    # value the policy set, and the concept's own unit.
+    assert (motion.concept, motion.concept_desired, motion.concept_unit) == (
         "motion_sensitivity",
         "8",
+        "",
     )
-    assert (wake.concept, wake.concept_desired) == (
+    assert (wake.concept, wake.concept_desired, wake.concept_unit) == (
         "wake_up_interval",
         "3600",
+        "seconds",
     )
 
     assert dc.converged is False

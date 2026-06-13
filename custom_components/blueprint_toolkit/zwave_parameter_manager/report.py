@@ -10,10 +10,12 @@ renderer and the CLI table both consume.
 Only devices ZPM actually plans a write for appear -- an unmanaged fleet
 node has no desired state to converge against. Each planned write becomes
 one ``ParamConvergence`` row: ``desired`` is the write's raw value, the
-``actual`` the live value at the same ``ParamId``, both rendered through
-``_render_value`` so the string compare ``ParamConvergence.converged``
-performs holds (equal raw ints render to equal strings; an unread value
-renders to ``None`` and so never converges).
+``actual`` the live value at the same ``ParamId``, both split into a
+unitless display value plus the device unit by ``_split_value`` so the
+string compare ``ParamConvergence.converged`` holds (equal raw ints render
+to equal value+unit; an unread value renders to ``None`` and so never
+converges). The row also carries the generic concept name, the value the
+policy set, and the concept's own unit, so a renderer can show either view.
 
 Plan warnings / errors are not part of the convergence model; the
 handler surfaces those on its own.
@@ -29,6 +31,7 @@ from ..zwave.convergence import (
     DeviceConvergence,
     ParamConvergence,
 )
+from .catalog import CATALOG
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -83,12 +86,20 @@ def _param_row(write: PlannedWrite, actual: int | None) -> ParamConvergence:
     label = (
         meta.label if meta is not None and meta.label else str(write.concept)
     )
+    desired_value, desired_unit = _split_value(meta, write.value)
+    if actual is None:
+        actual_value, actual_unit = None, ""
+    else:
+        actual_value, actual_unit = _split_value(meta, actual)
     return ParamConvergence(
         param=label,
-        desired=_render_value(meta, write.value),
-        actual=None if actual is None else _render_value(meta, actual),
+        desired=desired_value,
+        actual=actual_value,
+        desired_unit=desired_unit,
+        actual_unit=actual_unit,
         concept=str(write.concept),
         concept_desired=_render_generic(write.generic_value),
+        concept_unit=CATALOG[write.concept].units or "",
     )
 
 
@@ -104,18 +115,20 @@ def _render_generic(value: bool | int | float) -> str:
     return str(value)
 
 
-def _render_value(meta: ParamMeta | None, value: int) -> str:
-    """A raw device value as a canonical display string.
+def _split_value(meta: ParamMeta | None, value: int) -> tuple[str, str]:
+    """A raw device value as a ``(display, unit)`` pair.
 
-    Desired and actual both render here, so equal raw values produce equal
-    strings and the report's string-compare convergence holds. An option
-    value shows its label plus the raw int; a unit-bearing value shows the
-    unit; everything else is the bare int.
+    Desired and actual both split here, so equal raw values produce equal
+    pairs and the report's value-plus-unit convergence holds. An option value
+    shows its label plus the raw int and carries no unit (the label is the
+    whole meaning); a unit-bearing value is the bare int plus its unit;
+    everything else is the bare int with no unit. A renderer composes
+    ``display unit`` to get the canonical string, or shows them separately.
     """
 
     if meta is not None:
         if value in meta.states:
-            return f"{meta.states[value]} ({value})"
+            return f"{meta.states[value]} ({value})", ""
         if meta.unit:
-            return f"{value} {meta.unit}"
-    return str(value)
+            return str(value), meta.unit
+    return str(value), ""

@@ -77,11 +77,13 @@ automations. Live in the bundled payload and run from the HA host.
   the live fleet against the Z-Wave Parameter Manager policy file (the same
   one the blueprint uses; override with `--config`) and prints the writes a
   policy resolves (`desired`), the not-yet-converged subset (`pending`), or
-  the policies / settings that matched no device (`unused`). `--cols` reshapes
-  the table (generic concept columns by default, opt-in device-raw and wake
-  columns). Self-bootstraps a venv on first run; see `zwavectl list --help`
-  for its column list and aliases, and
-  `zwavectl param-manager config desired --help` for its column list.
+  the policies / settings that matched no device (`unused`). Each row shows
+  the policy's `desired` value next to the device's `dev-current` and
+  `dev-pending` values; `--cols` reshapes the table (units, the device
+  parameter identity, wake timing, and more are opt-in, with `defaults` /
+  `all` aliases). Self-bootstraps a venv on first run; see
+  `zwavectl list --help` and `zwavectl param-manager config desired --help`
+  for each command's column list and aliases.
 
 ## Prerequisites
 

@@ -2464,17 +2464,16 @@ async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
 class _PmRow:
     """One param-manager table row for the ``desired`` / ``pending`` views.
 
-    ``device`` is the report's wake-context device, ``param`` its rendered
-    desired-vs-actual row (generic + device views), ``write`` the planned write
-    behind it (the raw target + ``Device`` make/model/power/types + ``ParamId``)
-    and ``raw_current`` the live raw value off the fleet -- the union of
-    everything any column can show.
+    ``device`` is the report's wake-context device, ``param`` its split
+    desired-vs-actual row (generic concept view + device value/unit), and
+    ``write`` the planned write behind it (the ``Device`` make/model/power/
+    types + the ``ParamId`` the device columns read) -- the union of everything
+    any column can show.
     """
 
     device: ConvergenceDevice
     param: ParamConvergence
     write: PlannedWrite | None
-    raw_current: int | None
 
 
 @dataclass(frozen=True)
@@ -2511,26 +2510,18 @@ def _pm_power(r: _PmRow) -> str:
     return "Mains" if r.write.device.is_listening else "Battery"
 
 
-def _pm_command_class(r: _PmRow) -> str:
+def _pm_dev_cc(r: _PmRow) -> str:
     return str(r.write.id.command_class) if r.write is not None else ""
 
 
-def _pm_property(r: _PmRow) -> str:
+def _pm_dev_property(r: _PmRow) -> str:
     return str(r.write.id.property_) if r.write is not None else ""
 
 
-def _pm_property_key(r: _PmRow) -> str:
+def _pm_dev_key(r: _PmRow) -> str:
     if r.write is None or r.write.id.property_key is None:
         return ""
     return str(r.write.id.property_key)
-
-
-def _pm_property_pending(r: _PmRow) -> str:
-    return str(r.write.value) if r.write is not None else ""
-
-
-def _pm_property_current(r: _PmRow) -> str:
-    return "" if r.raw_current is None else str(r.raw_current)
 
 
 # Wake columns render through the shared ``zwave.formatting`` helpers the
@@ -2564,15 +2555,20 @@ def _pm_wake_next(r: _PmRow) -> str:
     return "" if when is None else format_wake_time(when)
 
 
-# ``parameter`` / ``desired`` / ``current`` are the generic concept view;
-# the device-specific raw values are the optional ``property-*`` columns.
+# Three value views, none carrying inline units: ``desired`` is the generic
+# policy value (its unit in ``units``); ``dev-current`` / ``dev-pending`` are
+# the device's live / target values (their unit in ``dev-units``). The
+# ``dev-*`` prefix marks everything read off / specific to the device.
 _PM_COLUMNS: dict[str, _PmCol] = {
     "node": _PmCol("node", lambda r: str(r.device.node_id), right=True),
     "device": _PmCol("device", lambda r: r.device.name),
     "location": _PmCol("location", lambda r: r.device.location or ""),
     "parameter": _PmCol("parameter", lambda r: r.param.concept),
     "desired": _PmCol("desired", lambda r: r.param.concept_desired),
-    "current": _PmCol("current", lambda r: r.param.actual or ""),
+    "units": _PmCol("units", lambda r: r.param.concept_unit),
+    "dev-current": _PmCol("dev-current", lambda r: r.param.actual or ""),
+    "dev-pending": _PmCol("dev-pending", lambda r: r.param.desired),
+    "dev-units": _PmCol("dev-units", lambda r: r.param.desired_unit),
     "policy": _PmCol("policy", _pm_policy),
     "device-type": _PmCol("device-type", _pm_device_type),
     "make": _PmCol("make", _pm_make),
@@ -2581,93 +2577,86 @@ _PM_COLUMNS: dict[str, _PmCol] = {
     "wake-interval": _PmCol("wake-interval", _pm_wake_interval),
     "wake-last": _PmCol("wake-last", _pm_wake_last),
     "wake-next": _PmCol("wake-next", _pm_wake_next),
-    "command-class": _PmCol("command-class", _pm_command_class, right=True),
-    "property": _PmCol("property", _pm_property),
-    "property-key": _PmCol("property-key", _pm_property_key, right=True),
-    "property-pending": _PmCol(
-        "property-pending", _pm_property_pending, right=True
-    ),
-    "property-current": _PmCol(
-        "property-current", _pm_property_current, right=True
-    ),
+    "dev-cc": _PmCol("dev-cc", _pm_dev_cc, right=True),
+    "dev-property": _PmCol("dev-property", _pm_dev_property),
+    "dev-key": _PmCol("dev-key", _pm_dev_key, right=True),
 }
 
-_PM_DESIRED_COLS = [
+_PM_DEFAULT_COLS = [
     "node",
     "device",
     "location",
     "parameter",
     "desired",
-    "policy",
-]
-_PM_PENDING_COLS = [
-    "node",
-    "device",
-    "location",
-    "parameter",
-    "desired",
-    "current",
+    "dev-current",
+    "dev-pending",
     "policy",
 ]
 
 # Generated from the registry so the --cols help can never drift from the
-# columns _pm_parse_cols actually accepts. Both views accept any registry
-# column; only the default set differs.
+# columns _pm_parse_cols actually accepts.
 _PM_COLS_HELP = (
-    "comma-separated ordered columns. Default for desired: "
-    f"{','.join(_PM_DESIRED_COLS)}; for pending: "
-    f"{','.join(_PM_PENDING_COLS)}. Available: "
-    f"{', '.join(_PM_COLUMNS)}."
+    "comma-separated ordered columns and aliases. Aliases: defaults (the "
+    "default set), all (every column). Default: "
+    f"{','.join(_PM_DEFAULT_COLS)}. Available: {', '.join(_PM_COLUMNS)}."
 )
 
 
 def _pm_parse_cols(
     spec: str, default: list[str]
 ) -> tuple[list[str], str | None]:
-    """A ``--cols`` spec -> ordered column list (``default`` when the spec
-    names no columns, i.e. empty or only separators / whitespace), or
-    ``([], error)`` when a name is unknown."""
+    """A ``--cols`` spec -> ordered column list, or ``([], error)`` when a
+    name is unknown.
 
-    cols = [c.strip() for c in spec.split(",") if c.strip()]
-    if not cols:
+    Column names and the aliases ``defaults`` / ``default`` (the mode's
+    default set) and ``all`` (every column) mix freely and expand inline;
+    duplicates collapse (first wins, order preserved). A spec naming no
+    columns (empty or only separators / whitespace) falls back to ``default``.
+    """
+
+    tokens = [c.strip() for c in spec.split(",") if c.strip()]
+    if not tokens:
         return list(default), None
-    unknown = [c for c in cols if c not in _PM_COLUMNS]
+    picked: list[str] = []
+    unknown: list[str] = []
+    for tok in tokens:
+        if tok in ("defaults", "default"):
+            expand: list[str] = list(default)
+        elif tok == "all":
+            expand = list(_PM_COLUMNS)
+        elif tok in _PM_COLUMNS:
+            expand = [tok]
+        else:
+            unknown.append(tok)
+            continue
+        for col in expand:
+            if col not in picked:
+                picked.append(col)
     if unknown:
         return [], f"unknown column(s): {', '.join(unknown)}"
-    return cols, None
+    return picked, None
 
 
 def _pm_write_rows(
     report: ConvergenceReport,
     plan: Plan,
-    fleet: list[NodeRead],
     *,
     pending: bool,
 ) -> list[_PmRow]:
     """Assemble ``_PmRow`` objects for the ``desired`` (all) or ``pending``
-    (non-converged) writes, joining the report rows to their planned write +
-    live raw value by ``(node_id, concept)`` / ``(node_id, ParamId)``."""
+    (non-converged) writes, joining each report row to its planned write by
+    ``(node_id, concept)`` for the device columns. The live and target device
+    values come off the report row itself (``param.actual`` / ``param.desired``
+    -- the ZPM pipeline already joined the live values into the report)."""
 
     write_by = {(w.device.node_id, str(w.concept)): w for w in plan.writes}
-    actuals_by = {
-        (rd.device.node_id, pid): v
-        for rd in fleet
-        for pid, v in rd.actuals.items()
-    }
     devices = report.pending_devices if pending else report.devices
     rows: list[_PmRow] = []
     for dc in devices:
         params = dc.pending_params if pending else dc.params
         for p in params:
             write = write_by.get((dc.device.node_id, p.concept))
-            raw = (
-                actuals_by.get((dc.device.node_id, write.id))
-                if write is not None
-                else None
-            )
-            rows.append(
-                _PmRow(device=dc.device, param=p, write=write, raw_current=raw)
-            )
+            rows.append(_PmRow(device=dc.device, param=p, write=write))
     return rows
 
 
@@ -2711,8 +2700,7 @@ def _param_manager_config(
     ``build_node_read`` -- the same convergence the ZPM handler computes."""
 
     config_path = pathlib.Path(config) if config else PM_CONFIG_DEFAULT
-    default_cols = _PM_PENDING_COLS if mode == "pending" else _PM_DESIRED_COLS
-    columns, cols_err = _pm_parse_cols(cols, default_cols)
+    columns, cols_err = _pm_parse_cols(cols, _PM_DEFAULT_COLS)
     if cols_err is not None:
         print(f"Error: {cols_err}", file=sys.stderr)
         return 2
@@ -2759,7 +2747,7 @@ def _param_manager_config(
     if mode == "unused":
         print(_pm_unused_table(plan, show_header=show_header))
         return 0
-    rows = _pm_write_rows(report, plan, fleet, pending=mode == "pending")
+    rows = _pm_write_rows(report, plan, pending=mode == "pending")
     print(_pm_write_table(rows, columns, show_header=show_header))
     return 0
 
