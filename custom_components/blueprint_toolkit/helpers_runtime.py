@@ -981,6 +981,29 @@ def update_instance_state(
     )
 
 
+def automation_enabled(hass: HomeAssistant, entity_id: str) -> bool:
+    """Return whether automation ``entity_id`` is currently enabled.
+
+    Disabling an automation sets its entity state to ``"off"``
+    but does NOT stop the integration's synthetic scan paths.
+    Those paths fire ``automation.trigger``, which runs the
+    action sequence regardless of the automation's on/off
+    state, so a disabled watchdog would keep scanning and
+    emitting notifications. The synthetic-trigger call sites
+    (the periodic tick, the restart/reload recovery kick) gate
+    on this so a disabled automation actually goes quiet.
+
+    Only an explicit ``"off"`` state counts as disabled. A
+    missing entity or a transient ``"unavailable"`` /
+    ``"unknown"`` state (e.g. mid-startup or mid-reload) is
+    treated as enabled so a momentary non-``on`` state doesn't
+    suppress a scan; the user-initiated ``"off"`` is the only
+    signal we suppress on.
+    """
+    state = hass.states.get(entity_id)
+    return state is None or state.state != "off"
+
+
 def make_periodic_trigger_callback(
     hass: HomeAssistant,
     instance_id: str,
@@ -1007,6 +1030,12 @@ def make_periodic_trigger_callback(
     ``instances_getter`` that returns the per-handler
     instance map keyed by automation entity_id.
 
+    Also drops silently when the automation is currently
+    disabled (``automation_enabled`` is False): the steady-
+    state timer keeps ticking but no-ops, so disabling a
+    watchdog stops its scans and re-enabling resumes them on
+    the next tick.
+
     Swallows + WARN-logs ``automation.trigger`` failures.
     A single failed tick is a self-healing transient (the
     next tick fires anyway), and surfacing the exception
@@ -1022,6 +1051,8 @@ def make_periodic_trigger_callback(
 
     async def _on_tick(_now: datetime) -> None:
         if instance_id not in instances_getter(hass):
+            return
+        if not automation_enabled(hass, instance_id):
             return
         try:
             await hass.services.async_call(

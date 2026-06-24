@@ -37,6 +37,7 @@ from .helpers_logic import (
 )
 from .helpers_runtime import (
     attribution_lines,
+    automation_enabled,
     dismiss_handler_crash_notification,
     emit_handler_crash_notification,
     kick_via_automation_trigger,
@@ -216,11 +217,13 @@ async def recover_at_startup(
 ) -> None:
     """Discover, log, and kick every automation using ``blueprint_path``.
 
-    Fires the per-port ``kick`` callable once per
-    discovered automation entity_id. Standardises the
-    "no automations discovered" / "kicking N for catch-up"
-    INFO log lines so all subpackages surface the same
-    diagnostic shape.
+    Fires the per-port ``kick`` callable once per discovered
+    automation entity_id, skipping any that are currently
+    disabled -- the kick is a synthetic ``automation.trigger``
+    that would otherwise run a disabled automation's scan.
+    Standardises the "no automations discovered" / "kicking N
+    for catch-up" INFO log lines so all subpackages surface
+    the same diagnostic shape.
     """
     discovered = discover_automations_using_blueprint(hass, blueprint_path)
     if not discovered:
@@ -230,15 +233,18 @@ async def recover_at_startup(
             blueprint_path,
         )
         return
+    targets = [e for e in discovered if automation_enabled(hass, e)]
     _LOGGER.info(
-        "[%s] kicking %d discovered automations for catch-up",
+        "[%s] kicking %d discovered automations for catch-up"
+        " (%d disabled, skipped)",
         service_tag,
-        len(discovered),
+        len(targets),
+        len(discovered) - len(targets),
     )
     # Best-effort: a single bad automation entity must
     # not stop recovery for the rest of the discovered
     # set. Catch + log, then continue.
-    for entity_id in discovered:
+    for entity_id in targets:
         try:
             await kick(hass, entity_id)
         except Exception as e:  # noqa: BLE001
@@ -796,6 +802,73 @@ async def register_blueprint_handler(
     else:
         kick = None
 
+    # --- Re-enable tracker (if kick is configured) ---
+    # Disabling an automation stops the integration's scans
+    # (the periodic tick and the recovery kick both gate on
+    # ``automation_enabled``), but HA fires no reload event
+    # when an automation is toggled on/off -- only a state
+    # change. Track the discovered automations' state so an
+    # off->on transition kicks the re-enabled one: that re-arms
+    # its periodic timer (idempotent if already armed) and runs
+    # an immediate catch-up scan. It is the only path that
+    # resumes a watchdog disabled across a restart, where the
+    # skipped recovery kick left no timer armed.
+    refresh_enable_tracker: Callable[[], None] | None = None
+    if kick is not None:
+        enable_kick = kick
+        enable_kick_task_name = f"{DOMAIN}_{spec.service}_enable_kick"
+        enable_tracker: dict[str, Callable[[], None] | None] = {
+            "current": None,
+        }
+
+        @callback  # type: ignore[untyped-decorator,unused-ignore]
+        def _on_automation_state_change(event: Event) -> None:
+            old = event.data.get("old_state")
+            new = event.data.get("new_state")
+            if old is None or new is None:
+                return
+            if old.state == "off" and new.state == "on":
+                entry.async_create_background_task(
+                    hass,
+                    enable_kick(hass, event.data["entity_id"]),
+                    enable_kick_task_name,
+                )
+
+        def _refresh_enable_tracker() -> None:
+            from homeassistant.helpers.event import (  # noqa: PLC0415
+                async_track_state_change_event,
+            )
+
+            prev = enable_tracker["current"]
+            if prev is not None:
+                prev()
+                enable_tracker["current"] = None
+            ids = discover_automations_using_blueprint(
+                hass,
+                spec.blueprint_path,
+            )
+            if not ids:
+                return
+            enable_tracker["current"] = async_track_state_change_event(
+                hass,
+                ids,
+                _on_automation_state_change,  # type: ignore[arg-type,unused-ignore]
+            )
+
+        refresh_enable_tracker = _refresh_enable_tracker
+
+        def _unsub_enable_tracker() -> None:
+            cur = enable_tracker["current"]
+            if cur is not None:
+                cur()
+                enable_tracker["current"] = None
+
+        unsubs.append(_unsub_enable_tracker)
+        # Initial arm over the currently-discovered set. Empty
+        # when the automation component hasn't loaded yet (HA
+        # still starting); ``_on_started_sync`` re-arms then.
+        _refresh_enable_tracker()
+
     # --- Reload listener (if any per-reload behaviour
     # is configured) ---
     if on_reload is not None or kick is not None:
@@ -821,6 +894,11 @@ async def register_blueprint_handler(
                     ),
                     reload_recover_task_name,
                 )
+            # Re-arm the re-enable tracker: a reload can add or
+            # remove automations using this blueprint, changing
+            # the set of entity_ids to watch.
+            if refresh_enable_tracker is not None:
+                refresh_enable_tracker()
 
         unsubs.append(
             hass.bus.async_listen(
@@ -923,6 +1001,11 @@ async def register_blueprint_handler(
                     ),
                     recover_task_name,
                 )
+                # Arm the re-enable tracker now that the
+                # automation component has loaded (the
+                # register-time arm found no automations yet).
+                if refresh_enable_tracker is not None:
+                    refresh_enable_tracker()
 
             once_unsub = hass.bus.async_listen_once(
                 EVENT_HOMEASSISTANT_STARTED,

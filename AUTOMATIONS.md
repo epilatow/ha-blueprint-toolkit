@@ -386,7 +386,11 @@ Lifecycle wiring:
   listeners + restart-recovery; idempotent. Also surfaces any unhandled
   handler exception as a per-instance `__crash` persistent notification
   (auto-cleared on the next successful run) so silently-broken automations are
-  visible to the operator.
+  visible to the operator. When the spec carries `kick_variables`, it also
+  arms a state-change tracker over the discovered automations that re-kicks an
+  automation on an `off -> on` (re-enable) transition -- the resume path for a
+  watchdog disabled across a restart, where the recovery kick armed no timer
+  (see "Disabled automations" below).
 - `unregister_blueprint_handler(hass, entry, spec)` -- tear down service +
   listeners + on_teardown.
 - `schedule_periodic_with_jitter(...)` -- per-instance jittered periodic
@@ -394,8 +398,10 @@ Lifecycle wiring:
 - `make_periodic_trigger_callback(...)` -- canonical `automation.trigger`
   callback (`trigger_id="periodic"` plus optional flat extra variables) for
   handlers that run a periodic scan. Drops silently if the instance has been
-  removed between scheduling and firing. See "Spec + lifecycle" below for the
-  kwargs handlers pass.
+  removed between scheduling and firing, or if the automation is currently
+  disabled (`automation_enabled` is False) -- the timer keeps ticking but
+  no-ops, so disabling a watchdog stops its scans (see "Disabled
+  automations"). See "Spec + lifecycle" below for the kwargs handlers pass.
 - `make_lifecycle_mutators(...)` -- factory returning a `LifecycleMutators`
   bundle (`on_reload`, `on_entity_remove`, `on_entity_rename`, `on_teardown`)
   bound for the `BlueprintHandlerSpec`. Reads the cancel- callable via
@@ -630,8 +636,9 @@ async action directly routes subsequent ticks through HA's internal
   (e.g. `{"trigger_id": "manual"}` for the watchdogs, TEC's synthetic TIMER
   `{"trigger_entity_id": "timer", "trigger_to_state": ""}`). The dispatcher
   fires `automation.trigger` with that payload against every discovered
-  automation on HA-started + reload events. The blueprint action reads the
-  flat top-level keys; HA's `automation.trigger` strips any nested `trigger.*`
+  automation on HA-started + reload events, skipping any that are currently
+  disabled (see "Disabled automations"). The blueprint action reads the flat
+  top-level keys; HA's `automation.trigger` strips any nested `trigger.*`
   overrides.
 - **Mutator callbacks** -- one `helpers.make_lifecycle_mutators(...)` call
   (kwargs: `instances_getter=_instances`, `cancel_field=...`,
@@ -654,6 +661,35 @@ the cancel-callable on the per-instance state object;
 `reset_armed_interval_on_reload=True` clears `armed_interval_minutes` to 0 on
 reload (set for handlers whose `_ensure_timer` re-arm decision compares
 against that field).
+
+### Disabled automations
+
+Scans are integration-driven (the per-instance periodic timer and the
+restart/reload recovery kick), not driven by the blueprint's own triggers.
+HA's `automation.trigger` runs an automation's action sequence regardless of
+the automation's on/off state, so without an explicit guard a disabled
+watchdog would keep scanning and emitting notifications. Every
+synthetic-trigger call site therefore gates on
+`automation_enabled(hass, instance_id)` (False only when the automation's
+entity state is explicitly `"off"`):
+
+- The periodic tick (`make_periodic_trigger_callback`) no-ops while disabled
+  -- the steady-state timer keeps ticking, so a mid-session re-enable resumes
+  on the next tick.
+- The recovery kick (`recover_at_startup`) skips disabled automations, so a
+  disabled watchdog does not scan once per HA restart.
+
+Because HA fires no reload event on an enable/disable toggle (only a state
+change), `register_blueprint_handler` also arms an
+`async_track_state_change_event` tracker over the discovered automations that
+re-kicks one on an `off -> on` transition. That tracker is the only resume
+path for a watchdog left disabled across a restart, where the skipped recovery
+kick armed no timer for the next tick to ride on; the tracked set re-arms on
+reload. Existing notifications are left untouched when an automation is
+disabled -- disabling stops new scans, it does not sweep prior findings -- and
+a manual `automation.trigger` (UI "Run") on a disabled automation still runs,
+since it reaches the handler entrypoint directly rather than through these
+synthetic paths.
 
 ## Blueprint YAML
 

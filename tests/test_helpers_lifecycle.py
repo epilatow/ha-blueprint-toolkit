@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import logging
 import sys
 import types
 from collections.abc import Awaitable, Callable
@@ -116,11 +117,32 @@ def _async_call_later(
     return _cancel
 
 
+_state_change_calls: list[tuple[Any, Any, Any]] = []
+_state_change_cancel_calls: list[int] = []
+
+
+def _async_track_state_change_event(
+    _hass: Any,
+    entity_ids: Any,
+    action: Any,
+) -> Any:
+    handle_index = len(_state_change_calls)
+    _state_change_calls.append((entity_ids, action, _hass))
+
+    def _cancel() -> None:
+        _state_change_cancel_calls.append(handle_index)
+
+    return _cancel
+
+
 _ha_helpers_event.async_track_time_interval = (  # type: ignore[attr-defined]
     _async_track_time_interval
 )
 _ha_helpers_event.async_call_later = (  # type: ignore[attr-defined]
     _async_call_later
+)
+_ha_helpers_event.async_track_state_change_event = (  # type: ignore[attr-defined]
+    _async_track_state_change_event
 )
 
 # ``file_editor_addon_ingress_url`` late-imports ``is_hassio``
@@ -222,7 +244,9 @@ sys.modules["homeassistant.helpers.issue_registry"] = _ha_helpers_ir
 
 from custom_components.blueprint_toolkit import (  # noqa: E402
     helpers,
+    helpers_lifecycle,
     helpers_logic,
+    helpers_runtime,
 )
 from custom_components.blueprint_toolkit.const import DOMAIN  # noqa: E402
 
@@ -1652,6 +1676,235 @@ class TestRegisterBlueprintHandler:
         # re-listening).
         assert (DOMAIN, spec.service) in hass.services.registered
         assert len(hass.bus.listeners.get("automation_reloaded", [])) == 1
+
+
+# --------------------------------------------------------
+# Disabled-automation guard (automation_enabled + the three
+# synthetic-trigger call sites that gate on it)
+# --------------------------------------------------------
+
+
+@dataclass
+class _FakeAutoEntity:
+    """Stand-in for an automation entity in the component list."""
+
+    entity_id: str
+    referenced_blueprint: str | None
+
+
+@dataclass
+class _FakeAutoComponent:
+    """Stand-in for ``hass.data[DATA_COMPONENT]``.
+
+    ``discover_automations_using_blueprint`` walks ``.entities``
+    and matches ``referenced_blueprint``.
+    """
+
+    entities: list[_FakeAutoEntity] = field(default_factory=list)
+
+
+@dataclass
+class _FakeEvent:
+    """Stand-in for a state-change ``Event``; only ``.data`` is read."""
+
+    data: dict[str, Any]
+
+
+_FAKE_NOW = datetime(2026, 1, 1, 0, 0, 0)
+
+
+class TestAutomationEnabled:
+    """``automation_enabled`` suppresses only on an explicit
+    ``"off"`` state; anything else (on / unavailable / missing)
+    is treated as enabled so a transient non-``on`` state never
+    silences a scan.
+    """
+
+    def test_off_state_is_disabled(self) -> None:
+        hass = _MockHass()
+        hass.states.stub_state("automation.x", "off")
+        assert (
+            helpers_runtime.automation_enabled(
+                hass,  # type: ignore[arg-type]
+                "automation.x",
+            )
+            is False
+        )
+
+    def test_on_state_is_enabled(self) -> None:
+        hass = _MockHass()
+        hass.states.stub_state("automation.x", "on")
+        assert (
+            helpers_runtime.automation_enabled(
+                hass,  # type: ignore[arg-type]
+                "automation.x",
+            )
+            is True
+        )
+
+    def test_unavailable_is_treated_enabled(self) -> None:
+        hass = _MockHass()
+        hass.states.stub_state("automation.x", "unavailable")
+        assert (
+            helpers_runtime.automation_enabled(
+                hass,  # type: ignore[arg-type]
+                "automation.x",
+            )
+            is True
+        )
+
+    def test_missing_entity_is_treated_enabled(self) -> None:
+        hass = _MockHass()
+        assert (
+            helpers_runtime.automation_enabled(
+                hass,  # type: ignore[arg-type]
+                "automation.x",
+            )
+            is True
+        )
+
+
+class TestPeriodicTickDisabledGuard:
+    """The shared periodic-tick callback skips the synthetic
+    ``automation.trigger`` when the automation is disabled, so a
+    disabled watchdog stops scanning even though its timer keeps
+    ticking.
+    """
+
+    def _make_cb(
+        self,
+        hass: _MockHass,
+        instance_id: str,
+    ) -> Callable[[datetime], Awaitable[None]]:
+        instances = {instance_id: object()}
+        return helpers.make_periodic_trigger_callback(
+            hass,  # type: ignore[arg-type]
+            instance_id,
+            instances_getter=lambda _h: instances,
+            service_tag="DW",
+            logger=logging.getLogger("test_disabled_guard"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_tick_skips_trigger_when_disabled(self) -> None:
+        hass = _MockHass()
+        hass.states.stub_state("automation.x", "off")
+        cb = self._make_cb(hass, "automation.x")
+        await cb(_FAKE_NOW)
+        assert hass.services.calls == []
+
+    @pytest.mark.asyncio
+    async def test_tick_fires_trigger_when_enabled(self) -> None:
+        hass = _MockHass()
+        hass.states.stub_state("automation.x", "on")
+        cb = self._make_cb(hass, "automation.x")
+        await cb(_FAKE_NOW)
+        assert len(hass.services.calls) == 1
+        domain, service, data = hass.services.calls[0]
+        assert (domain, service) == ("automation", "trigger")
+        assert data["entity_id"] == "automation.x"
+
+
+class TestRecoverAtStartupSkipsDisabled:
+    """The startup / reload recovery kick skips disabled
+    automations -- the kick is a synthetic ``automation.trigger``
+    that would otherwise run a disabled automation's scan once
+    per restart.
+    """
+
+    @pytest.mark.asyncio
+    async def test_disabled_automations_not_kicked(self) -> None:
+        hass = _MockHass()
+        hass.data["automation_data_component"] = _FakeAutoComponent(
+            [
+                _FakeAutoEntity("automation.on_one", "bp/x.yaml"),
+                _FakeAutoEntity("automation.off_one", "bp/x.yaml"),
+                _FakeAutoEntity("automation.other_bp", "bp/other.yaml"),
+            ],
+        )
+        hass.states.stub_state("automation.on_one", "on")
+        hass.states.stub_state("automation.off_one", "off")
+        kicked: list[str] = []
+
+        async def _kick(_h: Any, entity_id: str) -> None:
+            kicked.append(entity_id)
+
+        await helpers_lifecycle.recover_at_startup(
+            hass,  # type: ignore[arg-type]
+            service_tag="DW",
+            blueprint_path="bp/x.yaml",
+            kick=_kick,
+        )
+        assert kicked == ["automation.on_one"]
+
+
+class TestReEnableTracker:
+    """Registering a kick-bearing handler arms a state-change
+    tracker over the discovered automations; an off->on
+    transition kicks the re-enabled automation so its scans
+    resume (the only resume path after a restart-while-disabled,
+    where the recovery kick armed no timer).
+    """
+
+    @pytest.mark.asyncio
+    async def test_off_to_on_transition_kicks(self) -> None:
+        hass = _MockHass(is_running=True)
+        hass.data["automation_data_component"] = _FakeAutoComponent(
+            [_FakeAutoEntity("automation.dw", "blueprint_toolkit/foo.yaml")],
+        )
+        entry = _MockEntry()
+        spec = _make_spec(kick_variables={"trigger_id": "manual"})
+
+        before = len(_state_change_calls)
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,
+            spec,
+        )
+        assert len(_state_change_calls) == before + 1
+        entity_ids, action, _ = _state_change_calls[-1]
+        assert list(entity_ids) == ["automation.dw"]
+
+        entry.background_tasks.clear()
+        action(
+            _FakeEvent(
+                {
+                    "entity_id": "automation.dw",
+                    "old_state": _MockStateLike("off"),
+                    "new_state": _MockStateLike("on"),
+                },
+            ),
+        )
+        names = [name for name, _ in entry.background_tasks]
+        assert any(name.endswith("_enable_kick") for name in names)
+
+    @pytest.mark.asyncio
+    async def test_non_enable_transition_does_not_kick(self) -> None:
+        hass = _MockHass(is_running=True)
+        hass.data["automation_data_component"] = _FakeAutoComponent(
+            [_FakeAutoEntity("automation.dw", "blueprint_toolkit/foo.yaml")],
+        )
+        entry = _MockEntry()
+        spec = _make_spec(kick_variables={"trigger_id": "manual"})
+        await helpers.register_blueprint_handler(
+            hass,  # type: ignore[arg-type]
+            entry,
+            spec,
+        )
+        _entity_ids, action, _ = _state_change_calls[-1]
+
+        entry.background_tasks.clear()
+        # on->off (disable) must not kick.
+        action(
+            _FakeEvent(
+                {
+                    "entity_id": "automation.dw",
+                    "old_state": _MockStateLike("on"),
+                    "new_state": _MockStateLike("off"),
+                },
+            ),
+        )
+        assert entry.background_tasks == []
 
 
 # --------------------------------------------------------
