@@ -34,7 +34,7 @@ wrap = 78
 # between 2026.4 and 2026.5). Bump this pin in lockstep with HAOS.
 # ``types-PyYAML`` adds the stubs PyYAML itself doesn't ship.
 mypy-extra-deps = [
-    "pytest-homeassistant-custom-component==0.13.331",
+    "pytest-homeassistant-custom-component==0.13.342",
     "types-PyYAML",
 ]
 # HACC 0.13.324 only installs on Python 3.14; the integration's own
