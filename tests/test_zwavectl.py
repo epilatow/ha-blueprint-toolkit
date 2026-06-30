@@ -722,6 +722,50 @@ class TestBootstrapVenv:
         assert "pyyaml" in names
 
 
+# --- API key file resolution ------------------------------------
+
+
+class TestApiKeyFile:
+    def test_override_wins(self, tmp_path: Path) -> None:
+        f = tmp_path / "k"
+        f.write_text("tok")
+        assert zc._resolve_api_key_file(str(f)) == f
+
+    def test_default_then_legacy_fallback(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        default = tmp_path / "default"
+        legacy = tmp_path / "legacy"
+        monkeypatch.setattr(zc, "API_KEY_FILE", default)
+        monkeypatch.setattr(zc, "LEGACY_API_KEY_FILE", legacy)
+        # Neither present -> the default path (so a not-found error names it).
+        assert zc._resolve_api_key_file("") == default
+        # Only the legacy path present -> it.
+        legacy.write_text("tok")
+        assert zc._resolve_api_key_file("") == legacy
+        # The persistent default present -> it wins over the legacy path.
+        default.write_text("tok")
+        assert zc._resolve_api_key_file("") == default
+
+    def test_load_reads_and_strips(self, tmp_path: Path) -> None:
+        f = tmp_path / "k"
+        f.write_text("  mytoken\n")
+        assert zc._load_api_key(str(f)) == "mytoken"
+
+    def test_load_missing_prints_actionable_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(zc, "API_KEY_FILE", tmp_path / "absent")
+        monkeypatch.setattr(zc, "LEGACY_API_KEY_FILE", tmp_path / "absent2")
+        assert zc._load_api_key("") is None
+        err = capsys.readouterr().err
+        assert "API key file not found" in err
+        assert "--api-key-file" in err
+
+
 # --- Row / ALL_COLUMNS consistency -----------------------------
 
 

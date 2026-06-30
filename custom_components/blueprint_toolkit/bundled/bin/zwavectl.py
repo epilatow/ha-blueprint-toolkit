@@ -205,7 +205,12 @@ VENV_DIR = pathlib.Path("/root/.zwavectl_venv")
 # present), so a venv from an older zwavectl never silently misses a
 # newly-added dependency.
 VENV_STAMP = VENV_DIR / ".installed"
-API_KEY_FILE = pathlib.Path("/root/api-key")
+# The CLI's HA token file. ``API_KEY_FILE`` is the persistent default the
+# integration's CLI-token option provisions; ``LEGACY_API_KEY_FILE`` is the SSH
+# add-on's old ephemeral home, still honored when the new path is absent.
+# ``--api-key-file`` overrides both.
+API_KEY_FILE = pathlib.Path("/config/blueprint_toolkit/cli_token")
+LEGACY_API_KEY_FILE = pathlib.Path("/root/api-key")
 # The policy file the param-manager view plans against. Defaults to the same
 # file the blueprint targets (its ``config_file_path`` input defaults to
 # ``zwave_parameter_manager.yaml``, which HA resolves under ``/config``).
@@ -2074,6 +2079,36 @@ def _add_list_args(parser: argparse.ArgumentParser) -> None:
             "some data is better than none."
         ),
     )
+    _add_api_key_arg(parser)
+
+
+def _resolve_api_key_file(override: str) -> pathlib.Path:
+    """The token file to read: ``--api-key-file`` if given, else the persistent
+    default, else the legacy path, else the default (so a not-found error names
+    the canonical location)."""
+
+    if override:
+        return pathlib.Path(override)
+    if API_KEY_FILE.exists():
+        return API_KEY_FILE
+    if LEGACY_API_KEY_FILE.exists():
+        return LEGACY_API_KEY_FILE
+    return API_KEY_FILE
+
+
+def _load_api_key(override: str) -> str | None:
+    """Read the HA token, or print a clear error and return ``None``."""
+
+    path = _resolve_api_key_file(override)
+    if not path.exists():
+        print(f"API key file not found: {path}", file=sys.stderr)
+        print(
+            "Pass --api-key-file <path>, or enable the Blueprint Toolkit "
+            "integration's CLI-token option to provision one.",
+            file=sys.stderr,
+        )
+        return None
+    return path.read_text().strip()
 
 
 def do_list(
@@ -2085,6 +2120,7 @@ def do_list(
     no_header: bool,
     no_color: bool,
     use_snapshot_data: bool,
+    api_key_file: str,
 ) -> int:
     """Render the per-node network table (the ``list`` subcommand)."""
 
@@ -2106,10 +2142,9 @@ def do_list(
 
     columns = _parse_columns(cols)
 
-    if not API_KEY_FILE.exists():
-        print(f"API key file not found: {API_KEY_FILE}", file=sys.stderr)
+    api_key = _load_api_key(api_key_file)
+    if api_key is None:
         return 2
-    api_key = API_KEY_FILE.read_text().strip()
 
     # socketio.exceptions.TimeoutError is a distinct class from
     # the builtin TimeoutError -- catch both so a wedged Z-Wave
@@ -2694,6 +2729,7 @@ def _param_manager_config(
     config: str = "",
     cols: str = "",
     no_header: bool = False,
+    api_key_file: str = "",
 ) -> int:
     """Plan the live fleet against the policy file and render the ``mode``
     view. Reads the fleet via this CLI's own access layer feeding the shared
@@ -2705,10 +2741,9 @@ def _param_manager_config(
         print(f"Error: {cols_err}", file=sys.stderr)
         return 2
 
-    if not API_KEY_FILE.exists():
-        print(f"API key file not found: {API_KEY_FILE}", file=sys.stderr)
+    api_key = _load_api_key(api_key_file)
+    if api_key is None:
         return 2
-    api_key = API_KEY_FILE.read_text().strip()
 
     if not config_path.exists():
         print(f"Policy file not found: {config_path}", file=sys.stderr)
@@ -2776,20 +2811,36 @@ def _read_param_manager_fleet_sync(api_key: str) -> list[NodeRead]:
         raise _FleetReadError(str(e) or type(e).__name__) from e
 
 
-def do_pm_config_desired(*, config: str, cols: str, no_header: bool) -> int:
+def do_pm_config_desired(
+    *, config: str, cols: str, no_header: bool, api_key_file: str
+) -> int:
     return _param_manager_config(
-        "desired", config=config, cols=cols, no_header=no_header
+        "desired",
+        config=config,
+        cols=cols,
+        no_header=no_header,
+        api_key_file=api_key_file,
     )
 
 
-def do_pm_config_pending(*, config: str, cols: str, no_header: bool) -> int:
+def do_pm_config_pending(
+    *, config: str, cols: str, no_header: bool, api_key_file: str
+) -> int:
     return _param_manager_config(
-        "pending", config=config, cols=cols, no_header=no_header
+        "pending",
+        config=config,
+        cols=cols,
+        no_header=no_header,
+        api_key_file=api_key_file,
     )
 
 
-def do_pm_config_unused(*, config: str, no_header: bool) -> int:
-    return _param_manager_config("unused", config=config, no_header=no_header)
+def do_pm_config_unused(
+    *, config: str, no_header: bool, api_key_file: str
+) -> int:
+    return _param_manager_config(
+        "unused", config=config, no_header=no_header, api_key_file=api_key_file
+    )
 
 
 # --- Argparse: strict subparsers + auto-help on a missing action ----
@@ -2976,8 +3027,24 @@ def _add_pm_config_args(
         action="store_true",
         help="omit the table header row",
     )
+    _add_api_key_arg(parser)
     if with_cols:
         parser.add_argument("--cols", default="", help=_PM_COLS_HELP)
+
+
+def _add_api_key_arg(parser: argparse.ArgumentParser) -> None:
+    """Attach ``--api-key-file`` (shared by ``list`` and param-manager
+    config)."""
+
+    parser.add_argument(
+        "--api-key-file",
+        default="",
+        metavar="PATH",
+        help=(
+            "HA token file (default: "
+            f"{API_KEY_FILE}, then {LEGACY_API_KEY_FILE})"
+        ),
+    )
 
 
 COMMAND_CALLBACKS: dict[str, Callable[..., int]] = {
