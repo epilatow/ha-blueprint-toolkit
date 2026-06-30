@@ -6,12 +6,13 @@ The user-facing flow is intentionally minimal:
 - The setup flow asks for nothing. Confirming the form
   creates the single config entry; HA's
   ``async_setup_entry`` then runs the reconciler.
-- The options flow exposes one optional input,
-  ``cli_symlink_dir``, controlling whether the bundled
-  CLI scripts are symlinked into a user-visible
-  directory. Empty (the default) means CLI scripts are
-  not installed; the bundled file remains accessible at
-  its original path inside the integration.
+- The options flow exposes ``cli_symlink_dir`` (whether
+  the bundled CLI scripts are symlinked into a
+  user-visible directory; empty -- the default -- means
+  not installed) and ``provision_cli_token`` (whether to
+  mint + write an HA access token for the CLI; off by
+  default). ``async_setup_entry`` acts on both when the
+  options change.
 """
 
 from __future__ import annotations
@@ -22,7 +23,11 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 
-from .const import DOMAIN, OPTION_CLI_SYMLINK_DIR
+from .const import (
+    DOMAIN,
+    OPTION_CLI_SYMLINK_DIR,
+    OPTION_PROVISION_CLI_TOKEN,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigFlowResult
@@ -60,7 +65,7 @@ class BlueprintToolkitConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class BlueprintToolkitOptionsFlow(config_entries.OptionsFlow):
-    """One-field options flow for the optional CLI dir.
+    """Options flow for the optional CLI dir + token provisioning.
 
     HA 2026 made ``config_entry`` a read-only property on
     ``OptionsFlow``; the framework supplies the binding via
@@ -74,10 +79,16 @@ class BlueprintToolkitOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self.config_entry.options.get(OPTION_CLI_SYMLINK_DIR, "")
+        current_dir = self.config_entry.options.get(OPTION_CLI_SYMLINK_DIR, "")
+        provision = self.config_entry.options.get(
+            OPTION_PROVISION_CLI_TOKEN, False
+        )
         schema = vol.Schema(
             {
-                vol.Optional(OPTION_CLI_SYMLINK_DIR, default=current): str,
+                vol.Optional(OPTION_CLI_SYMLINK_DIR, default=current_dir): str,
+                vol.Optional(
+                    OPTION_PROVISION_CLI_TOKEN, default=provision
+                ): bool,
             },
         )
         return self.async_show_form(step_id="init", data_schema=schema)

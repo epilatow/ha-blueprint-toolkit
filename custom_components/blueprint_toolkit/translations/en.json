@@ -15,10 +15,12 @@
       "init": {
         "title": "Blueprint Toolkit Options",
         "data": {
-          "cli_symlink_dir": "CLI symlink directory"
+          "cli_symlink_dir": "CLI symlink directory",
+          "provision_cli_token": "Provision a CLI access token"
         },
         "data_description": {
-          "cli_symlink_dir": "Bundled CLI scripts (zwavectl.py) will be symlinked into this directory. Path must be writable by Home Assistant. On HAOS / Supervised, the integration runs in its own container -- use a shared-mount path like /config (paths like /root resolve inside HA's container, not the SSH add-on). Leave empty to skip."
+          "cli_symlink_dir": "Bundled CLI scripts (zwavectl.py) will be symlinked into this directory. Path must be writable by Home Assistant. On HAOS / Supervised, the integration runs in its own container -- use a shared-mount path like /config (paths like /root resolve inside HA's container, not the SSH add-on). Leave empty to skip.",
+          "provision_cli_token": "Mint a long-lived Home Assistant access token for the zwavectl CLI and write it to /config/blueprint_toolkit/cli_token (mode 0600). The token is owner-scoped (full access) and is included in HA backups; it appears in your profile's Long-lived access tokens as 'Blueprint Toolkit CLI'. Turning this off revokes the token and deletes the file."
         }
       }
     }

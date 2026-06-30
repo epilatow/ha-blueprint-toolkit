@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 # the test functions themselves.
 DOMAIN = "blueprint_toolkit"
 OPTION_CLI_SYMLINK_DIR = "cli_symlink_dir"
+OPTION_PROVISION_CLI_TOKEN = "provision_cli_token"
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +187,34 @@ class TestOptionsFlow:
         )
         assert result["type"] == "create_entry"
         assert entry.options[OPTION_CLI_SYMLINK_DIR] == "/tmp/cli-target"
+
+    async def test_setup_provisions_cli_token_when_enabled(
+        self, hass: HomeAssistant
+    ) -> None:
+        # async_setup_entry hands the option through to cli_token.async_apply
+        # with the /config-relative token path; the provisioning itself is
+        # covered in test_cli_token.py.
+        from unittest.mock import patch
+
+        entry = _mock_config_entry(
+            domain=DOMAIN,
+            data={},
+            options={OPTION_PROVISION_CLI_TOKEN: True},
+        )
+        entry.add_to_hass(hass)
+        with patch(
+            "custom_components.blueprint_toolkit.cli_token.async_apply",
+            autospec=True,
+        ) as apply:
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+        assert apply.await_count >= 1
+        assert apply.await_args is not None
+        kwargs = apply.await_args.kwargs
+        assert kwargs["enabled"] is True
+        assert kwargs["token_path"].name == "cli_token"
+        assert kwargs["token_path"].parent.name == "blueprint_toolkit"
 
     async def test_changing_options_triggers_reconcile(
         self,
@@ -329,6 +358,34 @@ class TestRemoveEntry:
         # All symlinks we installed should be gone.
         for dest in _expected_destinations(config_dir):
             assert not dest.is_symlink(), f"symlink survived removal: {dest}"
+
+    async def test_remove_revokes_cli_token(self, hass: HomeAssistant) -> None:
+        # async_remove_entry hands the cleanup to cli_token.async_apply with
+        # enabled=False (revoke + delete); the revoke itself is covered in
+        # test_cli_token.py.
+        from unittest.mock import patch
+
+        entry = _mock_config_entry(
+            domain=DOMAIN,
+            data={},
+            options={OPTION_PROVISION_CLI_TOKEN: True},
+        )
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        with patch(
+            "custom_components.blueprint_toolkit.cli_token.async_apply",
+            autospec=True,
+        ) as apply:
+            assert await hass.config_entries.async_remove(entry.entry_id)
+            await hass.async_block_till_done()
+
+        assert apply.await_count >= 1
+        assert apply.await_args is not None
+        kwargs = apply.await_args.kwargs
+        assert kwargs["enabled"] is False
+        assert kwargs["token_path"].name == "cli_token"
 
 
 if __name__ == "__main__":

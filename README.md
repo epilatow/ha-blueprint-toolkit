@@ -83,7 +83,11 @@ automations. Live in the bundled payload and run from the HA host.
   parameter identity, wake timing, and more are opt-in, with `defaults` /
   `all` aliases). Self-bootstraps a venv on first run; see
   `zwavectl list --help` and `zwavectl param-manager config desired --help`
-  for each command's column list and aliases.
+  for each command's column list and aliases. Host requirements: `python3` (on
+  HAOS the Terminal & SSH add-on needs `apks: [python3, py3-pip]` in its
+  configuration), and an HA token -- enable the integration's **Provision a
+  CLI access token** option (writes `/config/blueprint_toolkit/cli_token`) or
+  pass `--api-key-file <path>`.
 
 ## Prerequisites
 
@@ -112,7 +116,11 @@ automations. Live in the bundled payload and run from the HA host.
    (`/config`, `/share`, `/media`, `/backup`, `/ssl`, `/addons`,
    `/addon_configs`) are visible from the SSH add-on; e.g. `/config` is a safe
    default. On Home Assistant Container or Core (no Supervisor), any path the
-   HA process can write to works. Leave blank to skip.
+   HA process can write to works. Leave blank to skip. The same dialog has a
+   **Provision a CLI access token** toggle: enable it to mint a long-lived HA
+   token for `zwavectl` and write it to `/config/blueprint_toolkit/cli_token`
+   (revoked + deleted when you turn it off). It is full-access and lands in HA
+   backups, so it is off by default.
 
 6. Go to **Settings > Automations & Scenes > Blueprints** to create
    automations from the installed blueprints.

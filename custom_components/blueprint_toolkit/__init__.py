@@ -25,7 +25,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import installer, reconciler
-from .const import DOMAIN, OPTION_CLI_SYMLINK_DIR
+from .const import (
+    CLI_TOKEN_REL_PATH,
+    DOMAIN,
+    OPTION_CLI_SYMLINK_DIR,
+    OPTION_PROVISION_CLI_TOKEN,
+)
 
 # The install issues are raised + fixed here / in repairs.py, so
 # their ``Issue`` contracts live in this module (not common
@@ -301,6 +306,22 @@ async def async_setup_entry(
 
     _register_docs_static_route(hass)
 
+    # Provision (or revoke) the standalone CLI's HA token per the option. The
+    # token is a CLI convenience, not core function, so an expected provisioning
+    # error -- an unwritable /config (OSError) or an auth rejection (ValueError)
+    # -- is logged, not allowed to fail setup. A missing owner is handled inside
+    # async_apply without raising.
+    from . import cli_token  # pulls in homeassistant.auth at module scope
+
+    try:
+        await cli_token.async_apply(
+            hass,
+            enabled=bool(entry.options.get(OPTION_PROVISION_CLI_TOKEN, False)),
+            token_path=config_root / CLI_TOKEN_REL_PATH,
+        )
+    except (OSError, ValueError) as err:
+        _LOGGER.warning("CLI token provisioning failed: %s", err)
+
     # Per-port service handlers. Lazy-imported because each
     # handler module pulls in ``voluptuous`` and
     # ``homeassistant`` at module scope.
@@ -376,6 +397,17 @@ async def async_remove_entry(
 ) -> None:
     """Remove the config entry, wiping every ours-symlink we own."""
     config_root = Path(hass.config.config_dir)
+
+    # Revoke + delete the provisioned CLI token (no-op when it was never on).
+    from . import cli_token  # pulls in homeassistant.auth at module scope
+
+    try:
+        await cli_token.async_apply(
+            hass, enabled=False, token_path=config_root / CLI_TOKEN_REL_PATH
+        )
+    except (OSError, ValueError) as err:
+        _LOGGER.warning("CLI token cleanup failed: %s", err)
+
     cli_symlink_dir = _coerce_cli_symlink_dir(
         entry.options.get(OPTION_CLI_SYMLINK_DIR),
     )
