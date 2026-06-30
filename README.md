@@ -83,9 +83,20 @@ automations. Live in the bundled payload and run from the HA host.
   parameter identity, wake timing, and more are opt-in, with `defaults` /
   `all` aliases). Self-bootstraps a venv on first run; see
   `zwavectl list --help` and `zwavectl param-manager config desired --help`
-  for each command's column list and aliases. Host requirements: `python3` (on
-  HAOS the Terminal & SSH add-on needs `apks: [python3, py3-pip]` in its
-  configuration), and an HA token -- enable the integration's **Provision a
+  for each command's column list and aliases. Host requirements: the
+  **Terminal & SSH** add-on must be installed and configured to install
+  `python3`, `py3-pip`, and `py3-websockets` -- add them to the add-on's
+  `apks` option (its Configuration tab) so they persist across add-on
+  restarts:
+
+  ```yaml
+  apks:
+    - python3
+    - py3-pip
+    - py3-websockets
+  ```
+
+  zwavectl also needs an HA token -- enable the integration's **Provision a
   CLI access token** option (writes `/config/blueprint_toolkit/cli_token`) or
   pass `--api-key-file <path>`.
 
