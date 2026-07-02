@@ -55,12 +55,6 @@ from conftest import (  # noqa: E402
 
 install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
-from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E402, E501
-    ConvergenceDevice,
-    ConvergenceReport,
-    DeviceConvergence,
-    ParamConvergence,
-)
 from custom_components.blueprint_toolkit.zwave_parameter_manager import (  # noqa: E402, E501
     handler,
 )
@@ -293,67 +287,6 @@ class TestRenderHelpers:
         assert "node 5 cc112/12=8" in out
         assert "node 7 cc132/wakeUpInterval=3600" in out
 
-    def _pending_report(
-        self,
-        *,
-        actual: str,
-        wake_interval: int,
-        last_awake: datetime,
-    ) -> ConvergenceReport:
-        return ConvergenceReport(
-            subsystem="ZPM",
-            devices=(
-                DeviceConvergence(
-                    device=ConvergenceDevice(
-                        node_id=7,
-                        name="Hall Contact",
-                        wake_interval_seconds=wake_interval,
-                        last_awake_at=last_awake,
-                    ),
-                    params=(
-                        ParamConvergence(
-                            "Wake-up interval",
-                            "14400",
-                            actual,
-                            desired_unit="seconds",
-                            actual_unit="seconds",
-                        ),
-                    ),
-                ),
-            ),
-        )
-
-    def test_pending_signature_ignores_wake_drift(self) -> None:
-        # The same pending param under different wake context (a later wake,
-        # a different interval) yields the SAME signature -- so a drifting
-        # next-wake estimate doesn't re-fire the pending notification.
-        a = self._pending_report(
-            actual="3600",
-            wake_interval=3600,
-            last_awake=datetime(2026, 6, 12, 8, 0, tzinfo=UTC),
-        )
-        b = self._pending_report(
-            actual="3600",
-            wake_interval=7200,
-            last_awake=datetime(2026, 6, 12, 9, 30, tzinfo=UTC),
-        )
-        assert handler._pending_signature(a) == handler._pending_signature(b)
-
-    def test_pending_signature_changes_with_the_actual_value(self) -> None:
-        # A real progress change (the device's live value moved) DOES change
-        # the signature, so the notification re-publishes.
-        a = self._pending_report(
-            actual="3600",
-            wake_interval=3600,
-            last_awake=datetime(2026, 6, 12, 8, 0, tzinfo=UTC),
-        )
-        c = self._pending_report(
-            actual="7200",
-            wake_interval=3600,
-            last_awake=datetime(2026, 6, 12, 8, 0, tzinfo=UTC),
-        )
-        assert handler._pending_signature(a) != handler._pending_signature(c)
-
     def test_issue_line_escapes_and_formats(self) -> None:
         issue = PlanIssue(
             device=Device(
@@ -371,6 +304,56 @@ class TestRenderHelpers:
         assert "no matching parameter" in line
         # md_escape neutralises the brackets in the device name.
         assert r"Guest \[Bath\]" in line
+
+
+# --------------------------------------------------------
+# Pending-report interval gate
+# --------------------------------------------------------
+
+
+class TestPendingPublishDue:
+    _NOW = datetime(2026, 6, 12, 12, 0, tzinfo=UTC)
+
+    def test_no_pending_never_publishes(self) -> None:
+        assert not handler._pending_publish_due(
+            has_pending=False,
+            interval_hours=24,
+            last_publish=None,
+            now=self._NOW,
+        )
+
+    def test_interval_zero_disables_the_report(self) -> None:
+        assert not handler._pending_publish_due(
+            has_pending=True,
+            interval_hours=0,
+            last_publish=None,
+            now=self._NOW,
+        )
+
+    def test_first_pending_publishes_promptly(self) -> None:
+        # Nothing published yet -> publish now rather than waiting a cycle.
+        assert handler._pending_publish_due(
+            has_pending=True,
+            interval_hours=24,
+            last_publish=None,
+            now=self._NOW,
+        )
+
+    def test_recent_publish_holds_off(self) -> None:
+        assert not handler._pending_publish_due(
+            has_pending=True,
+            interval_hours=24,
+            last_publish=self._NOW - timedelta(hours=23),
+            now=self._NOW,
+        )
+
+    def test_elapsed_interval_republishes(self) -> None:
+        assert handler._pending_publish_due(
+            has_pending=True,
+            interval_hours=24,
+            last_publish=self._NOW - timedelta(hours=24),
+            now=self._NOW,
+        )
 
 
 # --------------------------------------------------------

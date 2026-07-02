@@ -74,9 +74,10 @@ and periodically to pick up newly-joined devices.</li>
 <li>Issues each command at most once per pending cycle; re-issues only after the
 Z-Wave JS add-on restarts (which flushes the device queue).</li>
 <li>A pending report tracks devices that have not yet applied their writes (with
-each device's wake interval and estimated next wake); a desired-config
-report fires when the policy file changes or a new device becomes
-configured.</li>
+each device's wake interval and estimated next wake); it appears as soon as
+something is pending, refreshes on a configurable interval, and clears on
+full convergence. A desired-config report fires when the policy file changes
+or a new device becomes configured.</li>
 <li>An unused-config report flags policies and settings that match no device --
 a selector typo, a mis-scoped policy, or a setting no matched device
 exposes.</li>
@@ -94,7 +95,8 @@ policies yet.</li>
 <li>In <strong>Settings &gt; Automations &amp; Scenes &gt; Blueprints</strong>, create an automation
 from the <strong>Z-Wave Parameter Manager</strong> blueprint.</li>
 <li>Set the <strong>Policy file path</strong> (default <code>zwave_parameter_manager.yaml</code>,
-relative to <code>/config</code>) and, optionally, the reconcile interval.</li>
+relative to <code>/config</code>) and, optionally, the reconcile and pending-report
+intervals.</li>
 <li>Create the policy file (see below) and save it. ZPM picks up edits on its
 next reconcile.</li>
 </ol>
@@ -116,7 +118,12 @@ next reconcile.</li>
 <tr>
 <td>Reconcile interval (minutes)</td>
 <td><code>5</code></td>
-<td>How often to re-read the live fleet, pick up newly-joined devices, and refresh the pending report.</td>
+<td>How often to re-read the live fleet, pick up newly-joined devices, and re-issue not-yet-applied writes.</td>
+</tr>
+<tr>
+<td>Pending report interval (hours)</td>
+<td><code>24</code></td>
+<td>How often to re-publish the pending-configuration notification while devices are still waiting to apply. <code>0</code> disables the pending report.</td>
 </tr>
 <tr>
 <td>Debug logging</td>
@@ -227,12 +234,13 @@ that may have happened while Core was down. ZPM does not depend on the add-on
 de-duplicating its queue.</p>
 <h3>Reporting</h3>
 <p>The pending report (<code>...__pending</code>) lists every device still waiting to apply
-its writes and dismisses on full convergence. It re-publishes only when the
-set of pending parameters or their values actually changes -- a device
-converging, a new mismatch appearing -- not on every reconcile: its body
+its writes. It appears as soon as a parameter is pending and dismisses on full
+convergence; while anything stays pending it re-publishes on the <strong>Pending
+report interval (hours)</strong> cadence (default 24, <code>0</code> disables it). Its body
 annotates each sleeping device with an estimated next wake, and that estimate
-drifts forward every time a device wakes, so re-publishing on each reconcile
-would bubble the notification to the top of the panel continuously. The
+drifts forward every time a device wakes, so publishing on an interval rather
+than every reconcile keeps the notification from bubbling to the top of the
+panel continuously; a longer interval quiets a slow-waking fleet further. The
 desired-config report (<code>...__desired</code>) re-fires only when the policy file
 changes or a newly-configured node appears, so convergence progress does not
 re-bubble it. The unused-config report (<code>...__unused</code>) lists each policy or

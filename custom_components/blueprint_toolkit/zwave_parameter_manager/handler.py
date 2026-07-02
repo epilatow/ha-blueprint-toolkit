@@ -28,11 +28,13 @@ restart the map starts empty, so the first reconcile re-issues every
 mismatched write -- the conservative recovery for a flush that happened
 while Core was down.
 
-Reporting: the pending report re-fires only when the set of pending
-parameters or their values changes (and dismisses on full convergence),
-NOT on every reconcile -- its body's per-device wake estimates drift as
-sleeping devices wake, so re-publishing each cycle would churn it to the
-top of the panel. The desired-config report fires only when the policy
+Reporting: the pending report is a periodic status. It appears as soon as
+a parameter is pending and dismisses the moment the fleet converges; while
+anything stays pending it re-publishes on the configured interval (the
+``pending_report_interval_hours`` input; 0 disables it). Publishing on an
+interval rather than every reconcile keeps the body's per-device wake
+estimates -- which drift as sleeping devices wake -- from churning it to
+the top of the panel. The desired-config report fires only when the policy
 file changes or a newly-configured node appears.
 """
 
@@ -76,13 +78,7 @@ from . import logic as zpm_logic
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
-    from ..zwave.convergence import ConvergenceReport
     from .logic import ParamId, PlanIssue, PlannedWrite
-
-# A stable fingerprint of the pending report's content: per pending param, its
-# (node, device-param, desired, actual, desired-unit, actual-unit). Gates when
-# the pending notification re-fires (see _pending_signature).
-_PendingSig = tuple[tuple[int, str, str, str, str, str], ...]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,13 +117,11 @@ class ZpmInstanceState:
     queue_flushed: bool = False
     last_config_mtime: float = 0.0
     last_configured_nodes: frozenset[int] = frozenset()
-    # Last published pending-report fingerprint; gates when the pending
-    # notification re-fires so a drifting wake estimate doesn't re-bubble it.
-    # ``None`` (a fresh instance, e.g. after an entry reload) is distinct from
-    # the empty-tuple "nothing pending" signature, so the first reconcile after
-    # a reset always reconciles the notification -- dismissing a stale pending
-    # PN that converged while the instance was gone.
-    last_pending_sig: _PendingSig | None = None
+    # When the pending report was last published, gating its periodic
+    # re-publish. ``None`` means nothing is currently published (a fresh
+    # instance, or the report was dismissed on convergence / disabled), so the
+    # next reconcile with something pending publishes promptly.
+    last_pending_publish_dt: datetime | None = None
     last_reconcile_dt: datetime | None = None
     armed_interval_minutes: int = 0
     cancel_timer: Callable[[], None] | None = field(default=None, repr=False)
@@ -170,6 +164,9 @@ _SCHEMA = vol.Schema(
         vol.Required("reconcile_interval_minutes_raw"): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=10080)
         ),
+        vol.Required("pending_report_interval_hours_raw"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=8760)
+        ),
         vol.Required("debug_logging_raw"): cv.boolean,
     },
     extra=vol.ALLOW_EXTRA,
@@ -209,6 +206,7 @@ async def _async_argparse(
         trigger_id=data["trigger_id"],
         config_file_path=data["config_file_path"],
         reconcile_interval_minutes=data["reconcile_interval_minutes_raw"],
+        pending_report_interval_hours=data["pending_report_interval_hours_raw"],
         debug_logging=data["debug_logging_raw"],
     )
 
@@ -226,6 +224,7 @@ async def _async_service_layer(
     trigger_id: str,
     config_file_path: str,
     reconcile_interval_minutes: int,
+    pending_report_interval_hours: int,
     debug_logging: bool,
 ) -> None:
     """Arm the timer + reconnect hook, then reconcile under the lock."""
@@ -246,6 +245,7 @@ async def _async_service_layer(
             now=now,
             trigger_id=trigger_id,
             config_file_path=config_file_path,
+            pending_report_interval_hours=pending_report_interval_hours,
             debug_logging=debug_logging,
         )
 
@@ -257,6 +257,7 @@ async def _do_reconcile(
     now: datetime,
     trigger_id: str,
     config_file_path: str,
+    pending_report_interval_hours: int,
     debug_logging: bool,
 ) -> None:
     from . import source
@@ -375,15 +376,23 @@ async def _do_reconcile(
         )
         state.last_configured_nodes = configured
 
-    # Pending report: re-fire only when the pending set or its values change,
-    # NOT when a per-device wake estimate drifts. A fleet of sleeping devices
-    # waking on their own schedules advances ``last_awake`` (and so the body's
-    # "next wake ~..." annotations) on most reconciles; gating on the content
-    # fingerprint keeps that from re-bubbling the notification every cycle,
-    # while convergence progress and config edits still re-publish it.
-    pending_sig = _pending_signature(rep)
-    if pending_sig != state.last_pending_sig:
-        pending_body = notification.render_report_body(rep, pending_only=True)
+    # Pending report: a periodic status. Publish as soon as a parameter is
+    # pending, then re-publish on ``pending_report_interval_hours`` while it
+    # stays pending -- gating on the interval rather than the content keeps a
+    # per-device wake estimate (which drifts as sleeping devices wake) from
+    # re-bubbling the notification every reconcile. Dismiss the moment the
+    # fleet converges or the report is disabled (interval 0); the dismiss runs
+    # unconditionally (the dispatcher no-ops it when no report is active) so a
+    # stale pending PN that converged while the instance state was gone -- e.g.
+    # an entry reload -- is cleared on the first reconcile after.
+    pending_body = notification.render_report_body(rep, pending_only=True)
+    has_pending = bool(pending_body)
+    if _pending_publish_due(
+        has_pending=has_pending,
+        interval_hours=pending_report_interval_hours,
+        last_publish=state.last_pending_publish_dt,
+        now=now,
+    ):
         await _dispatch_single(
             hass,
             prefix,
@@ -391,9 +400,20 @@ async def _do_reconcile(
             instance_id,
             "Z-Wave Parameter Manager: pending configuration",
             pending_body,
-            active=bool(pending_body),
+            active=True,
         )
-        state.last_pending_sig = pending_sig
+        state.last_pending_publish_dt = now
+    elif not has_pending or pending_report_interval_hours <= 0:
+        await _dispatch_single(
+            hass,
+            prefix,
+            "pending",
+            instance_id,
+            "Z-Wave Parameter Manager: pending configuration",
+            "",
+            active=False,
+        )
+        state.last_pending_publish_dt = None
 
     # Unused-config report: configured policies / settings that landed on no
     # device (typos, mis-scoped selectors, stale concepts). Re-evaluated every
@@ -539,32 +559,26 @@ def _issue_line(issue: PlanIssue) -> str:
     )
 
 
-def _pending_signature(report: ConvergenceReport) -> _PendingSig:
-    """A stable fingerprint of WHAT is pending -- each pending param's node,
-    device-param label, and desired / actual values + units -- deliberately
-    excluding the per-device wake-time annotations the body also carries.
+def _pending_publish_due(
+    *,
+    has_pending: bool,
+    interval_hours: int,
+    last_publish: datetime | None,
+    now: datetime,
+) -> bool:
+    """Whether to (re)publish the pending report this cycle.
 
-    The pending notification re-fires only when this changes, so a device
-    converging (its param drops out) or a new mismatch (a param appears)
-    re-publishes it, but a ``next wake ~...`` estimate ticking forward as a
-    sleeping device wakes does not. Sorted so report-order changes don't
-    register as content changes.
+    True when a parameter is pending, the report is enabled
+    (``interval_hours`` > 0), and either nothing is currently published (so
+    the first pending param publishes promptly) or the interval has elapsed
+    since the last publish (the periodic refresh). A drifting wake estimate
+    alone never satisfies this -- only the clock does.
     """
-
-    return tuple(
-        sorted(
-            (
-                dc.device.node_id,
-                p.param,
-                p.desired,
-                p.actual or "",
-                p.desired_unit,
-                p.actual_unit,
-            )
-            for dc in report.pending_devices
-            for p in dc.pending_params
-        )
-    )
+    if not has_pending or interval_hours <= 0:
+        return False
+    if last_publish is None:
+        return True
+    return now - last_publish >= timedelta(hours=interval_hours)
 
 
 def _pending_summary(pending: dict[tuple[int, ParamId], int]) -> list[str]:

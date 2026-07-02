@@ -28,9 +28,10 @@ re-sending the same command on every pass.
 - Issues each command at most once per pending cycle; re-issues only after the
   Z-Wave JS add-on restarts (which flushes the device queue).
 - A pending report tracks devices that have not yet applied their writes (with
-  each device's wake interval and estimated next wake); a desired-config
-  report fires when the policy file changes or a new device becomes
-  configured.
+  each device's wake interval and estimated next wake); it appears as soon as
+  something is pending, refreshes on a configurable interval, and clears on
+  full convergence. A desired-config report fires when the policy file changes
+  or a new device becomes configured.
 - An unused-config report flags policies and settings that match no device --
   a selector typo, a mis-scoped policy, or a setting no matched device
   exposes.
@@ -48,17 +49,19 @@ re-sending the same command on every pass.
 1. In **Settings > Automations & Scenes > Blueprints**, create an automation
    from the **Z-Wave Parameter Manager** blueprint.
 2. Set the **Policy file path** (default `zwave_parameter_manager.yaml`,
-   relative to `/config`) and, optionally, the reconcile interval.
+   relative to `/config`) and, optionally, the reconcile and pending-report
+   intervals.
 3. Create the policy file (see below) and save it. ZPM picks up edits on its
    next reconcile.
 
 ## Configuration
 
-| Input                        | Default                        | Description                                                                                          |
-| ---------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Policy file path             | `zwave_parameter_manager.yaml` | Path to the policy YAML, relative to `/config` (absolute paths accepted). A missing file means none. |
-| Reconcile interval (minutes) | `5`                            | How often to re-read the live fleet, pick up newly-joined devices, and refresh the pending report.   |
-| Debug logging                | `false`                        | Emit one `WARNING` summary line per reconcile to **Settings > System > Logs**.                       |
+| Input                           | Default                        | Description                                                                                                                               |
+| ------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy file path                | `zwave_parameter_manager.yaml` | Path to the policy YAML, relative to `/config` (absolute paths accepted). A missing file means none.                                      |
+| Reconcile interval (minutes)    | `5`                            | How often to re-read the live fleet, pick up newly-joined devices, and re-issue not-yet-applied writes.                                   |
+| Pending report interval (hours) | `24`                           | How often to re-publish the pending-configuration notification while devices are still waiting to apply. `0` disables the pending report. |
+| Debug logging                   | `false`                        | Emit one `WARNING` summary line per reconcile to **Settings > System > Logs**.                                                            |
 
 ## Usage notes
 
@@ -151,12 +154,13 @@ de-duplicating its queue.
 ### Reporting
 
 The pending report (`...__pending`) lists every device still waiting to apply
-its writes and dismisses on full convergence. It re-publishes only when the
-set of pending parameters or their values actually changes -- a device
-converging, a new mismatch appearing -- not on every reconcile: its body
+its writes. It appears as soon as a parameter is pending and dismisses on full
+convergence; while anything stays pending it re-publishes on the **Pending
+report interval (hours)** cadence (default 24, `0` disables it). Its body
 annotates each sleeping device with an estimated next wake, and that estimate
-drifts forward every time a device wakes, so re-publishing on each reconcile
-would bubble the notification to the top of the panel continuously. The
+drifts forward every time a device wakes, so publishing on an interval rather
+than every reconcile keeps the notification from bubbling to the top of the
+panel continuously; a longer interval quiets a slow-waking fleet further. The
 desired-config report (`...__desired`) re-fires only when the policy file
 changes or a newly-configured node appears, so convergence progress does not
 re-bubble it. The unused-config report (`...__unused`) lists each policy or

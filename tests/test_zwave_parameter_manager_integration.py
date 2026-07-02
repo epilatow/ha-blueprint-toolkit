@@ -206,12 +206,15 @@ def _capture_zwave_services(hass: Any) -> list[tuple[str, dict[str, Any]]]:
 
 def _payload(
     config_file_path: str = "zwave_parameter_manager.yaml",
+    *,
+    pending_report_interval_hours: int = 24,
 ) -> dict[str, Any]:
     return {
         "instance_id": "automation.zpm_test",
         "trigger_id": "manual",
         "config_file_path": config_file_path,
         "reconcile_interval_minutes_raw": 5,
+        "pending_report_interval_hours_raw": pending_report_interval_hours,
         "debug_logging_raw": False,
     }
 
@@ -257,9 +260,9 @@ async def test_reconcile_dispatches_wake_interval_write(hass: Any) -> None:
 async def test_pending_notification_dismisses_on_convergence(
     hass: Any,
 ) -> None:
-    # The pending notification appears while a write is unconverged, and the
-    # convergence-gated re-publish dismisses it once the device applies the
-    # write rather than leaving it stuck on the panel.
+    # The pending notification appears as soon as a write is unconverged, and
+    # is dismissed once the device applies the write rather than being left
+    # stuck on the panel -- convergence dismisses regardless of the interval.
     _write_policy(hass, _WAKE_POLICY)
     _install_zwave_js(hass)
     _capture_zwave_services(hass)
@@ -277,6 +280,70 @@ async def test_pending_notification_dismisses_on_convergence(
     # Simulate the sleeping device waking and applying the write: swap in a
     # node already at the policy's target, so the next reconcile sees it
     # converged -- the pending set empties and the notification is dismissed.
+    driver = hass.config_entries.async_entries("zwave_js")[
+        0
+    ].runtime_data.client.driver
+    converged = _node(3600)
+    driver.controller.nodes = {converged.node_id: converged}
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+    notifs = _async_get_or_create_notifications(hass)
+    assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
+
+
+async def test_pending_report_disabled_when_interval_zero(hass: Any) -> None:
+    # A pending-report interval of 0 turns the report off: an unconverged
+    # write still dispatches, but no pending notification is published.
+    _write_policy(hass, _WAKE_POLICY)
+    _install_zwave_js(hass)
+    _capture_zwave_services(hass)
+    await _setup_integration(hass)
+
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE,
+        _payload(pending_report_interval_hours=0),
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    notifs = _async_get_or_create_notifications(hass)
+    assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
+
+
+async def test_stale_pending_dismissed_after_state_reset(hass: Any) -> None:
+    # A pending report published before an entry reload must be dismissed on
+    # the first reconcile after the reload if the fleet converged during the
+    # gap. In-memory state is volatile across a reload, so a fresh instance has
+    # no memory that it published (``last_pending_publish_dt is None``) -- the
+    # reconcile must still clear the stale notification rather than gate the
+    # dismiss on having published it in this process.
+    from custom_components.blueprint_toolkit.zwave_parameter_manager import (
+        handler,
+    )
+
+    _write_policy(hass, _WAKE_POLICY)
+    _install_zwave_js(hass)
+    _capture_zwave_services(hass)
+    await _setup_integration(hass)
+
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+    notifs = _async_get_or_create_notifications(hass)
+    assert any(nid.endswith("__pending") for nid in notifs), list(notifs)
+
+    # Reproduce the post-reload fresh-instance condition without tearing down
+    # the timer: clear the "we published" memory, then converge the fleet.
+    (state,) = handler._instances(hass).values()
+    state.last_pending_publish_dt = None
     driver = hass.config_entries.async_entries("zwave_js")[
         0
     ].runtime_data.client.driver

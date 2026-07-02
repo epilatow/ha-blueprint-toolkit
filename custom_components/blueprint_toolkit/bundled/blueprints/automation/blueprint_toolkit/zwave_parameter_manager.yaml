@@ -42,6 +42,25 @@ blueprint:
           mode: box
           unit_of_measurement: minutes
 
+    pending_report_interval_hours:
+      name: Pending report interval (hours)
+      description: >
+        How often to re-publish the pending-configuration
+        notification while any device is still waiting to
+        apply its writes. The report appears as soon as
+        something is pending and clears on full
+        convergence; this only sets the periodic refresh in
+        between (a longer interval keeps a slow-waking fleet
+        from re-bubbling it). Set to 0 to disable the
+        pending report entirely.
+      default: 24
+      selector:
+        number:
+          min: 0
+          max: 8760
+          mode: box
+          unit_of_measurement: hours
+
     debug_logging:
       name: Debug logging
       description: >
@@ -69,6 +88,7 @@ actions:
       trigger_id: "{{ trigger_id | default('manual', true) }}"
       config_file_path: !input config_file_path
       reconcile_interval_minutes_raw: !input reconcile_interval_minutes
+      pending_report_interval_hours_raw: !input pending_report_interval_hours
       debug_logging_raw: !input debug_logging
 
 # Periodic reconciles, restart recovery, and reload
