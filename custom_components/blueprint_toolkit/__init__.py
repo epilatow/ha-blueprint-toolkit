@@ -322,6 +322,19 @@ async def async_setup_entry(
     except (OSError, ValueError) as err:
         _LOGGER.warning("CLI token provisioning failed: %s", err)
 
+    # Always-on Z-Wave driver-session monitor: keeps zwave-js-info.json's
+    # last_reset_at current so the ZPM handler + the CLI agree on when the
+    # driver's wake-up queue was last flushed. Runs regardless of whether any
+    # Z-Wave automation is configured; no-ops until the zwave_js driver loads.
+    from . import session_monitor
+    from .zwave import driver_session
+
+    entry.async_on_unload(
+        await session_monitor.async_start(
+            hass, config_root / driver_session.INFO_REL_PATH
+        )
+    )
+
     # Per-port service handlers. Lazy-imported because each
     # handler module pulls in ``voluptuous`` and
     # ``homeassistant`` at module scope.

@@ -126,6 +126,28 @@ bucket stores:
 Cross-reload state (Repairs flow handoff for force-confirmed destinations)
 lives separately at `hass.data[DOMAIN]` because it must survive entry unload.
 
+### Z-Wave driver-session monitor
+
+`session_monitor.py` runs one always-on, component-level task (started from
+`async_setup_entry`, not per handler): every minute it samples the in-process
+`zwave_js` driver's controller statistics (`messages_rx` / `messages_tx`) and
+folds them into `/config/blueprint_toolkit/zwave-js-info.json` via the pure
+`zwave/driver_session.py`. Those counters reset to zero when the Z-Wave JS
+driver (the `core_zwave_js` add-on) restarts -- the event that flushes each
+sleeping device's queued commands -- so a live counter below the stored one
+means a restart happened, and `driver_session.refresh` stamps `last_reset_at`.
+
+The record is the shared source of truth for "was the driver's queue flushed
+since I issued a command": the ZPM handler and the CLI both read
+`last_reset_at` (and ZRM will) so an issued-but-unconverged write is treated
+as still-queued only while it was issued after the last reset. The monitor
+runs regardless of whether any Z-Wave automation is configured (so a CLI-only
+user still gets a current `last_reset_at`) and no-ops until the `zwave_js`
+driver is loaded and its statistics are populated. The reset time is decoupled
+from any one consumer's sampling cadence: a consumer that runs rarely (the
+CLI, every few days) still sees a restart the counter has since climbed back
+past.
+
 ## Standalone blueprints
 
 Some automations are simple enough that the three-layer split buys nothing --
