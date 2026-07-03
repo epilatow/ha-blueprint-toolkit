@@ -73,21 +73,20 @@ automations. Live in the bundled payload and run from the HA host.
   configured priority routes, and opt-in stat columns (RX/TX counts, drop
   counts, drop rates, RTT, battery, status, neighbors, firmware, etc.).
   Historical columns pull from HA's recorder; current state comes from
-  zwave-js-ui. `zwavectl param-manager config {desired|pending|unused}` plans
-  the live fleet against the Z-Wave Parameter Manager policy file (the same
-  one the blueprint uses; override with `--config`) and prints the writes a
-  policy resolves (`desired`), the not-yet-converged subset (`pending`), or
-  the policies / settings that matched no device (`unused`). Each row shows
-  the policy's `desired` value next to the device's `dev-current` and
+  zwave-js-ui. `zwavectl param-manager {desired|pending|unused}` plans the
+  live fleet against the Z-Wave Parameter Manager policy file (the same one
+  the blueprint uses; override with `--config`) and prints the writes a policy
+  resolves (`desired`), the not-yet-converged subset (`pending`), or the
+  policies / settings that matched no device (`unused`). Each row shows the
+  policy's `desired` value next to the device's `dev-current` and
   `dev-pending` values; `--cols` reshapes the table (units, the device
   parameter identity, wake timing, and more are opt-in, with `defaults` /
   `all` aliases). Self-bootstraps a venv on first run; see
-  `zwavectl list --help` and `zwavectl param-manager config desired --help`
-  for each command's column list and aliases. Host requirements: the
-  **Terminal & SSH** add-on must be installed and configured to install
-  `python3`, `py3-pip`, and `py3-websockets` -- add them to the add-on's
-  `apks` option (its Configuration tab) so they persist across add-on
-  restarts:
+  `zwavectl list --help` and `zwavectl param-manager desired --help` for each
+  command's column list and aliases. Host requirements: the **Terminal & SSH**
+  add-on must be installed and configured to install `python3`, `py3-pip`, and
+  `py3-websockets` -- add them to the add-on's `apks` option (its
+  Configuration tab) so they persist across add-on restarts:
 
   ```yaml
   apks:

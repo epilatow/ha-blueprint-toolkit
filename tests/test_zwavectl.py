@@ -713,7 +713,7 @@ class TestBootstrapVenv:
         assert stamp.read_text() == "\n".join(zc.VENV_DEPS)
 
     def test_venv_deps_cover_the_pipeline_yaml_import(self) -> None:
-        # param-manager config imports the integration pipeline, which loads
+        # the param-manager views import the integration pipeline, which loads
         # the policy file with PyYAML; without it in the bootstrapped host
         # venv the command crashes with ModuleNotFoundError at import time.
         names = {
@@ -1309,29 +1309,23 @@ class TestArgParser:
         assert args.cmd1 == "list"
         assert args.cols == "node,device"
 
-    def test_param_manager_config_mode_path(self) -> None:
-        # Generic numbered levels carry the full path: cmd1 / cmd2 / cmd3.
-        args = zc.build_parser().parse_args(
-            ["param-manager", "config", "pending"]
-        )
-        assert (args.cmd1, args.cmd2, args.cmd3) == (
-            "param-manager",
-            "config",
-            "pending",
-        )
+    def test_param_manager_mode_path(self) -> None:
+        # Generic numbered levels carry the full path: cmd1 / cmd2.
+        args = zc.build_parser().parse_args(["param-manager", "pending"])
+        assert (args.cmd1, args.cmd2) == ("param-manager", "pending")
 
-    def test_config_rejects_unknown_mode(self) -> None:
+    def test_param_manager_rejects_unknown_mode(self) -> None:
         with pytest.raises(SystemExit):
-            zc.build_parser().parse_args(["param-manager", "config", "bogus"])
+            zc.build_parser().parse_args(["param-manager", "bogus"])
 
     def test_dispatch_keys_match_callbacks(self) -> None:
         # Every leaf path the parser reaches has a callback, and vice
         # versa -- a drift here is a missing or dangling entry point.
         assert set(zc.COMMAND_CALLBACKS) == {
             "list",
-            "param-manager config desired",
-            "param-manager config pending",
-            "param-manager config unused",
+            "param-manager desired",
+            "param-manager pending",
+            "param-manager unused",
         }
 
 
@@ -1366,16 +1360,9 @@ class TestCli:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        self._missing(monkeypatch, capsys, ["param-manager"], "config")
-
-    def test_missing_mode_prints_config_help(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        self._missing(
-            monkeypatch, capsys, ["param-manager", "config"], "desired"
-        )
+        # ``param-manager`` with no view prints its help, which lists the
+        # views (desired / pending / unused).
+        self._missing(monkeypatch, capsys, ["param-manager"], "desired")
 
     def test_invalid_mode_is_a_usage_error_not_help(
         self,
@@ -1384,7 +1371,7 @@ class TestCli:
     ) -> None:
         # An INVALID subcommand is argparse's usage error on stderr, distinct
         # from the full-help path a missing subcommand takes.
-        self._argv(monkeypatch, ["param-manager", "config", "bogus"])
+        self._argv(monkeypatch, ["param-manager", "bogus"])
         with pytest.raises(SystemExit) as exc:
             zc.cli()
         assert exc.value.code == 2
@@ -1402,7 +1389,7 @@ class TestCli:
             return 0
 
         monkeypatch.setattr(zc, "_param_manager_config", fake)
-        self._argv(monkeypatch, ["param-manager", "config", "unused"])
+        self._argv(monkeypatch, ["param-manager", "unused"])
         assert zc.cli() == 0
         assert seen == ["unused"]
 

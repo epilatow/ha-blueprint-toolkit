@@ -237,7 +237,7 @@ VENV_DEPS = [
     # down to what this client parses (capped at MAX_SERVER_SCHEMA_VERSION),
     # and the integration code runs here against the client it was tested with.
     "zwave-js-server-python==0.73.0",
-    # param-manager config: the shared pipeline loads the policy file with
+    # param-manager views: the shared pipeline loads the policy file with
     # PyYAML, so the host venv must carry it.
     "pyyaml",
 ]
@@ -2953,7 +2953,7 @@ def _action_subparsers(
 
 def build_parser() -> _StrictArgumentParser:
     """Build the command tree: ``list`` (the network view) and ``param-manager
-    config {desired|pending|unused}`` (the Parameter Manager views).
+    {desired|pending|unused}`` (the Parameter Manager views).
 
     Action groups are added via ``_action_subparsers`` so ``cli`` can dispatch
     and print help generically.
@@ -2979,27 +2979,21 @@ def build_parser() -> _StrictArgumentParser:
         help="Z-Wave Parameter Manager views",
     )
     pm_sub = _action_subparsers(pm_parser, level=2)
-
-    config_parser = pm_sub.add_parser(
-        "config",
-        help="show the desired / pending / unused parameter config",
-    )
-    config_sub = _action_subparsers(config_parser, level=3)
     _add_pm_config_args(
-        config_sub.add_parser(
+        pm_sub.add_parser(
             "desired",
             help="every device + param a policy resolves a write for",
         ),
         with_cols=True,
     )
     _add_pm_config_args(
-        config_sub.add_parser(
+        pm_sub.add_parser(
             "pending", help="only the not-yet-converged device + params"
         ),
         with_cols=True,
     )
     _add_pm_config_args(
-        config_sub.add_parser(
+        pm_sub.add_parser(
             "unused", help="policies / settings that match no device"
         ),
         with_cols=False,
@@ -3049,9 +3043,9 @@ def _add_api_key_arg(parser: argparse.ArgumentParser) -> None:
 
 COMMAND_CALLBACKS: dict[str, Callable[..., int]] = {
     "list": do_list,
-    "param-manager config desired": do_pm_config_desired,
-    "param-manager config pending": do_pm_config_pending,
-    "param-manager config unused": do_pm_config_unused,
+    "param-manager desired": do_pm_config_desired,
+    "param-manager pending": do_pm_config_pending,
+    "param-manager unused": do_pm_config_unused,
 }
 
 
