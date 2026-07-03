@@ -215,6 +215,9 @@ LEGACY_API_KEY_FILE = pathlib.Path("/root/api-key")
 # file the blueprint targets (its ``config_file_path`` input defaults to
 # ``zwave_parameter_manager.yaml``, which HA resolves under ``/config``).
 PM_CONFIG_DEFAULT = pathlib.Path("/config/zwave_parameter_manager.yaml")
+# The HA config dir the shared driver-session record + pending store live
+# under (``apply`` reads/writes them). A constant so tests can redirect it.
+CONFIG_DIR = pathlib.Path("/config")
 HA_URL = "http://homeassistant:8123"
 ZWAVE_URL = "http://core-zwave-js:8091"
 # The zwave-js *server* (not the 8091 zwave-js-ui socket): its
@@ -2243,11 +2246,13 @@ def _ensure_integration_importable() -> None:
         sys.path.insert(0, cc_dir)
 
 
-async def _fetch_zwave_server_nodes() -> list[dict[str, Any]]:
-    """The zwave-js server's live per-node state via one start_listening.
+async def _fetch_zwave_server_state() -> dict[str, Any]:
+    """The zwave-js server's full live state via one start_listening.
 
-    Raw websocket to 3000; the node dicts carry the value metadata the param
-    resolver needs (which the 8091 getNodes() snapshot omits).
+    Raw websocket to 3000; carries ``nodes`` (with the value metadata the param
+    resolver needs, which the 8091 getNodes() snapshot omits) and
+    ``controller`` (identity + the ``statistics`` counters the driver-session
+    record samples).
     """
 
     import websockets  # noqa: PLC0415 - needs venv
@@ -2286,8 +2291,14 @@ async def _fetch_zwave_server_nodes() -> list[dict[str, Any]]:
         while True:
             msg = await recv()
             if msg.get("messageId") == "sl":
-                nodes: list[dict[str, Any]] = msg["result"]["state"]["nodes"]
-                return nodes
+                return cast("dict[str, Any]", msg["result"]["state"])
+
+
+async def _fetch_zwave_server_nodes() -> list[dict[str, Any]]:
+    """The zwave-js server's live per-node state via one start_listening."""
+    state = await _fetch_zwave_server_state()
+    nodes: list[dict[str, Any]] = state["nodes"]
+    return nodes
 
 
 async def _fetch_state_device_classes(api_key: str) -> dict[str, str | None]:
@@ -2475,6 +2486,14 @@ async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:
     """Acquire and assemble the param-manager fleet from the live sources."""
 
     node_dicts = await _fetch_zwave_server_nodes()
+    return await _assemble_param_manager_fleet(api_key, node_dicts)
+
+
+async def _assemble_param_manager_fleet(
+    api_key: str, node_dicts: list[dict[str, Any]]
+) -> list[NodeRead]:
+    """Assemble the fleet from pre-fetched node dicts + the HA registries."""
+
     entities, devices_by_id, areas_by_id = await fetch_ha_registries(api_key)
     device_classes = await _fetch_state_device_classes(api_key)
     contexts = _node_contexts(
@@ -2843,6 +2862,240 @@ def do_pm_config_unused(
     )
 
 
+async def _read_apply_inputs(
+    api_key: str,
+) -> tuple[list[NodeRead], Any, Any, Any]:
+    """One start_listening: the fleet plus the controller's home_id + the
+    message counters the driver-session record samples."""
+
+    state = await _fetch_zwave_server_state()
+    fleet = await _assemble_param_manager_fleet(api_key, state["nodes"])
+    controller = state.get("controller") or {}
+    stats = controller.get("statistics") or {}
+    return (
+        fleet,
+        controller.get("homeId"),
+        stats.get("messagesRX"),
+        stats.get("messagesTX"),
+    )
+
+
+def _read_apply_inputs_sync(
+    api_key: str,
+) -> tuple[list[NodeRead], Any, Any, Any]:
+    import aiohttp  # noqa: PLC0415 - needs venv
+    import websockets.exceptions as ws_exc  # noqa: PLC0415 - needs venv
+
+    try:
+        return asyncio.run(_read_apply_inputs(api_key))
+    except (
+        TimeoutError,
+        OSError,
+        RuntimeError,
+        aiohttp.ClientError,
+        ws_exc.WebSocketException,
+        ValueError,
+        KeyError,
+    ) as e:
+        raise _FleetReadError(str(e) or type(e).__name__) from e
+
+
+def _write_service_payload(write: PlannedWrite) -> tuple[str, dict[str, Any]]:
+    """The ``zwave_js`` service + data for one planned write, mirroring the
+    handler's dispatch: a whole Configuration-CC parameter through
+    ``set_config_parameter``, a partial/bitmask param or a non-config CC
+    (e.g. the wake-up interval) through ``set_value``."""
+
+    from blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: PLC0415, E501
+        CommandClass,
+    )
+
+    pid = write.id
+    if (
+        pid.command_class == int(CommandClass.CONFIGURATION)
+        and pid.property_key is None
+    ):
+        return "set_config_parameter", {
+            "device_id": write.device.device_id,
+            "endpoint": 0,
+            "parameter": pid.property_,
+            "value": write.value,
+        }
+    data: dict[str, Any] = {
+        "device_id": write.device.device_id,
+        "command_class": int(pid.command_class),
+        "endpoint": 0,
+        "property": pid.property_,
+        "value": write.value,
+    }
+    if pid.property_key is not None:
+        data["property_key"] = pid.property_key
+    return "set_value", data
+
+
+async def _issue_writes(api_key: str, writes: list[PlannedWrite]) -> None:
+    import aiohttp  # noqa: PLC0415 - needs venv
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with aiohttp.ClientSession() as session:
+        for write in writes:
+            service, data = _write_service_payload(write)
+            url = f"{HA_URL}/api/services/zwave_js/{service}"
+            async with session.post(url, headers=headers, json=data) as resp:
+                if resp.status >= 400:
+                    body = (await resp.text())[:200]
+                    raise _FleetReadError(
+                        f"{service} for {data['device_id']} failed "
+                        f"(HTTP {resp.status}): {body}"
+                    )
+
+
+def _issue_writes_sync(api_key: str, writes: list[PlannedWrite]) -> None:
+    import aiohttp  # noqa: PLC0415 - needs venv
+
+    try:
+        asyncio.run(_issue_writes(api_key, writes))
+    except (TimeoutError, OSError, aiohttp.ClientError) as e:
+        raise _FleetReadError(str(e) or type(e).__name__) from e
+
+
+def _apply_write_line(write: PlannedWrite) -> str:
+    pid = write.id
+    key = f"cc{pid.command_class}/{pid.property_}"
+    if pid.property_key is not None:
+        key += f"[{pid.property_key}]"
+    return (
+        f"node {write.device.node_id} {write.device.name}: "
+        f"{key} = {write.value}"
+    )
+
+
+def _param_manager_apply(
+    *,
+    config: str = "",
+    api_key_file: str = "",
+    dry_run: bool = False,
+    force: bool = False,
+) -> int:
+    """Issue the not-yet-converged writes a policy resolves to the devices.
+
+    Plans the fleet exactly like ``pending``, then -- unless ``--dry-run`` --
+    dispatches the writes through the HA ``zwave_js`` services. Suppresses any
+    write already recorded in the shared pending store (unless ``--force``), so
+    it never re-queues a command the automation already issued, and records the
+    ones it does issue so the automation won't re-issue them either.
+    """
+
+    config_path = pathlib.Path(config) if config else PM_CONFIG_DEFAULT
+    api_key = _load_api_key(api_key_file)
+    if api_key is None:
+        return 2
+    if not config_path.exists():
+        print(f"Policy file not found: {config_path}", file=sys.stderr)
+        return 2
+
+    _ensure_integration_importable()
+    from blueprint_toolkit.zwave import driver_session  # noqa: PLC0415
+    from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415
+        apply,
+        pending_store,
+        pipeline,
+    )
+
+    policies, config_errors = pipeline.load_policies(config_path)
+    if config_errors:
+        print("Policy config errors:", file=sys.stderr)
+        for err in config_errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 2
+    mapping, mapping_err = pipeline.load_mapping()
+    if mapping is None:
+        print(f"Error loading mapping: {mapping_err}", file=sys.stderr)
+        return 2
+
+    try:
+        fleet, home_id, rx, tx = _read_apply_inputs_sync(api_key)
+    except _FleetReadError as e:
+        print(f"Error: could not read the Z-Wave fleet: {e}", file=sys.stderr)
+        return 4
+
+    plan, _report = pipeline.plan_and_report(fleet, policies, mapping)
+    actuals = {r.device.node_id: r.actuals for r in fleet}
+    now = datetime.now(UTC)
+
+    # Refresh the shared driver-session record so ``last_reset_at`` is current
+    # even if the always-on monitor hasn't sampled since a restart.
+    info_path = CONFIG_DIR / driver_session.INFO_REL_PATH
+    pending_path = CONFIG_DIR / pending_store.PENDING_REL_PATH
+    if isinstance(home_id, int) and isinstance(rx, int) and isinstance(tx, int):
+        session = driver_session.refresh(
+            info_path,
+            home_id=home_id,
+            messages_rx=rx,
+            messages_tx=tx,
+            now=now,
+        )
+        last_reset_at = session.last_reset_at
+    else:
+        home_id = None
+        last_reset_at = now
+
+    if home_id is None or force:
+        valid_pending: dict[tuple[int, ParamId], int] = {}
+    else:
+        valid_pending = pending_store.read_valid(
+            pending_path, home_id=home_id, last_reset_at=last_reset_at
+        )
+
+    decision = apply.select_writes(plan, actuals, valid_pending)
+    issuable = [w for w in decision.writes if w.device.device_id is not None]
+    skipped = len(decision.writes) - len(issuable)
+
+    for write in issuable:
+        print(_apply_write_line(write))
+    if skipped:
+        print(
+            f"({skipped} write(s) skipped: node has no HA device id)",
+            file=sys.stderr,
+        )
+
+    if dry_run:
+        print(f"Dry run: would issue {len(issuable)} write(s).")
+        return 0
+
+    if issuable:
+        try:
+            _issue_writes_sync(api_key, issuable)
+        except _FleetReadError as e:
+            print(f"Error: could not issue writes: {e}", file=sys.stderr)
+            return 4
+
+    if home_id is not None:
+        plan_keys = frozenset((w.device.node_id, w.id) for w in plan.writes)
+        pending_store.merge(
+            pending_path,
+            home_id=home_id,
+            last_reset_at=last_reset_at,
+            plan_keys=plan_keys,
+            decision_pending=decision.pending,
+            now=now,
+        )
+
+    print(f"Issued {len(issuable)} write(s); {len(decision.pending)} pending.")
+    return 0
+
+
+def do_pm_apply(
+    *, config: str, dry_run: bool, force: bool, api_key_file: str
+) -> int:
+    return _param_manager_apply(
+        config=config,
+        dry_run=dry_run,
+        force=force,
+        api_key_file=api_key_file,
+    )
+
+
 # --- Argparse: strict subparsers + auto-help on a missing action ----
 # Inlined from epilatow/utils ``src/common/argparse_ext.py`` -- this script
 # ships standalone to the HA host and cannot import shared first-party code.
@@ -2860,6 +3113,7 @@ if TYPE_CHECKING:
         ParamConvergence,
     )
     from blueprint_toolkit.zwave_parameter_manager.logic import (
+        ParamId,
         Plan,
         PlannedWrite,
     )
@@ -2953,7 +3207,7 @@ def _action_subparsers(
 
 def build_parser() -> _StrictArgumentParser:
     """Build the command tree: ``list`` (the network view) and ``param-manager
-    {desired|pending|unused}`` (the Parameter Manager views).
+    {desired|pending|unused|apply}`` (the Parameter Manager views + apply).
 
     Action groups are added via ``_action_subparsers`` so ``cli`` can dispatch
     and print help generically.
@@ -2998,6 +3252,11 @@ def build_parser() -> _StrictArgumentParser:
         ),
         with_cols=False,
     )
+    _add_pm_apply_args(
+        pm_sub.add_parser(
+            "apply", help="issue the not-yet-converged writes to the devices"
+        )
+    )
     return parser
 
 
@@ -3026,9 +3285,35 @@ def _add_pm_config_args(
         parser.add_argument("--cols", default="", help=_PM_COLS_HELP)
 
 
+def _add_pm_apply_args(parser: argparse.ArgumentParser) -> None:
+    """Attach the ``apply`` flags: the policy file plus ``--dry-run`` /
+    ``--force``."""
+
+    parser.add_argument(
+        "--config",
+        default="",
+        metavar="PATH",
+        help=(
+            "policy file to plan against "
+            "(default: /config/zwave_parameter_manager.yaml)"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show the writes that would be issued without issuing them",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-issue every mismatched write, ignoring the pending store",
+    )
+    _add_api_key_arg(parser)
+
+
 def _add_api_key_arg(parser: argparse.ArgumentParser) -> None:
-    """Attach ``--api-key-file`` (shared by ``list`` and param-manager
-    config)."""
+    """Attach ``--api-key-file`` (shared by ``list`` and the param-manager
+    views)."""
 
     parser.add_argument(
         "--api-key-file",
@@ -3046,6 +3331,7 @@ COMMAND_CALLBACKS: dict[str, Callable[..., int]] = {
     "param-manager desired": do_pm_config_desired,
     "param-manager pending": do_pm_config_pending,
     "param-manager unused": do_pm_config_unused,
+    "param-manager apply": do_pm_apply,
 }
 
 

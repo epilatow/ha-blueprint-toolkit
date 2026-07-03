@@ -1326,6 +1326,7 @@ class TestArgParser:
             "param-manager desired",
             "param-manager pending",
             "param-manager unused",
+            "param-manager apply",
         }
 
 
@@ -1976,6 +1977,230 @@ class TestParamManagerFleet:
         # A named inert setting shows its concept; a whole inert policy "-".
         assert lines[2].split()[:2] == ["q-motion", "motion_sensitivity"]
         assert lines[3].split()[:2] == ["dead-policy", "-"]
+
+
+# --- param-manager apply ---------------------------------------
+
+
+def _apply_write(
+    cc: int,
+    prop: int | str,
+    pkey: int | None,
+    *,
+    value: int = 8,
+    node_id: int = 5,
+    device_id: str | None = "dev1",
+) -> Any:
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    return SimpleNamespace(
+        id=SimpleNamespace(command_class=cc, property_=prop, property_key=pkey),
+        device=SimpleNamespace(
+            device_id=device_id, node_id=node_id, name="Hall"
+        ),
+        value=value,
+    )
+
+
+class TestApplyPayload:
+    def test_config_param_uses_set_config_parameter(self) -> None:
+        zc._ensure_integration_importable()
+        service, data = zc._write_service_payload(
+            _apply_write(112, 12, None, value=8)
+        )
+        assert service == "set_config_parameter"
+        assert data == {
+            "device_id": "dev1",
+            "endpoint": 0,
+            "parameter": 12,
+            "value": 8,
+        }
+
+    def test_wake_interval_uses_set_value(self) -> None:
+        zc._ensure_integration_importable()
+        service, data = zc._write_service_payload(
+            _apply_write(132, "wakeUpInterval", None, value=3600)
+        )
+        assert service == "set_value"
+        assert data == {
+            "device_id": "dev1",
+            "command_class": 132,
+            "endpoint": 0,
+            "property": "wakeUpInterval",
+            "value": 3600,
+        }
+
+    def test_partial_config_param_uses_set_value(self) -> None:
+        zc._ensure_integration_importable()
+        service, data = zc._write_service_payload(
+            _apply_write(112, 1, 4, value=2)
+        )
+        assert service == "set_value"
+        assert data["command_class"] == 112
+        assert data["property_key"] == 4
+
+    def test_apply_write_line(self) -> None:
+        line = zc._apply_write_line(_apply_write(112, 12, None, value=8))
+        assert "node 5" in line
+        assert "cc112/12 = 8" in line
+
+
+class TestApplyParser:
+    def test_apply_parses_flags(self) -> None:
+        args = zc.build_parser().parse_command(
+            [
+                "param-manager",
+                "apply",
+                "--dry-run",
+                "--force",
+                "--config",
+                "/x.yaml",
+            ]
+        )
+        assert args.command == "param-manager apply"
+        assert args.dry_run is True
+        assert args.force is True
+        assert args.config == "/x.yaml"
+
+    def test_do_pm_apply_routes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict[str, object] = {}
+
+        def fake(**kw: object) -> int:
+            seen.update(kw)
+            return 0
+
+        monkeypatch.setattr(zc, "_param_manager_apply", fake)
+        assert (
+            zc.do_pm_apply(
+                config="c", dry_run=True, force=False, api_key_file="k"
+            )
+            == 0
+        )
+        assert seen == {
+            "config": "c",
+            "dry_run": True,
+            "force": False,
+            "api_key_file": "k",
+        }
+
+
+class TestApplyFlow:
+    _POLICY = (
+        "policies:\n"
+        "  - name: hourly\n"
+        "    match:\n"
+        "      power: battery\n"
+        "    settings:\n"
+        "      wake_up_interval: 3600\n"
+    )
+
+    def _seed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        key = tmp_path / "api-key"
+        key.write_text("tok")
+        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+        cfg = tmp_path / "zpm.yaml"
+        cfg.write_text(self._POLICY)
+        monkeypatch.setattr(zc, "PM_CONFIG_DEFAULT", cfg)
+        monkeypatch.setattr(zc, "CONFIG_DIR", tmp_path)
+
+    def test_missing_config_is_a_clear_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        key = tmp_path / "api-key"
+        key.write_text("tok")
+        monkeypatch.setattr(zc, "API_KEY_FILE", key)
+        monkeypatch.setattr(zc, "PM_CONFIG_DEFAULT", tmp_path / "absent.yaml")
+        assert zc._param_manager_apply() == 2
+        assert "Policy file not found" in capsys.readouterr().err
+
+    def test_fleet_read_error_is_exit_4(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+    ) -> None:
+        self._seed(monkeypatch, tmp_path)
+
+        def boom(_api_key: str) -> Any:
+            raise zc._FleetReadError("connection refused")
+
+        monkeypatch.setattr(zc, "_read_apply_inputs_sync", boom)
+        assert zc._param_manager_apply() == 4
+        assert "could not read the Z-Wave fleet" in capsys.readouterr().err
+
+    def test_dry_run_issues_nothing_but_refreshes_record(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        self._seed(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            zc, "_read_apply_inputs_sync", lambda _k: ([], 42, 100, 50)
+        )
+        called: list[object] = []
+        monkeypatch.setattr(
+            zc, "_issue_writes_sync", lambda *a: called.append(a)
+        )
+        assert zc._param_manager_apply(dry_run=True) == 0
+        assert called == []
+        # The driver-session record is refreshed under CONFIG_DIR even on a
+        # dry run, so a later apply sees a current last_reset_at.
+        assert (tmp_path / "blueprint_toolkit" / "zwave-js-info.json").exists()
+
+    def test_issue_path_dispatches_and_records_pending(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        self._seed(monkeypatch, tmp_path)
+        zc._ensure_integration_importable()
+        import blueprint_toolkit.zwave_parameter_manager.apply as ap  # noqa: PLC0415, E501
+        import blueprint_toolkit.zwave_parameter_manager.pipeline as pl  # noqa: PLC0415, E501
+        from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415, E501
+            pending_store,
+        )
+        from blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: PLC0415, E501
+            ParamId,
+        )
+
+        write = SimpleNamespace(
+            id=ParamId(132, "wakeUpInterval"),
+            device=SimpleNamespace(device_id="devA", node_id=7, name="Hall"),
+            value=3600,
+        )
+        plan = SimpleNamespace(
+            writes=[write], unused=[], errors=[], warnings=[]
+        )
+        monkeypatch.setattr(
+            pl, "plan_and_report", lambda *_a: (plan, SimpleNamespace())
+        )
+        decision = ap.ApplyDecision(
+            writes=(write,), pending={(7, write.id): 3600}
+        )
+        monkeypatch.setattr(ap, "select_writes", lambda *_a: decision)
+        monkeypatch.setattr(
+            zc, "_read_apply_inputs_sync", lambda _k: ([], 42, 100, 50)
+        )
+        issued: list[object] = []
+        monkeypatch.setattr(
+            zc,
+            "_issue_writes_sync",
+            lambda _key, writes: issued.extend(writes),
+        )
+
+        assert zc._param_manager_apply() == 0
+        assert issued == [write]
+        state = pending_store.load(
+            tmp_path / "blueprint_toolkit" / "zpm_pending.json"
+        )
+        assert state is not None
+        assert state.commands[0].value == 3600
+        assert state.commands[0].node_id == 7
 
 
 # --- Code quality ----------------------------------------------
