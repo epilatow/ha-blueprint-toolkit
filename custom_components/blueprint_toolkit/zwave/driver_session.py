@@ -23,14 +23,13 @@ Pure file I/O -- no HA imports -- so the CLI venv imports it too.
 from __future__ import annotations
 
 import json
-import os
-from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from . import atomic_json
+
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 # Location of the shared record, relative to the HA config dir. The CLI's
@@ -94,7 +93,7 @@ def refresh(
     read-modify-write is held under an advisory lock so a concurrent monitor
     tick and CLI apply do not lose each other's update.
     """
-    with _locked(path):
+    with atomic_json.locked(path):
         prior = load(path)
         if (
             prior is None
@@ -112,15 +111,8 @@ def refresh(
             last_reset_at=last_reset_at,
             updated_at=now,
         )
-        _write(path, session)
-    return session
-
-
-def _write(path: Path, session: DriverSession) -> None:
-    """Atomically replace the record file (temp write + rename)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = (
-        json.dumps(
+        atomic_json.write_json(
+            path,
             {
                 "home_id": session.home_id,
                 "messages_rx": session.messages_rx,
@@ -128,35 +120,5 @@ def _write(path: Path, session: DriverSession) -> None:
                 "last_reset_at": session.last_reset_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
             },
-            indent=2,
         )
-        + "\n"
-    )
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-@contextmanager
-def _locked(path: Path) -> Iterator[None]:
-    """Best-effort cross-process advisory lock around a read-modify-write.
-
-    Uses ``fcntl`` on a sibling ``.lock`` file. Absent on non-POSIX hosts, in
-    which case the atomic rename still prevents torn writes and only a rare
-    concurrent update is lost.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import fcntl  # noqa: PLC0415 - POSIX only; absent -> no locking
-    except ImportError:
-        yield
-        return
-    lock_path = path.with_name(f"{path.name}.lock")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        with suppress(OSError):
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+    return session

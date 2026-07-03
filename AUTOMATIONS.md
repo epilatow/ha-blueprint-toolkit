@@ -138,15 +138,22 @@ sleeping device's queued commands -- so a live counter below the stored one
 means a restart happened, and `driver_session.refresh` stamps `last_reset_at`.
 
 The record is the shared source of truth for "was the driver's queue flushed
-since I issued a command": the ZPM handler and the CLI both read
-`last_reset_at` (and ZRM will) so an issued-but-unconverged write is treated
-as still-queued only while it was issued after the last reset. The monitor
-runs regardless of whether any Z-Wave automation is configured (so a CLI-only
-user still gets a current `last_reset_at`) and no-ops until the `zwave_js`
-driver is loaded and its statistics are populated. The reset time is decoupled
-from any one consumer's sampling cadence: a consumer that runs rarely (the
-CLI, every few days) still sees a restart the counter has since climbed back
-past.
+since I issued a command": the ZPM handler reads `last_reset_at` on every
+reconcile (the CLI's `apply` and, later, ZRM read it too) so an
+issued-but-unconverged write is treated as still-queued only while it was
+issued after the last reset. The handler also refreshes the record itself at
+reconcile time, so its flush decision doesn't wait on the monitor's cadence.
+The monitor runs regardless of whether any Z-Wave automation is configured (so
+a CLI-only user still gets a current `last_reset_at`) and no-ops until the
+`zwave_js` driver is loaded and its statistics are populated. Recording a
+reset TIME (rather than each consumer comparing a counter it sampled itself)
+is what lets a consumer that runs rarely -- the CLI, every few days -- still
+see a restart the counter has since climbed back past.
+
+Only the first `zwave_js` controller is tracked (a single `home_id` per
+record); a second controller is out of scope. The atomic write + advisory lock
+that back both this record and the ZPM pending store live in
+`zwave/atomic_json.py`.
 
 ## Standalone blueprints
 

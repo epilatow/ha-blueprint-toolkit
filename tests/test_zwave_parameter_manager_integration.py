@@ -173,6 +173,10 @@ def _install_zwave_js(hass: Any) -> str:
     driver = MagicMock()
     driver.controller.home_id = HOME_ID
     driver.controller.nodes = {node.node_id: node}
+    # Controller-statistics counters the driver-session monitor + the handler
+    # sample to detect a driver restart (a drop below the stored value).
+    driver.controller.statistics.messages_rx = 1000
+    driver.controller.statistics.messages_tx = 500
     entry = MockConfigEntry(domain="zwave_js", data={})
     entry.add_to_hass(hass)
     runtime = MagicMock()
@@ -407,7 +411,7 @@ async def test_no_zwave_js_emits_unavailable(hass: Any) -> None:
     assert any("unavailable" in nid for nid in notifs), list(notifs)
 
 
-async def test_reconnect_flush_reissues(hass: Any) -> None:
+async def test_driver_restart_reissues(hass: Any) -> None:
     _write_policy(hass, _WAKE_POLICY)
     _install_zwave_js(hass)
     calls = _capture_zwave_services(hass)
@@ -416,22 +420,25 @@ async def test_reconnect_flush_reissues(hass: Any) -> None:
     def _set_value_count() -> int:
         return len([d for s, d in calls if s == "set_value"])
 
-    # First reconcile issues the write + arms the reconnect subscription.
+    driver = hass.config_entries.async_entries("zwave_js")[
+        0
+    ].runtime_data.client.driver
+
+    # First reconcile issues the write and records it in zpm_pending.json.
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
     assert _set_value_count() == 1
 
-    # A second reconcile suppresses the re-issue (still pending).
+    # A second reconcile suppresses the re-issue (still queued, no restart).
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
     assert _set_value_count() == 1
 
-    # A driver reconnect flushes the device queue; the next reconcile clears
-    # pending and re-issues every still-mismatched write.
-    from homeassistant.helpers.dispatcher import async_dispatcher_send
-
-    async_dispatcher_send(hass, f"zwave_js_{HOME_ID}_connected_to_server")
-    await hass.async_block_till_done()
+    # Simulate a driver / add-on restart: the controller-statistics counters
+    # reset to near-zero. The next reconcile refreshes the driver-session
+    # record, sees the drop, treats the pending set as flushed, and re-issues.
+    driver.controller.statistics.messages_rx = 5
+    driver.controller.statistics.messages_tx = 3
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
     assert _set_value_count() == 2

@@ -141,15 +141,23 @@ context off the in-process driver, the registries, and the recorder),
 ### Apply model
 
 Pending state -- the writes ZPM has issued but not yet seen converge -- is
-held in memory per instance. A write is suppressed while the pending map
-already holds its value, so a periodic reconcile never piles duplicate
-commands into a sleeping device's queue. The map is cleared when the Z-Wave JS
-driver reconnects (an add-on restart that flushes the queue), at which point
-the next reconcile re-issues every still-mismatched write. After a Home
-Assistant Core restart the map starts empty, so the first reconcile re-issues
-everything still mismatched -- the conservative recovery for a queue flush
-that may have happened while Core was down. ZPM does not depend on the add-on
-de-duplicating its queue.
+kept in `/config/blueprint_toolkit/zpm_pending.json`, a file the automation
+and the `zwavectl` CLI share so the two never re-issue a command the other
+already queued. A write is suppressed while the store already holds its value,
+so a periodic reconcile never piles duplicate commands into a sleeping
+device's queue. ZPM does not depend on the add-on de-duplicating its queue.
+
+A driver / add-on restart flushes the wake-up queue, so ZPM must re-issue
+after one. It detects a restart from the Z-Wave JS controller's message
+counters, which reset to zero on restart: an integration service records them
+(with the time a reset was last seen) in
+`/config/blueprint_toolkit/zwave-js-info.json`, and every command in the
+pending store is tagged with when it was issued. A command issued before the
+last driver restart was flushed, so it is re-issued; one issued after is still
+queued and stays suppressed. Because the restart time is derived from the
+counters rather than observed live, a restart that happened while Home
+Assistant Core was down is still detected on the next reconcile after Core
+returns.
 
 ### Reporting
 

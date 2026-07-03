@@ -20,13 +20,15 @@ pipeline ``zwavectl`` runs) over ``source.read_fleet`` (the live fleet off
 the in-process driver), then applies ``apply.select_writes`` (which to issue
 this cycle) and emits the ``notification`` reports.
 
-Pending state is an in-memory map (node + param -> last-issued value),
-volatile by design: it suppresses per-tick re-issue within a process, and
-the handler clears it on the ``zwave_js`` driver-reconnect signal (an
-add-on restart that flushes the device wake-up queue). After a Core
-restart the map starts empty, so the first reconcile re-issues every
-mismatched write -- the conservative recovery for a flush that happened
-while Core was down.
+Pending state -- the writes issued but not yet seen converge -- lives in the
+shared ``zpm_pending.json`` (see ``pending_store``), keyed off the
+driver-session record's ``last_reset_at`` (see ``zwave.driver_session``): a
+write is suppressed only while it was issued after the last Z-Wave JS driver
+restart, the event that flushes the device wake-up queue. The same file backs
+the CLI's ``apply``, so the two never double-issue. The handler refreshes the
+driver-session record each reconcile, so a driver restart -- even one during
+an HA Core downtime -- is detected on the next reconcile and every still-
+mismatched write re-issues.
 
 Reporting: the pending report is a periodic status. It appears as soon as
 a parameter is pending and dismisses the moment the fleet converges; while
@@ -41,11 +43,13 @@ file changes or a newly-configured node appears.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -53,6 +57,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
+from .. import session_monitor
 from ..const import DOMAIN
 from ..helpers import (
     BlueprintHandlerSpec,
@@ -72,7 +77,8 @@ from ..helpers import (
     update_instance_state,
     validate_payload_or_emit_config_error,
 )
-from . import apply, notification, pipeline
+from ..zwave import driver_session
+from . import apply, notification, pending_store, pipeline
 from . import logic as zpm_logic
 
 if TYPE_CHECKING:
@@ -102,19 +108,13 @@ _TRIGGER_VALUES = ("periodic", "manual")
 class ZpmInstanceState:
     """In-memory state for one ZPM automation instance.
 
-    ``pending`` is the apply epoch's suppression map (cleared on a driver
-    reconnect; empty after a Core restart). ``last_configured_nodes`` and
-    ``last_config_mtime`` gate when the desired-config report re-fires. Only
-    transient state lives here; diagnostics go through
-    ``update_instance_state``.
+    Pending state is NOT here -- it lives in the shared ``zpm_pending.json``
+    (see ``pending_store``). ``last_configured_nodes`` and ``last_config_mtime``
+    gate when the desired-config report re-fires. Only transient state lives
+    here; diagnostics go through ``update_instance_state``.
     """
 
     instance_id: str
-    pending: dict[tuple[int, ParamId], int] = field(default_factory=dict)
-    # Set by the driver-reconnect callback (a queue flush) and honored at the
-    # top of the next reconcile under the lock, so clearing the pending map
-    # never races a reconcile that is mid-flight assigning it.
-    queue_flushed: bool = False
     last_config_mtime: float = 0.0
     last_configured_nodes: frozenset[int] = frozenset()
     # When the pending report was last published, gating its periodic
@@ -233,7 +233,8 @@ async def _async_service_layer(
         ZpmInstanceState(instance_id=instance_id),
     )
     # Serialise timer/subscription wiring + the reconcile body so a manual
-    # trigger landing mid-periodic-tick can't race on ``state.pending``.
+    # trigger landing mid-periodic-tick can't race the timer/subscription
+    # wiring or another reconcile of this instance.
     async with state.lock:
         entry = entry_for_domain(hass)
         if entry is not None:
@@ -265,14 +266,6 @@ async def _do_reconcile(
     instance_id = state.instance_id
     prefix = notification_prefix(_SERVICE, instance_id)
     tag = f"[{_SERVICE_TAG}: {automation_friendly_name(hass, instance_id)}]"
-
-    # Honor a queue flush signalled since the last cycle (driver reconnect):
-    # drop the suppression map so every still-mismatched write re-issues.
-    # Done here, under the service-layer lock, rather than in the dispatcher
-    # callback, so it can't race a reconcile mid-assignment of state.pending.
-    if state.queue_flushed:
-        state.pending = {}
-        state.queue_flushed = False
 
     # Read + parse the policy file (executor I/O). mtime drives the
     # desired-report re-fire; an edit is picked up on the next tick.
@@ -340,11 +333,47 @@ async def _do_reconcile(
         return
 
     plan, rep = pipeline.plan_and_report(reads, policies, mapping)
-
     actuals = {r.device.node_id: r.actuals for r in reads}
-    decision = apply.select_writes(plan, actuals, state.pending)
-    state.pending = decision.pending
+
+    # Refresh the shared driver-session record and read the still-queued
+    # pending set from zpm_pending.json. It is empty when the driver restarted
+    # since we issued (``last_reset_at`` moved past the file's ``issued_at``),
+    # so every mismatched write re-issues. Persisting pending in a shared file
+    # lets the CLI's ``apply`` and this handler suppress each other's writes.
+    session = await session_monitor.async_refresh(hass, _info_path(hass))
+    home_id = session.home_id if session is not None else None
+    last_reset_at = session.last_reset_at if session is not None else now
+    pending_path = _pending_path(hass)
+    if home_id is None:
+        pending_map: dict[tuple[int, ParamId], int] = {}
+    else:
+        pending_map = await hass.async_add_executor_job(
+            functools.partial(
+                pending_store.read_valid,
+                pending_path,
+                home_id=home_id,
+                last_reset_at=last_reset_at,
+            )
+        )
+
+    decision = apply.select_writes(plan, actuals, pending_map)
     await _dispatch_writes(hass, decision.writes)
+
+    if home_id is not None:
+        plan_keys = frozenset((w.device.node_id, w.id) for w in plan.writes)
+        await hass.async_add_executor_job(
+            functools.partial(
+                pending_store.merge,
+                pending_path,
+                home_id=home_id,
+                last_reset_at=last_reset_at,
+                plan_keys=plan_keys,
+                decision_pending=decision.pending,
+                # UTC so the stamp matches the driver-session record and the
+                # CLI's, rather than the handler's local-tz ``now``.
+                now=dt_util.as_utc(now),
+            )
+        )
 
     issues = [_issue_line(i) for i in (*plan.errors, *plan.warnings)]
     await _dispatch_single(
@@ -444,13 +473,13 @@ async def _do_reconcile(
             "devices": len(rep.devices),
             "writes_planned": len(plan.writes),
             "writes_issued": len(decision.writes),
-            "pending": len(state.pending),
+            "pending": len(decision.pending),
             "converged": rep.converged_count,
             "pending_params": rep.pending_count,
             "plan_warnings": len(plan.warnings),
             "plan_errors": len(plan.errors),
             "unused": len(plan.unused),
-            "pending_writes": _pending_summary(state.pending),
+            "pending_writes": _pending_summary(decision.pending),
         },
     )
 
@@ -463,7 +492,7 @@ async def _do_reconcile(
             len(reads),
             len(plan.writes),
             len(decision.writes),
-            len(state.pending),
+            len(decision.pending),
             rep.converged_count,
         )
 
@@ -631,6 +660,16 @@ def _resolve_config_path(hass: HomeAssistant, config_file_path: str) -> str:
     return os.path.join(hass.config.config_dir, config_file_path)
 
 
+def _info_path(hass: HomeAssistant) -> Path:
+    """The shared driver-session record path under the config dir."""
+    return Path(hass.config.config_dir) / driver_session.INFO_REL_PATH
+
+
+def _pending_path(hass: HomeAssistant) -> Path:
+    """The shared ZPM pending-store path under the config dir."""
+    return Path(hass.config.config_dir) / pending_store.PENDING_REL_PATH
+
+
 def _read_mtime(path: str) -> float:
     """Return mtime, or 0.0 if the file is missing."""
     try:
@@ -680,11 +719,12 @@ def _ensure_reconnect_subscription(
 ) -> None:
     """Subscribe (once) to the zwave_js driver-reconnect signal.
 
-    A driver/add-on reconnect may have flushed the device wake-up queue, so
-    the in-memory pending map can no longer suppress re-issues. On the
-    signal, clear it and kick a fresh reconcile so the next cycle re-issues
-    every still-mismatched write. The signal name needs ``home_id``, only
-    available once the driver is up, so subscribe lazily per reconcile.
+    A driver/add-on reconnect kicks a fresh reconcile promptly, rather than
+    waiting for the periodic timer's next tick. The flush itself is detected
+    by the driver-session record (the controller-statistics reset), so the
+    kicked reconcile re-reads that record and re-issues every write flushed by
+    the restart. The signal name needs ``home_id``, only available once the
+    driver is up, so subscribe lazily per reconcile.
     """
     from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
@@ -699,10 +739,8 @@ def _ensure_reconnect_subscription(
 
     @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_reconnect() -> None:
-        # Mark the queue flushed; the next reconcile clears pending under the
-        # lock. Kick that reconcile now for promptness (the periodic timer
-        # would otherwise pick it up on its next tick).
-        state.queue_flushed = True
+        # Kick a reconcile now for promptness; the flush decision itself is
+        # made from the driver-session record inside that reconcile.
         entry = entry_for_domain(hass)
         if entry is None or not hass.services.has_service(
             "automation", "trigger"

@@ -109,7 +109,7 @@ class TestReadLive:
 class TestRefreshOnce:
     async def test_writes_the_record(self, tmp_path: Path) -> None:
         path = tmp_path / "blueprint_toolkit" / "zwave-js-info.json"
-        await session_monitor.async_refresh_once(
+        await session_monitor.async_refresh(
             _hass(_Controller(42, 100, 50)), path
         )
         rec = ds.load(path)
@@ -120,7 +120,7 @@ class TestRefreshOnce:
 
     async def test_no_driver_writes_nothing(self, tmp_path: Path) -> None:
         path = tmp_path / "blueprint_toolkit" / "zwave-js-info.json"
-        await session_monitor.async_refresh_once(_hass(None), path)
+        await session_monitor.async_refresh(_hass(None), path)
         assert not path.exists()
 
 

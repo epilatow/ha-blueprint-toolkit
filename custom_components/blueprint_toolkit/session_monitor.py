@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
+    from .zwave.driver_session import DriverSession
+
 _LOGGER = logging.getLogger(__name__)
 _INTERVAL = timedelta(seconds=60)
 _ZWAVE_JS_DOMAIN = "zwave_js"
@@ -69,14 +71,22 @@ def _read_live(hass: HomeAssistant) -> _LiveStats | None:
     return _LiveStats(home_id=home_id, messages_rx=rx, messages_tx=tx)
 
 
-async def async_refresh_once(hass: HomeAssistant, path: Path) -> None:
-    """Sample the driver once and fold it into the record (no-op if absent)."""
+async def async_refresh(
+    hass: HomeAssistant, path: Path
+) -> DriverSession | None:
+    """Sample the driver once and fold it into the record.
+
+    Returns the refreshed record (whose ``last_reset_at`` a caller uses to
+    decide whether the queue was flushed), or ``None`` when the driver is
+    unavailable. The ZPM handler calls this at reconcile time so its flush
+    decision doesn't depend on the monitor's own sampling cadence.
+    """
     live = _read_live(hass)
     if live is None:
-        return
+        return None
     from homeassistant.util import dt as dt_util  # noqa: PLC0415
 
-    await hass.async_add_executor_job(
+    session: DriverSession = await hass.async_add_executor_job(
         functools.partial(
             driver_session.refresh,
             path,
@@ -86,11 +96,12 @@ async def async_refresh_once(hass: HomeAssistant, path: Path) -> None:
             now=dt_util.utcnow(),
         )
     )
+    return session
 
 
 async def _safe_refresh(hass: HomeAssistant, path: Path) -> None:
     try:
-        await async_refresh_once(hass, path)
+        await async_refresh(hass, path)
     except OSError as err:
         _LOGGER.warning("zwave-js-info refresh failed: %s", err)
 

@@ -1,24 +1,24 @@
 # This is AI generated code
 """Decide which planned writes to issue this reconcile cycle.
 
-The pure core of the apply path. The handler dispatches the actual
-``zwave_js`` service calls and owns the pending map's lifetime; this
-module only decides *which* writes to issue now, given the desired plan,
-the live values, and what is already pending.
+The pure core of the apply path. The caller (the handler or the CLI's
+``apply``) dispatches the actual ``zwave_js`` service calls and persists the
+pending map to the shared store (``pending_store``); this module only decides
+*which* writes to issue now, given the desired plan, the live values, and what
+is already pending.
 
 Each command is issued to the driver at most once per pending epoch: a
 mismatched write is suppressed while the pending map already records its
 value. We do not rely on the add-on de-duplicating its wake-up queue (an
-unverifiable implementation detail), and we never pile up duplicates
-within an epoch. The handler ends an epoch -- and so allows a re-issue --
-by clearing the pending map whenever the queue may have flushed: on a
-driver reconnect (an add-on restart), and implicitly on an HA Core restart
-(the map is in-memory, so it starts empty and the first reconcile re-issues
-every mismatched write -- the conservative recovery for a flush we could
-not observe while Core was down).
+unverifiable implementation detail), and we never pile up duplicates within an
+epoch. An epoch ends -- and a re-issue is allowed -- when the driver's wake-up
+queue is flushed by a restart; the caller detects that from the driver-session
+record and passes an EMPTY ``pending`` map for the flushed epoch (see
+``pending_store.read_valid`` keyed off ``last_reset_at``), so the next cycle
+re-issues every mismatched write.
 
-A converged write (actual == desired) clears its pending entry, so a later
-out-of-band divergence is a fresh command and re-issues.
+A converged write (actual == desired) drops out of the returned ``pending``,
+so a later out-of-band divergence is a fresh command and re-issues.
 """
 
 from __future__ import annotations
@@ -41,9 +41,9 @@ class ApplyDecision:
     """The outcome of one reconcile decision.
 
     ``writes`` is the subset of the plan to dispatch now; ``pending`` maps
-    each still-unconverged write's key to the value last issued for it, kept
-    (in memory) for the next cycle. Converged or no-longer-planned writes
-    are dropped.
+    each still-unconverged write's key to the value last issued for it, which
+    the caller persists to the shared pending store for the next cycle.
+    Converged or no-longer-planned writes are dropped.
     """
 
     writes: tuple[PlannedWrite, ...]
@@ -60,8 +60,8 @@ def select_writes(
     ``actuals`` is keyed by ``node_id``; ``pending`` maps a write's key to
     the value last issued for it. A mismatched write is issued unless the
     pending map already records the same value (already queued this epoch);
-    the handler clears ``pending`` on a queue flush so the next cycle
-    re-issues. The returned ``pending`` carries forward every still-
+    the caller passes an empty ``pending`` for a flushed epoch so the next
+    cycle re-issues. The returned ``pending`` carries forward every still-
     unconverged write, so a converged or removed write clears itself.
     """
 
