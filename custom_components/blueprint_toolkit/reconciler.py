@@ -107,12 +107,16 @@ def _destination_mapping(
     # integration will see broken /local/ doc links;
     # that's documented as a dev-install limitation.
 
-    # bundled/bin/*.py -> <cli_symlink_dir>/*.py (flat; optional)
+    # bundled/bin/*.py -> <cli_symlink_dir>/<stem> (flat, extension dropped;
+    # optional). The installed command is invoked as ``zwavectl``, not
+    # ``zwavectl.py``; running through the extensionless symlink works because
+    # the interpreter loads the target by content and the CLI's own sys.path
+    # bootstrap resolves the link back to the bundled file.
     if cli_symlink_dir is not None:
         src_dir = bundled_root / "bin"
         if src_dir.is_dir():
             for src in sorted(src_dir.glob("*.py")):
-                mapping[cli_symlink_dir / src.name] = src
+                mapping[cli_symlink_dir / src.stem] = src
 
     return mapping
 

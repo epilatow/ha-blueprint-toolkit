@@ -126,7 +126,7 @@ class TestFreshInstall:
 
         result = plan(bundled_root=bundled, config_root=config)
         for a in result.actions:
-            assert "demo_cli.py" not in str(a.destination)
+            assert "demo_cli" not in str(a.destination)
 
     def test_cli_installed_when_dir_set(self, tmp_path: Path) -> None:
         bundled = _make_bundled(tmp_path / "repo")
@@ -140,8 +140,13 @@ class TestFreshInstall:
             config_root=config,
             cli_symlink_dir=cli_dir,
         )
-        cli_dest = cli_dir / "demo_cli.py"
+        cli_dest = cli_dir / "demo_cli"
         assert _kind_for(result, cli_dest) == ActionKind.INSTALL
+        # The bundled source keeps its .py; only the installed link drops it.
+        assert _action_for(result, cli_dest) is not None
+        assert str(
+            _action_for(result, cli_dest).target  # type: ignore[union-attr]
+        ).endswith("demo_cli.py")
 
 
 # ---------------------------------------------------------------
@@ -204,6 +209,28 @@ class TestReinstall:
         second = plan(bundled_root=bundled, config_root=config)
         assert _kind_for(second, victim) == ActionKind.UPDATE
         assert not second.conflicts
+
+    def test_legacy_dot_py_cli_link_is_swept(self, tmp_path: Path) -> None:
+        """A prior install linked the CLI as ``<name>.py``; the
+        extension-dropping mapping now targets ``<name>``. The old
+        link is ours (target into the bundle) but no longer in the
+        mapping, so it is REMOVEd while the new name is INSTALLed.
+        """
+        bundled = _make_bundled(tmp_path / "repo")
+        config = tmp_path / "config"
+        config.mkdir()
+        cli_dir = tmp_path / "root"
+        cli_dir.mkdir()
+        legacy = cli_dir / "demo_cli.py"
+        legacy.symlink_to(bundled / "bin" / "demo_cli.py")
+
+        result = plan(
+            bundled_root=bundled,
+            config_root=config,
+            cli_symlink_dir=cli_dir,
+        )
+        assert _kind_for(result, legacy) == ActionKind.REMOVE
+        assert _kind_for(result, cli_dir / "demo_cli") == ActionKind.INSTALL
 
 
 # ---------------------------------------------------------------

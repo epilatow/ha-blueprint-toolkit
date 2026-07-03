@@ -195,8 +195,11 @@ class TestCliSymlinkDir:
             ha_config=config,
             cli_symlink_dir=cli_dir,
         )
-        expected = cli_dir / "demo_cli.py"
+        # Installed without the .py extension; source keeps it.
+        expected = cli_dir / "demo_cli"
         assert expected.is_symlink()
+        assert not (cli_dir / "demo_cli.py").exists()
+        assert str(expected.readlink()).endswith("demo_cli.py")
 
     def test_cli_skipped_by_default(self, tmp_path: Path) -> None:
         integration = _make_fake_integration(tmp_path / "build")
@@ -208,6 +211,7 @@ class TestCliSymlinkDir:
         # under config (dev-install without cli-dir does not
         # install cli into /config either).
         created = {p.name for p in _installed_paths(config)}
+        assert "demo_cli" not in created
         assert "demo_cli.py" not in created
 
 

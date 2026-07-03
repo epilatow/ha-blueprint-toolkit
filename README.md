@@ -120,11 +120,12 @@ automations. Live in the bundled payload and run from the HA host.
    rendered docs into your `/config/` directory.
 
 5. Optionally, open the integration's **Configure** dialog to set **CLI
-   symlink directory** if you want the `zwavectl.py` shell tool symlinked into
-   a directory on your shell's `$PATH`. The path must be writable by the Home
-   Assistant process. On Home Assistant OS and Supervised installs, the
-   integration runs in its own container -- only paths under shared mounts
-   (`/config`, `/share`, `/media`, `/backup`, `/ssl`, `/addons`,
+   symlink directory** if you want the `zwavectl` shell tool symlinked into a
+   directory on your shell's `$PATH` (the bundled `zwavectl.py` installs under
+   that directory as `zwavectl`, without the extension). The path must be
+   writable by the Home Assistant process. On Home Assistant OS and Supervised
+   installs, the integration runs in its own container -- only paths under
+   shared mounts (`/config`, `/share`, `/media`, `/backup`, `/ssl`, `/addons`,
    `/addon_configs`) are visible from the SSH add-on; e.g. `/config` is a safe
    default. On Home Assistant Container or Core (no Supervisor), any path the
    HA process can write to works. Leave blank to skip. The same dialog has a
