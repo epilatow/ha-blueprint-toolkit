@@ -5,7 +5,7 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.331",
+#     "pytest-homeassistant-custom-component==0.13.346",
 #     "types-PyYAML",
 # ]
 # ///
