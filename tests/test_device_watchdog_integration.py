@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any
 # the way ``python -m pytest`` would.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
-from conftest import (  # noqa: E402
+import pytest
+from conftest import (
     RecoveryEventsIntegrationBase,
 )
 
@@ -473,7 +473,7 @@ class TestPerDeviceLinkPrefix:
             f"diagnostic state attrs: {attrs}; "
             f"got notifs: {sorted(notifs.keys())}"
         )
-        nid, payload = per_device[0]
+        _nid, payload = per_device[0]
         body: str = payload["message"]
         assert body.startswith(
             "Automation: [DW: Finding](/config/automation/edit/9999)\n",

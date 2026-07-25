@@ -261,14 +261,17 @@ def main() -> int:
         if not args.dry_run
         else (head if is_release else _local_tag_sha(tag))
     )
-    if remote_tag is not None and local_tag is not None:
-        if remote_tag != local_tag:
-            sys.stderr.write(
-                f"error: remote tag {tag} ({remote_tag[:7]}) differs "
-                f"from local ({local_tag[:7]}). Manual cleanup "
-                "required.\n",
-            )
-            return 1
+    if (
+        remote_tag is not None
+        and local_tag is not None
+        and remote_tag != local_tag
+    ):
+        sys.stderr.write(
+            f"error: remote tag {tag} ({remote_tag[:7]}) differs "
+            f"from local ({local_tag[:7]}). Manual cleanup "
+            "required.\n",
+        )
+        return 1
 
     if is_release and remote_tag != head:
         _push_tag(tag, dry_run=args.dry_run)

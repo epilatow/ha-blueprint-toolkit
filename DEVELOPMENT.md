@@ -59,6 +59,9 @@ only reads brand assets from the brands CDN.
 
 - **Executable scripts** (test files, `run_all.py`) use the PEP 723 shebang
   `#!/usr/bin/env -S uv run --script` with inline dependency declarations.
+- **Docker harness helpers** under `tests/docker/_harness/` use plain
+  `#!/usr/bin/env python3` when they run inside the HA container, where `uv`
+  is unavailable and the required dependencies are stdlib or provided by HA.
 - **Module files** (handler.py, logic.py, helpers.py, etc.) have no shebang.
   They are imported, not executed directly.
 
@@ -66,6 +69,9 @@ only reads brand assets from the brands CDN.
 
 - Must be executable (`chmod +x`) with a `__main__` entry point calling
   `conftest.run_tests()`.
+- `tests/docker/test_dev_workflow.py` is the exception: its standalone entry
+  point calls `pytest.main()` directly so it can force the otherwise excluded
+  `docker` marker and select the Docker test path.
 - Use pytest.
 - Use `autospec=True` for all mocks.
 
@@ -370,9 +376,15 @@ the script exits cleanly without creating a duplicate release.
 
 Lint, format, and type checks run as the parametrized
 `_repo_shared/tests/test_code_quality.py` suite, one case per discovered `.py`
-file. mypy `--strict` deps come from each file's PEP 723 `# /// script` block
-when present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps`
-in `pyproject.toml` (HACC
+file. Ruff follows the current default rules and keeps the canonical `E`, `F`,
+`W`, `I`, `B`, `UP`, and `ARG` categories enabled through
+`[tool.ruff.lint] extend-select`. The vendored `_repo_shared` tree is excluded
+from standalone Ruff runs; its exact content is covered by the shared drift
+test.
+
+mypy `--strict` deps come from each file's PEP 723 `# /// script` block when
+present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
+`pyproject.toml` (HACC
 
 - `types-PyYAML` at `mypy-python-version = "3.14"`). Per-file blocks are kept
   only where a file needs more than the fallback -- e.g. the HACC test files

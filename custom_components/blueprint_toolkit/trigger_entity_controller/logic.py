@@ -189,9 +189,7 @@ def _period_suppressed(
     """Check if a period gate suppresses activation."""
     if period == Period.NIGHT_TIME and is_day_time:
         return True
-    if period == Period.DAY_TIME and not is_day_time:
-        return True
-    return False
+    return bool(period == Period.DAY_TIME and not is_day_time)
 
 
 def is_trigger_suppressed(
@@ -215,12 +213,10 @@ def is_trigger_suppressed(
         is_day_time,
     ):
         return True
-    if triggers_disabled and not _period_suppressed(
-        config.trigger_disabling_period,
-        is_day_time,
-    ):
-        return True
-    return False
+    return bool(
+        triggers_disabled
+        and not _period_suppressed(config.trigger_disabling_period, is_day_time)
+    )
 
 
 def _format_notification(

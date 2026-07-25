@@ -405,13 +405,13 @@ class ZwaveApiError(RuntimeError):
     """zwave-js-ui returned a ``success: false`` envelope.
 
     Distinct from ``socketio.exceptions.TimeoutError`` (the
-    call never returned at all) and from plain ``RuntimeError``
-    (malformed response shape). Raised when the addon answers
+    call never returned at all) and from ``TypeError`` (malformed
+    response shape). Raised when the addon answers
     quickly but the driver reports a failure -- most commonly
     the ``"Z-Wave client not connected"`` state seen when the
     controller is wedged and zwave-js can't complete driver
     init. The top-level handler catches this so the user sees
-    a clean message with a pointer to ``--use-snapshot-data``.
+    a clean message with controller-recovery guidance.
     """
 
 
@@ -456,7 +456,9 @@ async def fetch_zwave_nodes(
     service the live queries and some data is better than
     none.
     """
-    import socketio  # noqa: PLC0415 - needs venv
+    # Keep this local: the dependency is installed only in the
+    # bootstrapped script venv after re-exec.
+    import socketio
 
     sio = socketio.AsyncClient()
     await sio.connect(ZWAVE_URL, socketio_path="/socket.io")
@@ -472,14 +474,14 @@ async def fetch_zwave_nodes(
         # connected"`` when the controller's wedged and
         # driver init is looping on timeouts). Route to a
         # dedicated exception so the top-level handler can
-        # print a clean message with ``--use-snapshot-data``
+        # print a clean message with controller-recovery
         # guidance instead of a traceback.
         if isinstance(resp, dict) and resp.get("success") is False:
             message = str(resp.get("message") or "no message")
             raise ZwaveApiError(f"getNodes failed: {message}")
         result = resp.get("result") if isinstance(resp, dict) else None
         if not isinstance(result, list):
-            raise RuntimeError(
+            raise TypeError(
                 f"getNodes returned unexpected shape: {resp!r}",
             )
         nodes = {
@@ -544,7 +546,9 @@ async def fetch_zwave_neighbors(
     user asks for the ``neighbors`` column (~50ms per call on
     a typical install).
     """
-    import socketio  # noqa: PLC0415 - needs venv
+    # Keep this local: the dependency is installed only in the
+    # bootstrapped script venv after re-exec.
+    import socketio
 
     out: dict[int, list[int]] = {}
     if not node_ids:
@@ -573,36 +577,40 @@ async def fetch_ha_registries(
     list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]
 ]:
     """Return (entities, devices_by_id, areas_by_id)."""
-    import aiohttp  # noqa: PLC0415 - needs venv
+    # Keep this local: the dependency is installed only in the
+    # bootstrapped script venv after re-exec.
+    import aiohttp
 
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(f"{HA_URL}/api/websocket") as ws:
-            await ws.receive_json()  # auth_required
-            await ws.send_json({"type": "auth", "access_token": api_key})
-            auth_resp = await ws.receive_json()
-            if auth_resp.get("type") != "auth_ok":
-                raise RuntimeError(
-                    f"HA WebSocket auth failed: {auth_resp!r}",
-                )
+    async with (
+        aiohttp.ClientSession() as session,
+        session.ws_connect(f"{HA_URL}/api/websocket") as ws,
+    ):
+        await ws.receive_json()  # auth_required
+        await ws.send_json({"type": "auth", "access_token": api_key})
+        auth_resp = await ws.receive_json()
+        if auth_resp.get("type") != "auth_ok":
+            raise RuntimeError(
+                f"HA WebSocket auth failed: {auth_resp!r}",
+            )
 
-            next_id = 0
+        next_id = 0
 
-            # Serial send/receive is safe here because we never
-            # subscribe to events, so no asynchronous messages
-            # (state_changed, etc.) can land between our request
-            # and its response. If a future change adds an
-            # event subscription, this will need to correlate
-            # responses by ``id`` instead.
-            async def call(command: str) -> list[dict[str, Any]]:
-                nonlocal next_id
-                next_id += 1
-                await ws.send_json({"id": next_id, "type": command})
-                resp = await ws.receive_json()
-                return resp.get("result") or []
+        # Serial send/receive is safe here because we never
+        # subscribe to events, so no asynchronous messages
+        # (state_changed, etc.) can land between our request
+        # and its response. If a future change adds an
+        # event subscription, this will need to correlate
+        # responses by ``id`` instead.
+        async def call(command: str) -> list[dict[str, Any]]:
+            nonlocal next_id
+            next_id += 1
+            await ws.send_json({"id": next_id, "type": command})
+            resp = await ws.receive_json()
+            return resp.get("result") or []
 
-            entities = await call("config/entity_registry/list")
-            devices = await call("config/device_registry/list")
-            areas = await call("config/area_registry/list")
+        entities = await call("config/entity_registry/list")
+        devices = await call("config/device_registry/list")
+        areas = await call("config/area_registry/list")
 
     return (
         entities,
@@ -613,13 +621,17 @@ async def fetch_ha_registries(
 
 async def fetch_ha_states(api_key: str) -> dict[str, str]:
     """Return entity_id -> current state (as string) for all HA entities."""
-    import aiohttp  # noqa: PLC0415 - needs venv
+    # Keep this local: the dependency is installed only in the
+    # bootstrapped script venv after re-exec.
+    import aiohttp
 
     headers = {"Authorization": f"Bearer {api_key}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"{HA_URL}/api/states", headers=headers) as r:
-            r.raise_for_status()
-            states = await r.json()
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get(f"{HA_URL}/api/states", headers=headers) as r,
+    ):
+        r.raise_for_status()
+        states = await r.json()
     return {s["entity_id"]: s.get("state") for s in states}
 
 
@@ -644,7 +656,9 @@ async def fetch_ha_history(
     Entities are batched to keep the filter_entity_id URL
     parameter within HA's request-size limits.
     """
-    import aiohttp  # noqa: PLC0415 - needs venv
+    # Keep this local: the dependency is installed only in the
+    # bootstrapped script venv after re-exec.
+    import aiohttp
 
     if not entity_ids or not day_offsets:
         return {eid: {} for eid in entity_ids}
@@ -1076,7 +1090,7 @@ ANSI_RESET = "\033[0m"
 DASH = "-"
 
 
-def _ss_quality(v: int | float | None, protocol: str | None) -> str | None:
+def _ss_quality(v: float | None, protocol: str | None) -> str | None:
     """Bucket a raw SS value into ``good``/``fair``/``poor``.
 
     Thresholds vary by ``protocol`` (see ``_SS_THRESHOLDS``).
@@ -1096,7 +1110,7 @@ def _ss_quality(v: int | float | None, protocol: str | None) -> str | None:
     return "poor"
 
 
-def _ss_color(v: int | float | None, protocol: str | None) -> str:
+def _ss_color(v: float | None, protocol: str | None) -> str:
     """ANSI color for a numeric SS reading, protocol-aware."""
     label = _ss_quality(v, protocol)
     if label == "good":
@@ -1115,7 +1129,7 @@ _SS_QUALITY_COLORS = {
 }
 
 
-def _fmt_num(v: int | float | None) -> str:
+def _fmt_num(v: float | None) -> str:
     if v is None:
         return DASH
     if isinstance(v, float) and not v.is_integer():
@@ -1124,7 +1138,7 @@ def _fmt_num(v: int | float | None) -> str:
 
 
 def _fmt_ss(
-    v: int | float | None,
+    v: float | None,
     use_color: bool,
     protocol: str | None = None,
 ) -> str:
@@ -1221,7 +1235,7 @@ def _fmt_last_seen(state: str | None) -> str:
     return f"{days // 30}mo"
 
 
-def _fmt_battery(v: int | float | None) -> str:
+def _fmt_battery(v: float | None) -> str:
     if v is None:
         return DASH
     return str(int(v))
@@ -1267,7 +1281,7 @@ def _fmt_drop_rate(rate: float | None, use_color: bool) -> str:
     elif pct < 1:
         s = "<1"
     else:
-        s = str(int(round(pct)))
+        s = str(round(pct))
     if not use_color:
         return s
     if pct < 1:
@@ -1853,7 +1867,9 @@ def main() -> int:
     # ZwaveApiError covers the "addon is up but driver can't
     # service calls" state (e.g. ``"Z-Wave client not
     # connected"`` while zwave-js loops on controller init).
-    import socketio.exceptions as _sio_exc  # noqa: PLC0415 - needs venv
+    # Keep this local: the dependency is installed only in the
+    # bootstrapped script venv after re-exec.
+    import socketio.exceptions as _sio_exc
 
     try:
         (

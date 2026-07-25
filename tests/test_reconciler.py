@@ -25,9 +25,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
+import pytest
 
-from custom_components.blueprint_toolkit.reconciler import (  # noqa: E402
+from custom_components.blueprint_toolkit.reconciler import (
     BUNDLED_MARKER,
     Action,
     ActionKind,

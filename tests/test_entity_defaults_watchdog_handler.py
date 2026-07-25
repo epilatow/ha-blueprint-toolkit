@@ -32,7 +32,7 @@ import sys
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -54,7 +54,7 @@ from conftest import (  # noqa: E402
 
 _stubs = install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
-from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E402
     handler,
 )
 
@@ -334,7 +334,7 @@ class TestArgparseDriftChecks(_ArgparseHarness):
         # Empty input -> CHECK_ALL forwarded to the service
         # layer (mirrors the blueprint description that
         # documents empty-means-all).
-        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E402, E501, PLC0415
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
             logic,
         )
 
@@ -900,7 +900,7 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
 
     handler = handler
     blueprint_filename = "entity_defaults_watchdog.yaml"
-    template_defaults = {
+    template_defaults: ClassVar = {
         "instance_id": "automation.edw_default_check",
         "trigger_id": "manual",
     }
@@ -919,9 +919,9 @@ class TestBlueprintDriftChecksOptionsMatchCheckAll:
     """
 
     def test_options_match_check_all(self) -> None:
-        import yaml  # noqa: PLC0415
+        import yaml
 
-        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501, PLC0415
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
             logic,
         )
 
@@ -951,7 +951,7 @@ class TestBlueprintDriftChecksOptionsMatchCheckAll:
 
         # types-PyYAML ships no annotations for add_multi_constructor.
         _Loader.add_multi_constructor("!", _passthrough)  # type: ignore[no-untyped-call]
-        loaded: dict[str, object] = yaml.load(  # noqa: S506
+        loaded: dict[str, object] = yaml.load(
             bp_path.read_text(),
             Loader=_Loader,
         )

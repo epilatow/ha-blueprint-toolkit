@@ -35,7 +35,7 @@ import sys
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -513,7 +513,7 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
 
     handler = handler
     blueprint_filename = "zwave_route_manager.yaml"
-    template_defaults = {
+    template_defaults: ClassVar = {
         "instance_id": "automation.zrm_default_check",
         "trigger_id": "manual",
     }

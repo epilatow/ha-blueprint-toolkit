@@ -13,7 +13,7 @@
 """Tests for the zwave_route_manager logic module."""
 
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -21,11 +21,11 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-from custom_components.blueprint_toolkit.zwave_route_manager.bridge import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_route_manager.bridge import (  # noqa: E402
     NodeInfo,
     RouteSpeed,
 )
-from custom_components.blueprint_toolkit.zwave_route_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_route_manager.logic import (  # noqa: E402
     CIRCUIT_BREAKER_COOLDOWN,
     CIRCUIT_BREAKER_THRESHOLD,
     CircuitBreakerState,
@@ -52,7 +52,7 @@ from custom_components.blueprint_toolkit.zwave_route_manager.logic import (  # n
     type_for_action_kind,
 )
 
-NOW = datetime(2026, 4, 20, 12, 0, 0)
+NOW = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
 PENDING_TIMEOUT = timedelta(hours=24)
 
 

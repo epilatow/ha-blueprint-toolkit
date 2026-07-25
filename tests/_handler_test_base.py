@@ -27,14 +27,14 @@ deterministic ``dt_util.utcnow()`` across handler tests.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
 class FrozenNow:
     """Wall-clock the handler-test stubs pin ``dt_util.utcnow()`` to."""
 
-    value = datetime(2026, 4, 28, 23, 0, 0)
+    value = datetime(2026, 4, 28, 23, 0, 0, tzinfo=UTC)
 
 
 @dataclass

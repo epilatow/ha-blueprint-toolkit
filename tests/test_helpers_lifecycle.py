@@ -41,9 +41,9 @@ import sys
 import types
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, cast
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -160,7 +160,7 @@ _ha_helpers_hassio.is_hassio = lambda _hass: False  # type: ignore[attr-defined]
 # Mock issue_registry so process_repairs_with_sweep's
 # late-import succeeds during test runs. Tests use
 # monkeypatch on these stubs to drive routing assertions.
-class _IssueSeverity:  # noqa: D101
+class _IssueSeverity:
     WARNING = "warning"
     ERROR = "error"
 
@@ -819,9 +819,12 @@ class TestAttributionLines:
         )
         assert lines == [
             "Automation: [My Auto](/config/automation/edit/1234)",
-            "Integrations: "
-            "[enphase_envoy](/config/integrations/integration/enphase_envoy), "
-            "[zwave_js](/config/integrations/integration/zwave_js)",
+            (
+                "Integrations: "
+                "[enphase_envoy]"
+                "(/config/integrations/integration/enphase_envoy), "
+                "[zwave_js](/config/integrations/integration/zwave_js)"
+            ),
             "Device: [Kitchen Sensor](/config/devices/device/dev1)",
         ]
 
@@ -920,7 +923,7 @@ class TestInstanceStateEntityId:
 class TestUpdateInstanceState:
     def test_writes_common_attrs_with_default_state(self) -> None:
         hass = _MockHass()
-        run_at = datetime(2024, 1, 15, 12, 0, 0)
+        run_at = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
         helpers.update_instance_state(
             hass,  # type: ignore[arg-type]
             service_tag="dw",
@@ -946,7 +949,7 @@ class TestUpdateInstanceState:
             hass,  # type: ignore[arg-type]
             service_tag="tec",
             instance_id="automation.tec",
-            last_run=datetime(2024, 1, 15, 12, 0, 0),
+            last_run=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             runtime=0.05,
             state="TURN_ON",
         )
@@ -958,7 +961,7 @@ class TestUpdateInstanceState:
             hass,  # type: ignore[arg-type]
             service_tag="tec",
             instance_id="automation.tec",
-            last_run=datetime(2024, 1, 15, 12, 0, 0),
+            last_run=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             runtime=0.1,
             state="TURN_ON",
             extra_attributes={
@@ -978,7 +981,7 @@ class TestUpdateInstanceState:
             hass,  # type: ignore[arg-type]
             service_tag="zrm",
             instance_id="automation.zrm",
-            last_run=datetime(2024, 1, 15, 12, 0, 0),
+            last_run=datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC),
             runtime=2.4567,
         )
         assert hass.states.set_calls[0][2]["runtime"] == 2.46
@@ -1515,7 +1518,7 @@ class TestRegisterBlueprintHandler:
         wrapper = hass.services.registered[(DOMAIN, spec.service)]
 
         class _Call:
-            data = {"instance_id": "automation.test"}
+            data: ClassVar = {"instance_id": "automation.test"}
 
         with pytest.raises(_Boom):
             await wrapper(_Call())
@@ -1603,7 +1606,7 @@ class TestRegisterBlueprintHandler:
         wrapper = hass.services.registered[(DOMAIN, spec.service)]
 
         class _Call:
-            data = {"instance_id": "automation.test"}
+            data: ClassVar = {"instance_id": "automation.test"}
 
         await wrapper(_Call())
 
@@ -1649,7 +1652,7 @@ class TestRegisterBlueprintHandler:
         wrapper = hass.services.registered[(DOMAIN, spec.service)]
 
         class _Call:
-            data = {"instance_id": "automation.test"}
+            data: ClassVar = {"instance_id": "automation.test"}
 
         with pytest.raises(_Boom):
             await wrapper(_Call())
@@ -1710,7 +1713,7 @@ class _FakeEvent:
     data: dict[str, Any]
 
 
-_FAKE_NOW = datetime(2026, 1, 1, 0, 0, 0)
+_FAKE_NOW = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 
 class TestAutomationEnabled:
@@ -3534,7 +3537,7 @@ class TestSchedulePeriodicWithJitter:
         # synchronously, simulating HA's
         # ``async_call_later`` dispatch.
         _delay, on_first_fire, _hass = _call_later_calls[0]
-        fake_now = datetime(2026, 4, 28, 23, 0, 0)
+        fake_now = datetime(2026, 4, 28, 23, 0, 0, tzinfo=UTC)
         on_first_fire(fake_now)
 
         # Steady-state tracker now armed for subsequent
@@ -3556,7 +3559,7 @@ class TestSchedulePeriodicWithJitter:
 
         # Firing the tracked callback (steady-state tick)
         # also routes through the entry, not hass.
-        tracked_cb(datetime(2026, 4, 28, 23, 5, 0))
+        tracked_cb(datetime(2026, 4, 28, 23, 5, 0, tzinfo=UTC))
         assert hass.tasks == []
         assert len(entry.background_tasks) == 2
 
@@ -3577,7 +3580,7 @@ class TestSchedulePeriodicWithJitter:
         )
         # Fire the one-shot.
         _delay, on_first_fire, _hass = _call_later_calls[0]
-        on_first_fire(datetime(2026, 4, 28, 23, 0, 0))
+        on_first_fire(datetime(2026, 4, 28, 23, 0, 0, tzinfo=UTC))
         # Now the steady-state tracker is the active timer.
         unsub()
         assert _track_cancel_calls == [0]
@@ -3628,14 +3631,12 @@ def _is_type_checking_block(node: ast.If) -> bool:
     """True if ``node.test`` is the bare name ``TYPE_CHECKING``."""
     if isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
         return True
-    if (
+    return bool(
         isinstance(node.test, ast.Attribute)
         and isinstance(node.test.value, ast.Name)
         and node.test.value.id == "typing"
         and node.test.attr == "TYPE_CHECKING"
-    ):
-        return True
-    return False
+    )
 
 
 def _walk_with_parents(
@@ -3756,7 +3757,7 @@ class TestHelpersPartialOrderLayering:
     # The surrounding symbol is the INNERMOST function/closure; for
     # ``make_emit_config_error`` the lazy import lives in the inner
     # closure ``emit`` returned by the factory.
-    ALLOWED_LAZY_CROSS_IMPORTS = {
+    ALLOWED_LAZY_CROSS_IMPORTS: ClassVar = {
         ("helpers_logic", "emit", "helpers_runtime"),
     }
 

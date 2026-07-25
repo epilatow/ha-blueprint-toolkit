@@ -111,7 +111,7 @@ def _run_dev_install(
         cmd.extend(["--cli-symlink-dir", str(cli_symlink_dir)])
     if dry_run:
         cmd.append("--dry-run")
-    return subprocess.run(cmd, capture_output=True, text=True)
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
 def _installed_paths(ha_config: Path) -> list[Path]:

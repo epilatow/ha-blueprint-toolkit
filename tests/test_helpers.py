@@ -12,7 +12,7 @@
 """Tests for helpers module."""
 
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -35,12 +35,12 @@ from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     slugify,
 )
 
-T0 = datetime(2024, 1, 15, 12, 0, 0)
+T0 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 class TestFormatTimestamp:
     def test_full_format(self) -> None:
-        dt = datetime(2024, 3, 5, 14, 7, 9)
+        dt = datetime(2024, 3, 5, 14, 7, 9, tzinfo=UTC)
         result = format_timestamp(
             "YYYY-MM-DD HH:mm:ss",
             dt,
@@ -48,7 +48,7 @@ class TestFormatTimestamp:
         assert result == "2024-03-05 14:07:09"
 
     def test_short_year(self) -> None:
-        dt = datetime(2024, 1, 1, 0, 0, 0)
+        dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
         assert format_timestamp("YY", dt) == "24"
 
     def test_empty_template(self) -> None:
@@ -58,14 +58,14 @@ class TestFormatTimestamp:
         assert format_timestamp("no tokens here", T0) == "no tokens here"
 
     def test_prefix_with_tokens(self) -> None:
-        dt = datetime(2024, 6, 15, 8, 30, 0)
+        dt = datetime(2024, 6, 15, 8, 30, 0, tzinfo=UTC)
         result = format_timestamp("Log at HH:mm - ", dt)
         assert result == "Log at 08:30 - "
 
 
 class TestFormatNotification:
     def test_prefix_and_suffix(self) -> None:
-        dt = datetime(2024, 6, 15, 8, 30, 0)
+        dt = datetime(2024, 6, 15, 8, 30, 0, tzinfo=UTC)
         result = format_notification(
             "Fan on.",
             "PRE: ",
@@ -79,7 +79,7 @@ class TestFormatNotification:
         assert result == "hello"
 
     def test_timestamp_tokens_in_both(self) -> None:
-        dt = datetime(2024, 1, 2, 3, 4, 5)
+        dt = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
         result = format_notification(
             "msg",
             "YYYY-MM-DD ",

@@ -87,25 +87,25 @@ shared `register_blueprint_handler` / `unregister_blueprint_handler` consume.
 Fields:
 
 ```python
-service: str            # slug; "trigger_entity_controller"
-service_tag: str        # short tag for logs/notifs; "TEC"
-service_name: str       # human-readable; "Trigger Entity Controller"
-blueprint_path: str     # "blueprint_toolkit/<service>.yaml"
-service_handler         # async (hass, ServiceCall) -> Any
-                        #   (None for void handlers, a ``ServiceResponse``
-                        #   mapping for handlers that opt into
-                        #   ``supports_response``)
-supports_response       # ``homeassistant.core.SupportsResponse`` value or
-                        #   None. When set, the dispatcher registers the
-                        #   service with ``supports_response=`` so the
-                        #   blueprint runner can capture the handler's
-                        #   return value via ``response_variable``.
-kick_variables          # dict[str, Any] | None  (flat ``automation.trigger``
-                        #   variables for restart-recovery)
-on_reload               # callback (hass) -> None
-on_entity_remove        # callback (hass, entity_id) -> None
-on_entity_rename        # callback (hass, old_id, new_id) -> None
-on_teardown             # callback (hass) -> None
+service: str  # slug; "trigger_entity_controller"
+service_tag: str  # short tag for logs/notifs; "TEC"
+service_name: str  # human-readable; "Trigger Entity Controller"
+blueprint_path: str  # "blueprint_toolkit/<service>.yaml"
+service_handler  # async (hass, ServiceCall) -> Any
+#   (None for void handlers, a ``ServiceResponse``
+#   mapping for handlers that opt into
+#   ``supports_response``)
+supports_response  # ``homeassistant.core.SupportsResponse`` value or
+#   None. When set, the dispatcher registers the
+#   service with ``supports_response=`` so the
+#   blueprint runner can capture the handler's
+#   return value via ``response_variable``.
+kick_variables  # dict[str, Any] | None  (flat ``automation.trigger``
+#   variables for restart-recovery)
+on_reload  # callback (hass) -> None
+on_entity_remove  # callback (hass, entity_id) -> None
+on_entity_rename  # callback (hass, old_id, new_id) -> None
+on_teardown  # callback (hass) -> None
 ```
 
 All hooks default to `None` and are independently optional. Watchdogs that
@@ -493,8 +493,8 @@ The service layer's call flow is uniform across handlers:
        instance_id=instance_id,
        last_run=now,
        runtime=time.monotonic() - started,
-       state=result.action.name,           # or "ok"
-       extra_attributes={...},             # per-handler
+       state=result.action.name,  # or "ok"
+       extra_attributes={...},  # per-handler
    )
    ```
 

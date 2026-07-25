@@ -34,7 +34,7 @@ import sys
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -56,7 +56,7 @@ from conftest import (  # noqa: E402
 
 _stubs = install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
-from custom_components.blueprint_toolkit.sensor_threshold_entity_controller import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.sensor_threshold_entity_controller import (  # noqa: E402,E501
     handler,
 )
 
@@ -388,7 +388,7 @@ class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
 
     handler = handler
     blueprint_filename = "sensor_threshold_entity_controller.yaml"
-    template_defaults = {
+    template_defaults: ClassVar = {
         "instance_id": "automation.stec_default_check",
         "trigger_id": "manual",
         "controlled_entities_raw": ["switch.fan"],

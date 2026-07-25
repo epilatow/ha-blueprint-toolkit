@@ -12,7 +12,7 @@
 """Tests for device_watchdog module."""
 
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -21,7 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 
-from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.device_watchdog.logic import (  # noqa: E402
     CHECK_ALL,
     CHECK_DEVICE_UPDATES,
     CHECK_DISABLED_DIAGNOSTICS,
@@ -53,7 +53,7 @@ from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     validate_and_join_regex_patterns,
 )
 
-T0 = datetime(2024, 1, 15, 12, 0, 0)
+T0 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 
 # -- Helpers -----------------------------------------
@@ -72,7 +72,7 @@ def _config(**overrides: object) -> Config:
     return Config(**defaults)  # type: ignore[arg-type]
 
 
-_UNSET: datetime = datetime(1970, 1, 1)
+_UNSET: datetime = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _entity(
@@ -136,7 +136,7 @@ class TestFilterEntities:
             _entity("sensor.temp"),
             _entity("sensor.battery_level"),
         ]
-        kept, filtered = _filter_entities(cfg, entities)
+        kept, _filtered = _filter_entities(cfg, entities)
         assert len(kept) == 1
         assert kept[0].entity_id == "sensor.temp"
 
@@ -810,7 +810,10 @@ class TestCheckDisabledDiagnostics:
             "zwave_js",
             entries,
         )
-        assert [d.original_name for d in result] == ["Last seen", "Node status"]
+        assert [d.original_name for d in result] == [
+            "Last seen",
+            "Node status",
+        ]
 
     def test_zwave_js_recommended_set(self) -> None:
         # Pin the zwave_js recommended-diagnostic set: the

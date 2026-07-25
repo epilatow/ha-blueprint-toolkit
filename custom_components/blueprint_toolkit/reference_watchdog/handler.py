@@ -571,7 +571,7 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
     # Label registry (v1: stored but not validated by any
     # adapter yet; see docs follow-ups).
     try:
-        from homeassistant.helpers import (  # noqa: PLC0415
+        from homeassistant.helpers import (
             label_registry as lr,
         )
 

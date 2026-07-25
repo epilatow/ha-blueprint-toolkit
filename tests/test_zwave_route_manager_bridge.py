@@ -37,7 +37,7 @@ def _run(coro: Coroutine[Any, Any, T]) -> T:
 sys.path.insert(0, str(REPO_ROOT))
 
 
-from custom_components.blueprint_toolkit.zwave_route_manager.bridge import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_route_manager.bridge import (  # noqa: E402
     API_ASSIGN_PRIORITY_SUC_RETURN_ROUTE,
     API_DELETE_SUC_RETURN_ROUTES,
     API_GET_NODES,
@@ -260,7 +260,7 @@ def _make_client_with_mock_sio() -> tuple[ZwaveJsUiClient, MagicMock]:
     mock_sio.connect = AsyncMock()
     mock_sio.disconnect = AsyncMock()
     mock_sio.call = AsyncMock()
-    client._sio = mock_sio  # noqa: SLF001
+    client._sio = mock_sio
     return client, mock_sio
 
 
@@ -279,7 +279,7 @@ class TestZwaveJsUiClientConnect:
             with patch.dict(sys.modules, {"socketio": mock_module}):
                 await client.connect()
 
-            assert client._sio is fake_sio  # noqa: SLF001
+            assert client._sio is fake_sio
             fake_sio.connect.assert_awaited_once_with(
                 "http://core-zwave-js:8091",
                 socketio_path="/socket.io",
@@ -317,7 +317,7 @@ class TestZwaveJsUiClientConnect:
             client, mock_sio = _make_client_with_mock_sio()
             await client.disconnect()
             mock_sio.disconnect.assert_awaited_once()
-            assert client._sio is None  # noqa: SLF001
+            assert client._sio is None
 
         _run(_do())
 
@@ -326,7 +326,7 @@ class TestZwaveJsUiClientConnect:
             # Safe no-op.
             client = ZwaveJsUiClient("core-zwave-js", 8091)
             await client.disconnect()  # must not raise
-            assert client._sio is None  # noqa: SLF001
+            assert client._sio is None
 
         _run(_do())
 

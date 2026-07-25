@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 # Make custom_components/ importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
+import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Generator

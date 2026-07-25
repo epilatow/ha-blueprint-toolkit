@@ -95,7 +95,7 @@ def run_test_file(
     if coverage:
         cmd.append("--coverage")
 
-    cp = subprocess.run(cmd, cwd=REPO_ROOT)
+    cp = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
     return TestResult(name=name, returncode=cp.returncode)
 
 
@@ -124,7 +124,7 @@ def run_repo_shared_phase(
     ]
     if verbose:
         cmd.append("-v")
-    cp = subprocess.run(cmd, cwd=REPO_ROOT)
+    cp = subprocess.run(cmd, cwd=REPO_ROOT, check=False)
     return TestResult(name="repo-shared", returncode=cp.returncode)
 
 

@@ -1036,9 +1036,7 @@ def _is_entity_excluded(
     """
     if value in exclude_list:
         return True
-    if exclude_regex and matches_pattern(value, exclude_regex):
-        return True
-    return False
+    return bool(exclude_regex and matches_pattern(value, exclude_regex))
 
 
 # -- Per-source adapters -------------------------------------------------
@@ -1686,7 +1684,7 @@ def _collect_findings(
     # customized. We don't walk it for refs -- the key
     # IS the ref.
     if owner.integration == "customize" and isinstance(tree, dict):
-        for eid_key, _attrs in tree.items():
+        for eid_key in tree:
             eid = str(eid_key)
             # Capture every customize key as a seen entity
             # ref BEFORE the user-target exclusion runs --
@@ -2130,7 +2128,7 @@ def _rw_yaml_loader() -> type:
 
 def _read_yaml_file(path: str) -> object:
     """Read + parse a YAML file. Returns None on any failure."""
-    import io  # noqa: UP035
+    import io
 
     import yaml
 
@@ -2141,14 +2139,14 @@ def _read_yaml_file(path: str) -> object:
     except OSError:
         return None
     try:
-        return yaml.load(content, Loader=loader)  # noqa: S506
+        return yaml.load(content, Loader=loader)
     except yaml.YAMLError:
         return None
 
 
 def _read_json_file(path: str) -> object:
     """Read + parse a JSON file. Returns None on any failure."""
-    import io  # noqa: UP035
+    import io
     import json
 
     try:
@@ -2238,7 +2236,7 @@ def _discover_yaml_sources(
     Parsed data is retained from discovery so files
     aren't parsed twice.
     """
-    import io  # noqa: UP035
+    import io
     import os
 
     visited: set[str] = set()
@@ -2976,9 +2974,7 @@ def _scan_unused_devices(
     def _flag(dev: DeviceRecord) -> bool:
         if dev.device_id in active_devices:
             return False
-        if dev.device_id in rescued_by_cascade:
-            return False
-        return True
+        return dev.device_id not in rescued_by_cascade
 
     # Emit unused-device records for candidates that are
     # neither directly active nor rescued by cascade. The

@@ -28,7 +28,7 @@ from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     DeviceRef,
     PersistentNotification,
 )
-from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # noqa: E402
     _UNUSED_DEVICE_SKIP_INTEGRATIONS,
     _UNUSED_DEVICELESS_SKIP_DOMAINS,
     _UNUSED_DEVICELESS_SKIP_PLATFORMS,
@@ -529,7 +529,7 @@ class TestScanAutomations:
         )
         owners = _scan_automations(source, ts)
         assert len(owners) == 1
-        owner, tree = owners[0]
+        owner, _tree = owners[0]
         assert owner.integration == "automation"
         assert owner.block_path == "config-block[0]"
         assert owner.friendly_name == "Test Auto"
@@ -3719,7 +3719,9 @@ class TestScanUnusedDevices:
         assert result.total == 1
         assert result.excluded == 1
 
-    def test_excluded_counts_user_silenced_regardless_of_activity(self) -> None:
+    def test_excluded_counts_user_silenced_regardless_of_activity(
+        self,
+    ) -> None:
         # Both devices match the user's regex -- ``excluded``
         # counts the user-silenced subset of the candidate
         # pool regardless of whether they would have been

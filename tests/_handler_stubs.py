@@ -133,7 +133,7 @@ def install_homeassistant_stubs(
     # alias for the response mapping; expose it as a
     # subscriptable type so type annotations resolve at
     # import time.
-    import enum as _enum  # noqa: PLC0415
+    import enum as _enum
 
     class _SupportsResponse(_enum.Enum):
         NONE = "none"
@@ -145,7 +145,7 @@ def install_homeassistant_stubs(
     # ``helpers.cv_ha_domain_list`` calls ``valid_domain``;
     # mirror HA's regex (no leading/trailing underscore,
     # no double-underscore, leading digit allowed).
-    import re as _re  # noqa: PLC0415
+    import re as _re
 
     _valid_domain_re = _re.compile(
         r"^(?!_)(?!.+__)[\da-z_]+(?<!_)$",

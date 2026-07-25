@@ -60,6 +60,7 @@ class TestRenderDocsDriftCheck:
             capture_output=True,
             text=True,
             cwd=REPO_ROOT,
+            check=False,
         )
         assert r.returncode == 0, (
             "render_docs --check reported drift. This usually "

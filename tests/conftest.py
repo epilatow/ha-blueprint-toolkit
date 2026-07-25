@@ -6,8 +6,9 @@ import os
 import shutil
 import sys
 import tempfile
+from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -110,7 +111,7 @@ def run_tests(
         env["PYTHONPATH"] = str(script_path.parent)
         env["COVERAGE_FILE"] = str(cov_dir / f"{module}.coverage")
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        result = subprocess.run(cmd)
+        result = subprocess.run(cmd, check=False)
         # Clean up .coverage file left by subprocess
         cov_file = Path.cwd() / ".coverage"
         if cov_file.exists():
@@ -166,8 +167,8 @@ class BlueprintSchemaDriftBase:
     blueprint_filename: str = ""  # subclass override
 
     def _load_blueprint(self) -> dict[str, Any]:
-        import voluptuous as vol  # noqa: F401, PLC0415
-        import yaml  # noqa: PLC0415
+        import voluptuous as vol  # noqa: F401
+        import yaml
 
         class _PermissiveLoader(yaml.SafeLoader):
             """SafeLoader that ignores blueprint-only ``!`` tags.
@@ -188,7 +189,7 @@ class BlueprintSchemaDriftBase:
         _PermissiveLoader.add_multi_constructor("!", _passthrough)  # type: ignore[no-untyped-call]
 
         path = _BUNDLED_BLUEPRINTS_DIR / self.blueprint_filename
-        loaded: dict[str, Any] = yaml.load(  # noqa: S506
+        loaded: dict[str, Any] = yaml.load(
             path.read_text(),
             Loader=_PermissiveLoader,
         )
@@ -197,7 +198,7 @@ class BlueprintSchemaDriftBase:
 
     @staticmethod
     def _required_keys(schema: Any) -> set[str]:
-        import voluptuous as vol  # noqa: PLC0415
+        import voluptuous as vol
 
         return {
             str(k.schema) for k in schema.schema if isinstance(k, vol.Required)
@@ -272,7 +273,7 @@ class BlueprintDefaultsRoundTripBase(BlueprintSchemaDriftBase):
     the test.
     """
 
-    template_defaults: dict[str, Any] = {}  # subclass override
+    template_defaults: ClassVar[dict[str, Any]] = {}  # subclass override
 
     def test_blueprint_defaults_pass_schema(self) -> None:
         bp = self._load_blueprint()
@@ -353,7 +354,7 @@ class RecoveryEventsIntegrationBase:
         hass: Any,
         caplog: Any,
     ) -> None:
-        import logging  # noqa: PLC0415
+        import logging
 
         with caplog.at_level(
             logging.INFO,
@@ -375,9 +376,9 @@ class RecoveryEventsIntegrationBase:
         hass: Any,
         caplog: Any,
     ) -> None:
-        import logging  # noqa: PLC0415
+        import logging
 
-        from homeassistant.components.automation import (  # noqa: PLC0415
+        from homeassistant.components.automation import (
             EVENT_AUTOMATION_RELOADED,
         )
 
@@ -462,7 +463,7 @@ class HandlerArgparseGuardsBase:
                 default_factory=list,
             )
 
-            async def async_call(  # noqa: D401
+            async def async_call(
                 self,
                 domain: str,
                 name: str,
@@ -526,8 +527,8 @@ class HandlerArgparseGuardsBase:
         self,
         payload: dict[str, Any],
     ) -> list[tuple[Any, ...]]:
-        import asyncio  # noqa: PLC0415
-        from datetime import datetime  # noqa: PLC0415
+        import asyncio
+        from datetime import datetime
 
         captured: list[tuple[Any, ...]] = []
 
@@ -553,7 +554,7 @@ class HandlerArgparseGuardsBase:
                 self.handler._async_argparse(
                     self._make_hass(),
                     self._make_call(payload),
-                    now=datetime(2026, 4, 28, 12, 0, 0),
+                    now=datetime(2026, 4, 28, 12, 0, 0, tzinfo=UTC),
                 ),
             )
         finally:
@@ -592,11 +593,11 @@ class HandlerArgparseGuardsBase:
         guard.
         """
         if self.valid_payload is None:
-            import pytest  # noqa: PLC0415
+            import pytest
 
             pytest.skip("subclass did not supply ``valid_payload``")
         if "notification_service" not in self.valid_payload:
-            import pytest  # noqa: PLC0415
+            import pytest
 
             pytest.skip("handler schema has no ``notification_service`` field")
         payload = dict(self.valid_payload)

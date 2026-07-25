@@ -380,7 +380,7 @@ async def _async_service_layer(
         )
 
 
-async def _do_reconcile(  # noqa: PLR0912, PLR0913, PLR0915
+async def _do_reconcile(
     hass: HomeAssistant,
     state: ZrmInstanceState,
     *,
@@ -1023,7 +1023,7 @@ def _circuit_breaker_notification(
 ) -> PersistentNotification:
     cooldown_minutes = max(
         1,
-        int(round((open_until - now).total_seconds() / 60)),
+        round((open_until - now).total_seconds() / 60),
     )
     try:
         local_resume = open_until.astimezone().strftime("%H:%M")
@@ -1181,7 +1181,7 @@ def _format_bridge_exception(exc: BaseException) -> str:
 
 def _bridge_timeout_excs() -> tuple[type[BaseException], ...]:
     """Late import: socketio types only available at runtime."""
-    import socketio.exceptions as sio_exc  # noqa: PLC0415
+    import socketio.exceptions as sio_exc
 
     return (
         ConnectionError,

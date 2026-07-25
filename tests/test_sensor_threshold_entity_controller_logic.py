@@ -21,7 +21,7 @@ on-subset" contract.
 
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypedDict, Unpack
 
@@ -31,7 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 
-from custom_components.blueprint_toolkit.sensor_threshold_entity_controller.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.sensor_threshold_entity_controller.logic import (  # noqa: E402,E501
     Action,
     Config,
     Controller,
@@ -47,7 +47,7 @@ from custom_components.blueprint_toolkit.sensor_threshold_entity_controller.logi
     parse_float,
 )
 
-T0 = datetime(2024, 1, 15, 12, 0, 0)
+T0 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 # The single controlled entity used by the N=1 parity tests.
 SW = "switch.fan"

@@ -59,6 +59,7 @@ def _has_parent() -> bool:
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     return r.returncode == 0
 
@@ -69,6 +70,7 @@ def _file_in_commit(rev: str, path: str) -> str | None:
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     if r.returncode != 0:
         return None

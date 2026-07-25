@@ -59,9 +59,7 @@ HACS_REPO_FULL_NAME = "epilatow/ha-blueprint-toolkit"
 def _run_ssh(host: str, command: str, *, check: bool = True) -> str:
     """Run a shell snippet on the host and return stdout."""
     r = subprocess.run(
-        ["ssh", host, command],
-        capture_output=True,
-        text=True,
+        ["ssh", host, command], capture_output=True, text=True, check=False
     )
     if check and r.returncode != 0:
         raise RuntimeError(
@@ -95,7 +93,7 @@ def _check_clean_tree(root: Path) -> None:
 
 
 def _timestamp() -> str:
-    return _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return _dt.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
 
 
 def _read_hacs_version(host: str, ha_config: str) -> str | None:

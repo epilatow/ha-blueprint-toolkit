@@ -593,7 +593,7 @@ def slugify(text: str) -> str:
     empty slug (e.g. emoji-only, punctuation-only) returns
     ``"unknown"``, matching HA's fallback.
     """
-    import unicodedata  # noqa: PLC0415
+    import unicodedata
 
     if not text:
         return ""
@@ -1211,7 +1211,7 @@ def make_emit_config_error(
         instance_id: str,
         errors: list[str],
     ) -> None:
-        from .helpers_runtime import emit_config_error  # noqa: PLC0415
+        from .helpers_runtime import emit_config_error
 
         await emit_config_error(
             hass,
@@ -1527,8 +1527,8 @@ def spec_bucket(entry: Any, service: str) -> dict[str, Any]:
 # included because each issue-raising module subclasses
 # ``helpers.Issue``.
 __all__ = [
-    "BlueprintHandlerSpec",
     "CONTROLLABLE_DOMAINS",
+    "BlueprintHandlerSpec",
     "CappableResult",
     "DeviceRef",
     "FixService",

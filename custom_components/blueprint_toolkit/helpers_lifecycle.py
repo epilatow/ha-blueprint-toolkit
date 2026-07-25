@@ -60,7 +60,7 @@ def all_integration_ids(hass: HomeAssistant) -> list[str]:
     -- HA removed the ``hass.helpers.*`` accessor surface,
     so module-imports are the only path to the registry.
     """
-    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er
 
     ent_reg = er.async_get(hass)
     integrations: set[str] = set()
@@ -87,7 +87,7 @@ def integration_entity_ids(
     pivot on the same registry walk and share the function-
     body HA import.
     """
-    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er
 
     ent_reg = er.async_get(hass)
     return [
@@ -136,11 +136,11 @@ def file_editor_addon_ingress_url(hass: HomeAssistant) -> str:
     probe per-evaluation -- install / uninstall events
     propagate on the next scan without a reload.
     """
-    from homeassistant.helpers.hassio import is_hassio  # noqa: PLC0415
+    from homeassistant.helpers.hassio import is_hassio
 
     if not is_hassio(hass):
         return ""
-    from homeassistant.components.hassio import (  # noqa: PLC0415
+    from homeassistant.components.hassio import (
         get_addons_info,
     )
 
@@ -194,7 +194,7 @@ def discover_automations_using_blueprint(
     Returns an empty list when the automation component
     isn't loaded yet (early in HA startup).
     """
-    from homeassistant.components.automation import (  # noqa: PLC0415
+    from homeassistant.components.automation import (
         DATA_COMPONENT,
     )
 
@@ -298,8 +298,8 @@ def schedule_periodic_with_jitter(
     leaving it running detached against a torn-down service
     registration.
     """
-    from homeassistant.core import callback  # noqa: PLC0415
-    from homeassistant.helpers.event import (  # noqa: PLC0415
+    from homeassistant.core import callback
+    from homeassistant.helpers.event import (
         async_call_later,
         async_track_time_interval,
     )
@@ -387,7 +387,7 @@ def make_lifecycle_mutators(
     leave ``False`` for handlers with no such field
     (STEC / TEC).
     """
-    from homeassistant.core import callback  # noqa: PLC0415
+    from homeassistant.core import callback
 
     @callback  # type: ignore[untyped-decorator,unused-ignore]
     def _on_reload(hass: HomeAssistant) -> None:
@@ -607,7 +607,7 @@ async def _dispatch_repairs_with_sweep(
     ``process_persistent_notifications`` carries its own
     skip-when-identical guard for that reason.
     """
-    from homeassistant.helpers import (  # noqa: PLC0415
+    from homeassistant.helpers import (
         issue_registry as ir,
     )
 
@@ -669,12 +669,12 @@ async def register_blueprint_handler(
     bus subscriptions are unsubscribed before
     re-subscribing.
     """
-    from homeassistant.components.automation import (  # noqa: PLC0415
+    from homeassistant.components.automation import (
         EVENT_AUTOMATION_RELOADED,
     )
-    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED  # noqa: PLC0415
-    from homeassistant.core import callback  # noqa: PLC0415
-    from homeassistant.helpers import (  # noqa: PLC0415
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    from homeassistant.core import callback
+    from homeassistant.helpers import (
         entity_registry as er,
     )
 
@@ -718,7 +718,7 @@ async def register_blueprint_handler(
                     raw_data=raw_data,
                     exc=exc,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # The PN dispatch itself failed (HA
                 # shutting down, services unavailable,
                 # ...). Log it so the failure to surface
@@ -747,7 +747,7 @@ async def register_blueprint_handler(
                 service=spec.service,
                 raw_data=raw_data,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.exception(
                 "Failed to dismiss prior handler-crash notification for %s",
                 spec.service,
@@ -835,7 +835,7 @@ async def register_blueprint_handler(
                 )
 
         def _refresh_enable_tracker() -> None:
-            from homeassistant.helpers.event import (  # noqa: PLC0415
+            from homeassistant.helpers.event import (
                 async_track_state_change_event,
             )
 

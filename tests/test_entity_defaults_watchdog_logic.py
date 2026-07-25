@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 
 from custom_components.blueprint_toolkit import helpers  # noqa: E402
-from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (  # noqa: E402
     CHECK_ALL,
     DRIFT_CHECK_DEVICE_ENTITY_ID,
     DRIFT_CHECK_DEVICE_ENTITY_NAME,
@@ -2346,7 +2346,7 @@ class TestDevicelessIdDriftRepairBranch:
             create_repairs=True,
             drift_checks=frozenset({DRIFT_CHECK_DEVICE_ENTITY_ID}),
         )
-        notifications, repairs = self._run(cfg)
+        notifications, _repairs = self._run(cfg)
         assert self._repair_specs(notifications) == []
         assert not [
             n for n in notifications if n.notification_id == self._AGG_ID

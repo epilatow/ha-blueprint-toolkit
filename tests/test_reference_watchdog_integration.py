@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any
 # sys.path the way ``python -m pytest`` would.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
-from conftest import (  # noqa: E402
+import pytest
+from conftest import (
     RecoveryEventsIntegrationBase,
 )
 

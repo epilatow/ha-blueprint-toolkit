@@ -11,17 +11,18 @@
 # This is AI generated code
 """Tests for the standalone zwave_network_info script.
 
-The script bootstraps its own venv for socketio / aiohttp, but
-all the pure logic (formatting, parsing, sorting, row assembly)
-runs in stdlib Python and is what we test here. Network-facing
-fetchers are not unit-tested.
+The script bootstraps its own venv for socketio / aiohttp. Most
+tests exercise its pure logic (formatting, parsing, sorting, and
+row assembly); focused mocks cover important fetcher error paths.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import patch
 
@@ -40,6 +41,38 @@ _SCRIPT_PATH = (
 sys.path.insert(0, str(_SCRIPT_PATH.parent))
 
 import zwave_network_info as zni  # noqa: E402
+
+# --- fetch_zwave_nodes ------------------------------------------
+
+
+class _MalformedNodesClient:
+    async def connect(self, url: str, *, socketio_path: str) -> None:
+        pass
+
+    async def call(
+        self,
+        event: str,
+        data: dict[str, object],
+        *,
+        timeout: float,
+    ) -> dict[str, object]:
+        _ = event, data, timeout
+        return {"result": "not-a-list"}
+
+    async def disconnect(self) -> None:
+        pass
+
+
+def test_fetch_zwave_nodes_rejects_malformed_result() -> None:
+    client = _MalformedNodesClient()
+    socketio = ModuleType("socketio")
+    socketio.__dict__["AsyncClient"] = lambda: client
+    with (
+        patch.dict(sys.modules, {"socketio": socketio}),
+        pytest.raises(TypeError, match="unexpected shape"),
+    ):
+        asyncio.run(zni.fetch_zwave_nodes())
+
 
 # --- _parse_numeric ---------------------------------------------
 

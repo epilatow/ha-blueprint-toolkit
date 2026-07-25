@@ -732,7 +732,7 @@ def parse_config(yaml_text: str) -> tuple[Config, list[ConfigError]]:
     """
     # Deferred so the module imports cleanly in test
     # environments that don't install PyYAML.
-    import yaml  # noqa: PLC0415
+    import yaml
 
     try:
         data = yaml.safe_load(yaml_text)

@@ -708,12 +708,9 @@ def _is_excluded(
         config.exclude_entity_id_regex,
     ):
         return True
-    if helpers.matches_pattern(
-        friendly_name,
-        config.exclude_entity_name_regex,
-    ):
-        return True
-    return False
+    return bool(
+        helpers.matches_pattern(friendly_name, config.exclude_entity_name_regex)
+    )
 
 
 def _check_entity_drift(
@@ -753,12 +750,12 @@ def _check_entity_drift(
     )
 
     # ID drift check
-    if _check_id_enabled(config):
-        if (
-            entity.expected_entity_id is not None
-            and entity.entity_id != entity.expected_entity_id
-        ):
-            id_drifted = True
+    if (
+        _check_id_enabled(config)
+        and entity.expected_entity_id is not None
+        and entity.entity_id != entity.expected_entity_id
+    ):
+        id_drifted = True
 
     # Name drift check
     if _check_name_enabled(config):
@@ -1123,8 +1120,10 @@ def _build_deviceless_notification_message(
 
     if stale_items:
         lines = [
-            "Stale collision suffixes"
-            " (original peer removed, rename recommended):",
+            (
+                "Stale collision suffixes"
+                " (original peer removed, rename recommended):"
+            ),
         ]
         sorted_stale = [(d.entity_id, i, d) for i, d in enumerate(stale_items)]
         sorted_stale.sort()

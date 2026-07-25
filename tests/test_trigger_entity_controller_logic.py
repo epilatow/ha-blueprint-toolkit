@@ -12,7 +12,7 @@
 """Tests for the TEC logic module."""
 
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -21,7 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 
-from custom_components.blueprint_toolkit.trigger_entity_controller.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.trigger_entity_controller.logic import (  # noqa: E402,E501
     ActionType,
     Config,
     EventType,
@@ -35,7 +35,7 @@ from custom_components.blueprint_toolkit.trigger_entity_controller.logic import 
     parse_period,
 )
 
-T0 = datetime(2024, 1, 15, 12, 0, 0)
+T0 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
 LIGHT = "light.hallway"
 LIGHT2 = "light.hallway_2"
@@ -408,7 +408,7 @@ class TestFormatNotification:
         assert LIGHT in result.notification
 
     def test_suffix_with_timestamp_tokens(self) -> None:
-        dt = datetime(2024, 6, 15, 8, 30, 0)
+        dt = datetime(2024, 6, 15, 8, 30, 0, tzinfo=UTC)
         cfg = _config(
             notification_events=[
                 NotificationEvent.TRIGGERED_ON,

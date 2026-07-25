@@ -133,8 +133,8 @@ def main() -> int:
     # ``from .reconciler import ...`` inside installer.py
     # resolve correctly.
     sys.path.insert(0, str(_INTEGRATION_DIR.parent))
-    from blueprint_toolkit import installer  # noqa: PLC0415
-    from blueprint_toolkit.reconciler import ActionKind, plan  # noqa: PLC0415
+    from blueprint_toolkit import installer
+    from blueprint_toolkit.reconciler import ActionKind, plan
 
     the_plan = plan(
         bundled_root=bundled_root,

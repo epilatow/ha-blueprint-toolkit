@@ -40,6 +40,7 @@ def _have_docker() -> bool:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -94,7 +95,7 @@ class DockerHA:
         check: bool = True,
         cwd: str | None = None,
     ) -> None:
-        r = subprocess.run([*self._exec_argv(cwd), *cmd])
+        r = subprocess.run([*self._exec_argv(cwd), *cmd], check=False)
         if check and r.returncode != 0:
             raise RuntimeError(f"docker exec {cmd!r} exited {r.returncode}")
 
@@ -108,6 +109,7 @@ class DockerHA:
             [*self._exec_argv(cwd), *cmd],
             capture_output=True,
             text=True,
+            check=False,
         )
         if check and r.returncode != 0:
             raise RuntimeError(
@@ -335,6 +337,7 @@ def docker_ha(
             ["python3", str(ONBOARD_SCRIPT), "--base-url", HA_BASE_URL],
             capture_output=True,
             text=True,
+            check=False,
         )
         if r.returncode != 0:
             raise RuntimeError(

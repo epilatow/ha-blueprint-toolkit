@@ -83,7 +83,7 @@ def _registered_blueprints(docker_ha: DockerHA) -> set[str]:
     result = reply.get("result", {})
     if not isinstance(result, dict):
         msg = f"blueprint/list result is not a dict: {result!r}"
-        raise AssertionError(msg)
+        raise AssertionError(msg)  # noqa: TRY004 - this is a test assertion
     return set(result.keys())
 
 

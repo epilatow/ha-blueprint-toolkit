@@ -48,7 +48,7 @@ from custom_components.blueprint_toolkit import (  # noqa: E402
 from custom_components.blueprint_toolkit.device_watchdog import (  # noqa: E402
     logic as dw_logic,
 )
-from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E402
     logic as edw_logic,
 )
 from custom_components.blueprint_toolkit.helpers_logic import (  # noqa: E402

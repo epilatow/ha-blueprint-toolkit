@@ -669,7 +669,7 @@ def register_fix_service(
                     raw_data=raw_data,
                     exc=exc,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception(
                     "failed to emit fix-service crash notification for %s",
                     service_name,
@@ -681,7 +681,7 @@ def register_fix_service(
                 service_name=service_name,
                 raw_data=raw_data,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.exception(
                 "failed to dismiss fix-service crash notification for %s",
                 service_name,
@@ -780,7 +780,7 @@ async def validate_payload_or_emit_config_error(
     environment, mirroring the lazy-import shape used in the
     lifecycle file's HA-side late imports.
     """
-    import voluptuous as vol  # noqa: PLC0415
+    import voluptuous as vol
 
     try:
         return schema(raw)
@@ -1064,7 +1064,7 @@ def make_periodic_trigger_callback(
                     "variables": dict(base_vars),
                 },
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning(
                 "[%s] periodic automation.trigger failed for %s;"
                 " next tick will retry",

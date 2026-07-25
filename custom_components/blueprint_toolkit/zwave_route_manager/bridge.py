@@ -260,7 +260,7 @@ class ZwaveJsUiClient:
         in local test envs that don't have python-socketio
         installed.
         """
-        import socketio  # noqa: PLC0415
+        import socketio
 
         self._sio = socketio.AsyncClient()
         url = f"http://{self.host}:{self.port}"
@@ -398,7 +398,7 @@ class ZwaveJsUiClient:
         internally; a thundering herd has been observed to
         stall the serial interface on large meshes.
         """
-        import asyncio  # noqa: PLC0415 - keep async imports local
+        import asyncio
 
         bulk_r = await self.call(API_GET_NODES, [])
         nodes: list[NodeInfo] = []
