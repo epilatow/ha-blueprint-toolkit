@@ -949,8 +949,7 @@ class TestBlueprintDriftChecksOptionsMatchCheckAll:
                 return value
             return None
 
-        # types-PyYAML ships no annotations for add_multi_constructor.
-        _Loader.add_multi_constructor("!", _passthrough)  # type: ignore[no-untyped-call]
+        _Loader.add_multi_constructor("!", _passthrough)
         loaded: dict[str, object] = yaml.load(
             bp_path.read_text(),
             Loader=_Loader,

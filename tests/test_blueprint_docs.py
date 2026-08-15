@@ -78,8 +78,7 @@ def _ignore_unknown_tag(
     return None
 
 
-# types-PyYAML ships no annotations for add_multi_constructor.
-_BlueprintLoader.add_multi_constructor("!", _ignore_unknown_tag)  # type: ignore[no-untyped-call]
+_BlueprintLoader.add_multi_constructor("!", _ignore_unknown_tag)
 
 
 def _load_blueprint(path: Path) -> dict[str, Any]:

@@ -185,8 +185,7 @@ class BlueprintSchemaDriftBase:
                 return node.value
             return None
 
-        # types-PyYAML ships no annotations for add_multi_constructor.
-        _PermissiveLoader.add_multi_constructor("!", _passthrough)  # type: ignore[no-untyped-call]
+        _PermissiveLoader.add_multi_constructor("!", _passthrough)
 
         path = _BUNDLED_BLUEPRINTS_DIR / self.blueprint_filename
         loaded: dict[str, Any] = yaml.load(
