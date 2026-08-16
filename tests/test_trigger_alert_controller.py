@@ -4,6 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "PyYAML",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -54,7 +55,7 @@ EXPECTED_INPUT_KEYS = {
 }
 
 
-class _BlueprintLoader(yaml.SafeLoader):  # type: ignore[misc]
+class _BlueprintLoader(yaml.SafeLoader):
     """SafeLoader that returns None for HA-specific tags like ``!input``."""
 
 
