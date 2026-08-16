@@ -313,15 +313,16 @@ the integration's async lifecycle and each handler's full call path (config
 flow, service registration, argparse error paths, state-entity attributes).
 
 The HACC pin is duplicated across every PEP 723 inline-deps block (one per
-HACC test file under `tests/`) plus `pyproject.toml` (the
-`[tool.repo-shared.code-quality] mypy-extra-deps` fallback and dev-deps). The
-exact pin gives reproducible test runs, but it also means the suite won't
-notice if a future HA release breaks an interface we depend on until someone
-manually bumps the pin. `.github/workflows/hacc-drift.yml` plugs that gap: it
-runs weekly (and on demand via `workflow_dispatch`), rewrites every pin site
-to the latest released HACC version, runs `tests/run_all.py`, and opens (or
-updates) a PR on the `hacc-drift` branch carrying the result. CI failures on
-that PR are the early-warning signal; clean runs are one-click merges.
+HACC test file under `tests/`) plus the
+`[tool.repo-shared.code-quality] mypy-extra-deps` fallback in
+`pyproject.toml`. The exact pin gives reproducible test runs, but it also
+means the suite won't notice if a future HA release breaks an interface we
+depend on until someone manually bumps the pin.
+`.github/workflows/hacc-drift.yml` plugs that gap: it runs weekly (and on
+demand via `workflow_dispatch`), rewrites every pin site to the latest
+released HACC version, runs `tests/run_all.py`, and opens (or updates) a PR on
+the `hacc-drift` branch carrying the result. CI failures on that PR are the
+early-warning signal; clean runs are one-click merges.
 
 ### Manifest version bump rule
 
@@ -384,18 +385,58 @@ test.
 
 mypy `--strict` deps come from each file's PEP 723 `# /// script` block when
 present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
-`pyproject.toml` (HACC
-
-- `types-PyYAML` at `mypy-python-version = "3.14"`). Per-file blocks are kept
-  only where a file needs more than the fallback -- e.g. the HACC test files
-  under `tests/` add `pytest` / `pytest-cov`. Other files fall through to
-  plain `mypy --strict` in the project venv; `pyproject.toml`'s
-  `[[tool.mypy.overrides]]` covers transitive untyped imports (voluptuous,
-  jinja2, socketio, etc.).
+`pyproject.toml` (HACC and `types-PyYAML`, at `mypy-python-version = "3.14"`).
+Per-file blocks are kept only where a file needs more than the fallback --
+e.g. the HACC test files under `tests/` add `pytest` / `pytest-cov`. Other
+files fall through to plain `mypy --strict` in the project venv;
+`pyproject.toml`'s `[[tool.mypy.overrides]]` covers transitive untyped imports
+(voluptuous, jinja2, socketio, etc.).
 
 `repo-shared init` injected `testpaths = ["tests", "_repo_shared/tests"]` into
 `[tool.pytest.ini_options]`, so a bare `uv run pytest` runs both this repo's
 own tests and the shared suite in one invocation.
+
+#### Analysis-dep pinning and stub suppressions
+
+The two kinds of analysis dep are pinned on opposite policies, and the
+difference is deliberate.
+
+`pytest-homeassistant-custom-component` is pinned to an exact version, because
+the pin decides which Home Assistant API surface the code type-checks against
+and a floating one would move that surface mid-run. The drift workflow
+described above owns bumping it -- don't move the pin by hand -- and a green
+run on its PR is the signal to merge, so the pin follows the newest release
+the suite passes against. `pyproject.toml` carries the reasoning; it is not
+repeated here.
+
+The pin says what the code is *validated* against, not what users run.
+`hacs.json` declares the supported Home Assistant floor, and that is the
+compatibility statement.
+
+Neither this section nor `pyproject.toml` names the pinned version in prose.
+Automation moves that literal; prose restating it does not follow, and goes
+stale silently. The pin itself is the only place the version is written down.
+
+Type-stub packages (`types-PyYAML`) are left unpinned. They ship nothing to
+Home Assistant and have no effect on the deployed integration -- they are
+analysis-only, resolved by mypy locally and in CI. Nothing pins them at any
+declaration site, so every run resolves whatever typeshed published last,
+which makes "latest" the only configuration the checks have to satisfy. The
+cost is that a typeshed release can turn CI red on an unrelated change; the
+repair is below, and it is cheap.
+
+That has a direct consequence for suppressions. When a stub release annotates
+something that was previously bare, the `# type: ignore[...]` guarding it
+becomes an unused ignore and `--strict` fails. **Fix that by deleting the
+suppression**, not by pairing it with `unused-ignore` so it stays valid under
+both stub generations: no configured run selects the older release, and a
+suppression that outlives the condition justifying it describes the stubs as
+they were rather than as they are.
+
+The `[<code>,unused-ignore]` pairs under `custom_components/` are the other
+case -- those guard Home Assistant's own stubs, which arrive with the *pinned*
+HACC dep and change only when that pin is bumped. There the pairing lets a
+bump land without breaking the build, so it earns its keep.
 
 ### Standalone checks
 

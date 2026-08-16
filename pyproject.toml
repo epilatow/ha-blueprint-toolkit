@@ -27,17 +27,31 @@ wrap = 78
 # then errors on every ``Any`` subclass / untyped decorator.
 # ``pytest-homeassistant-custom-component`` (HACC) ships HA core as
 # a transitive dependency, so its pin picks which HA API surface
-# mypy validates against. ``==0.13.324`` matches HA 2026.4.x which
-# is what the user's HAOS runs; an unpinned (latest) HACC pulls a
-# newer HA whose API surface no longer matches HAOS's runtime
-# (e.g. ``entity_registry.integration_entities`` got removed
-# between 2026.4 and 2026.5). Bump this pin in lockstep with HAOS.
-# ``types-PyYAML`` adds the stubs PyYAML itself doesn't ship.
+# mypy validates against. Leaving it unpinned would let that
+# surface move mid-run, silently invalidating a green result (HA
+# does remove APIs between releases -- e.g.
+# ``entity_registry.integration_entities``). The pin says what the
+# code is validated against, not what users run -- ``hacs.json``
+# declares the supported HA floor. ``.github/workflows/hacc-drift.yml``
+# owns bumping it: don't move the pin by hand. It rewrites every pin
+# site to the newest release weekly and opens a PR; a green run is
+# the signal to merge, so the pin follows the newest HACC the suite
+# passes against. The literal below is the single source of truth
+# for which version that is -- never restate it in prose here or in
+# docs, because automation moves it and the prose would not follow.
+# ``types-PyYAML`` adds the stubs PyYAML itself doesn't ship. It is
+# left unpinned on purpose: stubs ship nothing to HA and are
+# analysis-only, so every run -- local or CI -- resolves the newest
+# typeshed release and "latest" is the only configuration to
+# satisfy. The cost is that a typeshed release can turn CI red on an
+# unrelated change; the repair is to delete the suppression that has
+# gone unused, never to pair it with ``unused-ignore`` -- see
+# DEVELOPMENT.md "Analysis-dep pinning and stub suppressions".
 mypy-extra-deps = [
     "pytest-homeassistant-custom-component==0.13.331",
     "types-PyYAML",
 ]
-# HACC 0.13.324 only installs on Python 3.14; the integration's own
+# HACC only installs on Python 3.14; the integration's own
 # code targets 3.11, but analyzing 3.11 code under a 3.14 mypy is
 # a superset and safe. The HACC-coupled test files already pin
 # ``requires-python = ">=3.14"`` in their PEP 723 blocks.
@@ -70,7 +84,7 @@ extend-exclude = ["_repo_shared"]
 extend-select = ["E", "F", "W", "I", "B", "UP", "ARG"]
 
 [tool.mypy]
-# HACC 0.13.324's HA stubs use Python 3.12+ syntax (``type X[T] = ...``).
+# HACC's HA stubs use Python 3.12+ syntax (``type X[T] = ...``).
 # Bumping the analyzer to 3.14 lets it parse the stubs; the integration's
 # own code targets 3.11, and 3.11 code analyzed under a 3.14 mypy is a
 # strict superset (no false negatives).
