@@ -49,7 +49,7 @@ wrap = 78
 # gone unused, never to pair it with ``unused-ignore`` -- see
 # DEVELOPMENT.md "Analysis-dep pinning and stub suppressions".
 mypy-extra-deps = [
-    "pytest-homeassistant-custom-component==0.13.331",
+    "pytest-homeassistant-custom-component==0.13.356",
     "types-PyYAML",
 ]
 # HACC only installs on Python 3.14; the integration's own
