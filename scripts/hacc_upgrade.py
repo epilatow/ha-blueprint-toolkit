@@ -75,6 +75,11 @@ WORKTREE_PREFIX = "hacc-upgrade"
 # as distinct from its exit 1 for a real test failure.
 RUN_ALL_INFRA_ERROR = 2
 
+# A shell reports these when it cannot execute the command at all:
+# 127 not found, 126 found but not executable. Missing ``uv`` on a
+# scheduler's PATH lands here, and it is not a test failure.
+SHELL_CANNOT_EXEC = frozenset({126, 127})
+
 
 class Exit(IntEnum):
     """Process exit statuses, meaningful to the scheduler."""
@@ -191,8 +196,8 @@ def mismatched_sites(root: Path, expected: str) -> list[tuple[Path, str]]:
     The rewrite only finds sites carrying the version being
     replaced, so one that drifted elsewhere earlier passes through
     untouched. Left alone it fails the agreement test inside the
-    worktree, and that failure would otherwise be reported as a
-    verdict on the new pin.
+    worktree, where it would surface as an undifferentiated suite
+    failure; named here, it points straight at the offending file.
     """
     found = re.compile(re.escape(f"{PACKAGE}==") + r"(\d+(?:\.\d+)*)")
     listing = git("ls-files", "-z", cwd=root).split("\0")
@@ -291,9 +296,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  0  success, or already on the newest release\n"
             "  2  usage error\n"
             "  3  dirty checkout, wrong branch, or unpushed commits\n"
-            "  4  the run could not complete\n"
-            "  5  the suite failed against the new pin\n"
-            "\nOnly 5 is evidence about the new pin itself."
+            "  4  the suite could not be run at all\n"
+            "  5  the suite failed while verifying the new pin\n"
+            "\n5 does not by itself implicate the new pin: the suite\n"
+            "covers more than the API surface the pin selects. To tell,\n"
+            "re-run the suite in the kept worktree against the branch\n"
+            "point and compare."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -480,8 +488,9 @@ def run(args: argparse.Namespace) -> Exit:
             f"declaration site(s) disagree after the rewrite: {listed}. "
             "These drifted before this run and carry neither the old "
             "nor the new version, so the rewrite could not find them. "
-            "Reconcile them by hand; this is not a verdict on "
-            f"{target}. Worktree {worktree} kept.",
+            "Reconcile them by hand; the suite was not reached, so "
+            f"this says nothing about {target}. Worktree {worktree} "
+            "kept.",
             Exit.ERROR,
         )
 
@@ -508,22 +517,34 @@ def run(args: argparse.Namespace) -> Exit:
     print("running tests/run_all.py against the bump")
     status = run_suite(worktree)
     if status != 0:
-        # run_all.py separates a real test failure from its own
-        # infrastructure error, and the two mean different things
-        # to whoever reads the scheduler's report: only the first
-        # is evidence about the new pin.
-        infra = status == RUN_ALL_INFRA_ERROR
-        return _fail(
-            (
-                f"the test run could not complete against {target}"
-                if infra
-                else f"the suite failed against {target}, which is the "
-                "early warning that a new HA release broke an "
-                "interface we depend on"
+        # Separate a suite that ran and failed from one that never
+        # started -- run_all.py's own infra status, a shell that
+        # could not exec the runner, or a signal. Only the first is
+        # about the tests at all. Neither settles whether the new pin
+        # is at fault, so the message points at a comparison the
+        # reader can run instead of guessing.
+        infra = (
+            status == RUN_ALL_INFRA_ERROR
+            or status in SHELL_CANNOT_EXEC
+            or status < 0
+        )
+        if infra:
+            detail = (
+                "the test run could not complete while verifying "
+                f"{target} (run_all.py exit {status})"
             )
-            + f" (run_all.py exit {status}); worktree "
-            f"{worktree} kept for inspection until the next run, "
-            "which rebuilds from scratch and sweeps it.",
+        else:
+            detail = (
+                f"the suite failed while verifying {target} "
+                f"(run_all.py exit {status}). Whether the new pin is "
+                "at fault is not decidable from this run: re-run the "
+                "suite in the kept worktree against the branch point "
+                "and compare. A failure that reproduces there is "
+                "independent of the bump"
+            )
+        return _fail(
+            f"{detail}. Worktree {worktree} kept for inspection until "
+            "the next run, which rebuilds from scratch and sweeps it.",
             Exit.ERROR if infra else Exit.TESTS_FAILED,
         )
     print("suite passed")

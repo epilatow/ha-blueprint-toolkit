@@ -9,12 +9,12 @@
 # This is AI generated code
 """Tests for scripts/hacc_upgrade.py.
 
-Covers the parts that decide what gets rewritten and whether the
-run proceeds at all -- pin parsing, the anchored rewrite, site
-discovery, and the guards that must refuse before touching a
-worktree. The landing path (worktree, suite, fast-forward, push)
-is deliberately not exercised here: it mutates real git state, and
-the pieces it composes are covered above.
+Covers what gets rewritten, whether the run proceeds at all, and
+what it reports: pin parsing, the anchored rewrite, site
+discovery, the guards, and the landing path itself. The landing
+tests drive real git against a throwaway upstream / clone pair in
+``tmp_path`` and stub ``run_suite``, so they exercise publish and
+fast-forward without a multi-minute suite run.
 """
 
 from __future__ import annotations
@@ -468,10 +468,10 @@ class TestLanding:
         )
         assert f"{PACKAGE}==1.2.3" in published
 
-    def test_infra_failure_is_not_a_pin_verdict(
+    def test_infra_failure_is_reported_apart_from_a_failed_suite(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Only a real test failure is evidence about the new pin."""
+        """A suite that could not start is not a suite that failed."""
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
         monkeypatch.setattr(
@@ -530,16 +530,19 @@ class TestLanding:
 
 
 class TestPreexistingDrift:
-    def test_site_drifted_elsewhere_is_not_a_pin_verdict(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_site_drifted_elsewhere_is_named(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """A site the rewrite cannot reach must be named as such.
 
         It carries neither the old nor the new version, so it
         survives untouched and fails the agreement test inside the
-        worktree. Reported as a suite failure it would read as a
-        verdict on the new release, which is the one thing the exit
-        statuses promise it is not.
+        worktree. Left to surface that way it is one more
+        undifferentiated suite failure; named here, it points
+        straight at the file to repair.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         drifted = clone / "drifted.toml"
@@ -558,6 +561,8 @@ class TestPreexistingDrift:
 
         args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
         assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        err = capsys.readouterr().err
+        assert "drifted.toml pins 9.9.9" in err
 
 
 class TestDowngradeGuard:
@@ -605,6 +610,132 @@ class TestMainFunnel:
         assert hacc_upgrade.main(["--to", "1.2.3"]) == int(
             hacc_upgrade.Exit.ERROR
         )
+
+
+class TestFailureMessage:
+    """The only claim the tool itself makes about a failure.
+
+    The suite's own output says more, but this line is what the
+    tool asserts and what rides with the exit status the scheduler
+    keys on. Nothing else pins its text, so a claim that is false
+    on one branch reaches the reader unnoticed.
+    """
+
+    def _run_and_capture(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        suite_status: int,
+    ) -> str:
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: suite_status)
+        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        hacc_upgrade.run(args)
+        return capsys.readouterr().err
+
+    def test_failed_suite_does_not_attribute_a_cause(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        err = self._run_and_capture(tmp_path, monkeypatch, capsys, 1)
+        assert "the suite failed while verifying 4.5.6" in err
+        assert "not decidable" in err
+        assert "broke an interface" not in err
+
+    def test_infra_failure_claims_nothing_about_phases(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Nothing ran, so nothing about the run can be inferred.
+
+        run_all.py's infra status fires before the first phase, so
+        any guidance about which phase failed would be guaranteed
+        false on this branch.
+        """
+        err = self._run_and_capture(
+            tmp_path, monkeypatch, capsys, hacc_upgrade.RUN_ALL_INFRA_ERROR
+        )
+        assert "could not complete" in err
+        assert "not decidable" not in err
+        # No phase ran, so nothing may point the reader at one.
+        sentence = err.split("Worktree")[0]
+        assert "phase" not in sentence
+
+    def test_unrunnable_suite_is_not_a_test_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """127 means the runner never started, not that tests failed.
+
+        A scheduler without ``uv`` on PATH produces exactly this,
+        and reporting it as a suite failure would point at the new
+        pin for something that never exercised it.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 127)
+
+        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        err = capsys.readouterr().err
+        assert "could not complete" in err
+        assert "not decidable" not in err
+
+    def test_both_branches_name_the_kept_worktree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        for status in (1, hacc_upgrade.RUN_ALL_INFRA_ERROR):
+            root = tmp_path / str(status)
+            root.mkdir()
+            err = self._run_and_capture(root, monkeypatch, capsys, status)
+            assert "kept for inspection" in err
+            # The branches supply their own text and the suffix
+            # supplies the punctuation joining them; a branch that
+            # also terminates itself doubles the period.
+            assert ". Worktree " in err
+            assert ".. Worktree" not in err
+
+
+class TestHelpEpilog:
+    def test_epilog_attributes_no_cause_to_exit_five(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The epilog carried the claim this tool no longer makes.
+
+        It is the other place the exit statuses are described, so
+        an attribution deleted from the failure message can quietly
+        reappear here.
+        """
+        with pytest.raises(SystemExit):
+            hacc_upgrade.parse_args(["--help"])
+        out = capsys.readouterr().out
+
+        assert "5" in out
+        assert "does not by itself implicate the new pin" in out
+        assert "evidence about" not in out
+        assert "broke an interface" not in out
+
+    def test_epilog_lists_every_exit_status(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The scheduler keys on these, so none may go undocumented."""
+        with pytest.raises(SystemExit):
+            hacc_upgrade.parse_args(["--help"])
+        out = capsys.readouterr().out
+
+        for code in hacc_upgrade.Exit:
+            assert f"  {int(code)}  " in out
 
 
 class TestExitCodes:

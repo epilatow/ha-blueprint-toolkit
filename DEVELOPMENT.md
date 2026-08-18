@@ -322,9 +322,15 @@ depend on until someone manually bumps the pin. `scripts/hacc_upgrade.py`
 plugs that gap. Run it weekly from a scheduler (see below): it rewrites every
 pin site to the latest released HACC version, runs `tests/run_all.py` against
 the bump in a throwaway worktree, and with `--push` fast-forwards the default
-branch onto it. A red suite is the early-warning signal that a new HA release
-broke an interface we depend on; the worktree is kept for inspection and the
-exit status is non-zero, which is what the scheduler reports.
+branch onto it. A red suite blocks the bump: the worktree is kept for
+inspection and the exit status is non-zero, which is what the scheduler
+reports. The failing phase is a reasonable first look -- most phases install
+the pin themselves, which makes the new release the first thing to check
+there, though those blocks also resolve `pytest` and the stubs unpinned -- and
+the `repo-shared` phase does not localize at all, since it carries both the
+HA-typed mypy pass and the markdown gate. To settle it either way, re-run the
+suite in the kept worktree against the branch point; a failure that reproduces
+there is independent of the bump.
 
 The bump lands unattended on green by design. A bump that only ever opens a
 proposal is a bump nobody merges, and the pin then sits still while the HA
@@ -343,6 +349,14 @@ carries: a `crony` drop-in bundle at `~/.config/crony/config/` runs the
 directly with `crony status ha-blueprint-toolkit.hacc-upgrade`; a job that
 reports as masked is defined but never fires. `--help` lists the exit statuses
 the scheduler keys on.
+
+The job runs the whole suite, so the host needs everything the suite shells
+out to -- `uv` and, for the markdown gate's `markdownlint-cli2`, `npx`. A
+scheduler's environment is not a login shell and will not have picked either
+up from a shell profile: the job definition has to put them on `PATH` itself
+(sourcing `nvm.sh` for `npx`, as the repo-shared jobs do). Missing tooling
+fails the suite and blocks the bump every week, identically, with nothing
+about the failure pointing at the host rather than the pin.
 
 Silence from a host-side schedule is ambiguous: "no drift this week" and "the
 machine was off" look identical from the repo, and nothing in-repo detects the
