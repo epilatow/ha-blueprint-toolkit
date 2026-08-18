@@ -126,8 +126,9 @@ could touch and verify it still matches reality. The pre-commit checklist:
   or per-automation file layout change.
 - `DEVELOPMENT.md` -- update when dev-process tooling changes: new test
   conventions, new lint rules, new release script, **renamed or removed CLI
-  flags on `dev-deploy.py` / `dev-install.py` / `release.py`**, new required
-  steps in the develop / test / commit cycle.
+  flags on `dev-deploy.py` / `dev-install.py` / `release.py` /
+  `hacc_upgrade.py`**, new required steps in the develop / test / commit
+  cycle.
 - `DEVELOPMENT_AGENT.md` -- update when agent-specific workflow changes
   (review protocol, file markers, dev-deploy verification checklist, etc.).
 - `README.md` -- update when an automation is added, removed, or its one-line
@@ -317,12 +318,46 @@ HACC test file under `tests/`) plus the
 `[tool.repo-shared.code-quality] mypy-extra-deps` fallback in
 `pyproject.toml`. The exact pin gives reproducible test runs, but it also
 means the suite won't notice if a future HA release breaks an interface we
-depend on until someone manually bumps the pin.
-`.github/workflows/hacc-drift.yml` plugs that gap: it runs weekly (and on
-demand via `workflow_dispatch`), rewrites every pin site to the latest
-released HACC version, runs `tests/run_all.py`, and opens (or updates) a PR on
-the `hacc-drift` branch carrying the result. CI failures on that PR are the
-early-warning signal; clean runs are one-click merges.
+depend on until someone manually bumps the pin. `scripts/hacc_upgrade.py`
+plugs that gap. Run it weekly from a scheduler (see below): it rewrites every
+pin site to the latest released HACC version, runs `tests/run_all.py` against
+the bump in a throwaway worktree, and with `--push` fast-forwards the default
+branch onto it. A red suite is the early-warning signal that a new HA release
+broke an interface we depend on; the worktree is kept for inspection and the
+exit status is non-zero, which is what the scheduler reports.
+
+The bump lands unattended on green by design. A bump that only ever opens a
+proposal is a bump nobody merges, and the pin then sits still while the HA
+surface it claims to validate against moves on.
+
+```bash
+scripts/hacc_upgrade.py --dry-run    # report drift, touch nothing
+scripts/hacc_upgrade.py              # build + verify, leave on its branch
+scripts/hacc_upgrade.py --push       # ... and land it on green
+scripts/hacc_upgrade.py --to X.Y.Z   # target a version other than latest
+```
+
+Scheduling is host-side and therefore a setup step, not something the repo
+carries: a `crony` drop-in bundle at `~/.config/crony/config/` runs the
+`--push` form weekly. Nothing in the repo can confirm that exists, so check it
+directly with `crony status ha-blueprint-toolkit.hacc-upgrade`; a job that
+reports as masked is defined but never fires. `--help` lists the exit statuses
+the scheduler keys on.
+
+Silence from a host-side schedule is ambiguous: "no drift this week" and "the
+machine was off" look identical from the repo, and nothing in-repo detects the
+second. A pin that stops moving for a long stretch is worth checking against
+PyPI by hand.
+
+The bump is verified on whichever host the scheduler runs, not across the
+`test.yml` matrix, so one that is green there can still turn a different OS
+red. That is caught after the fact rather than before: `test.yml` runs on
+push, so the landed bump is checked on the full matrix immediately.
+
+This is the one push in the repo that is not gated on a human. The "never push
+without explicit approval" rule in `DEVELOPMENT_AGENT.md` addresses agent
+sessions, which must still ask; it does not govern a scheduled job whose
+entire purpose is to land a verified bump unattended.
 
 ### Manifest version bump rule
 
@@ -403,11 +438,11 @@ difference is deliberate.
 
 `pytest-homeassistant-custom-component` is pinned to an exact version, because
 the pin decides which Home Assistant API surface the code type-checks against
-and a floating one would move that surface mid-run. The drift workflow
-described above owns bumping it -- don't move the pin by hand -- and a green
-run on its PR is the signal to merge, so the pin follows the newest release
-the suite passes against. `pyproject.toml` carries the reasoning; it is not
-repeated here.
+and a floating one would move that surface mid-run. The upgrade command
+described above owns bumping it -- don't move the pin by hand -- and it lands
+a bump only when the suite passes against it, so the pin follows the newest
+release the suite passes against. `pyproject.toml` carries the reasoning; it
+is not repeated here.
 
 The pin says what the code is *validated* against, not what users run.
 `hacs.json` declares the supported Home Assistant floor, and that is the
@@ -416,6 +451,13 @@ compatibility statement.
 Neither this section nor `pyproject.toml` names the pinned version in prose.
 Automation moves that literal; prose restating it does not follow, and goes
 stale silently. The pin itself is the only place the version is written down.
+
+Every declaration site must name the *same* version. `scripts/hacc_upgrade.py`
+rewrites the sites carrying the version it is replacing, so one that has
+already drifted to some third version is invisible to it and would type-check
+against a different Home Assistant release indefinitely.
+`tests/test_analysis_deps.py` gates that agreement separately, which is what
+makes such drift recoverable rather than silent.
 
 Type-stub packages (`types-PyYAML`) are left unpinned. They ship nothing to
 Home Assistant and have no effect on the deployed integration -- they are

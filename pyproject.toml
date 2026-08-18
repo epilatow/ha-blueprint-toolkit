@@ -32,13 +32,14 @@ wrap = 78
 # does remove APIs between releases -- e.g.
 # ``entity_registry.integration_entities``). The pin says what the
 # code is validated against, not what users run -- ``hacs.json``
-# declares the supported HA floor. ``.github/workflows/hacc-drift.yml``
-# owns bumping it: don't move the pin by hand. It rewrites every pin
-# site to the newest release weekly and opens a PR; a green run is
-# the signal to merge, so the pin follows the newest HACC the suite
-# passes against. The literal below is the single source of truth
-# for which version that is -- never restate it in prose here or in
-# docs, because automation moves it and the prose would not follow.
+# declares the supported HA floor. ``scripts/hacc_upgrade.py`` owns
+# bumping it: don't move the pin by hand. Run weekly by a scheduler,
+# it rewrites every pin site to the newest release, runs the suite
+# against it, and lands the bump only when that suite passes, so the
+# pin follows the newest HACC the suite passes against. The literal
+# below is the single source of truth for which version that is --
+# never restate it in prose here or in docs, because automation
+# moves it and the prose would not follow.
 # ``types-PyYAML`` adds the stubs PyYAML itself doesn't ship. It is
 # left unpinned on purpose: stubs ship nothing to HA and are
 # analysis-only, so every run -- local or CI -- resolves the newest
@@ -148,11 +149,12 @@ module = ["pytest_homeassistant_custom_component.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# scripts/render_docs.py, scripts/ha_ws_fetch.py, and the
+# scripts/render_docs.py, scripts/ha_ws_fetch.py,
+# scripts/hacc_upgrade.py, and the
 # bundled zwave_network_info CLI are bare scripts the test
 # files import off a runtime sys.path entry; mypy's import
 # resolver can't see them.
-module = ["render_docs", "zwave_network_info", "ha_ws_fetch"]
+module = ["render_docs", "zwave_network_info", "ha_ws_fetch", "hacc_upgrade"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

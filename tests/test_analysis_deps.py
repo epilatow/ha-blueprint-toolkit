@@ -7,11 +7,13 @@
 # ]
 # ///
 # This is AI generated code
-"""Analysis-dependency invariants, gating two written conventions.
+"""Analysis-dependency invariants, gating written conventions.
 
-Both rules come from ``DEVELOPMENT.md`` "Analysis-dep pinning and
-stub suppressions", and both exist because the convention was
-violated in practice before it was gated.
+The rules come from ``DEVELOPMENT.md`` "Analysis-dep pinning and
+stub suppressions". The first and third gate conventions that were
+violated in practice before anything enforced them; the second
+gates one that holds today but which no tooling can repair once
+broken.
 
 1. Every file carrying a PEP 723 ``# /// script`` block that
    imports ``yaml`` declares ``types-PyYAML``. A PEP 723 block
@@ -23,7 +25,14 @@ violated in practice before it was gated.
    to ``Any`` and ``mypy --strict`` checks none of the file's YAML
    code instead of erroring.
 
-2. The pinned ``pytest-homeassistant-custom-component`` version
+2. Every declaration site names the same
+   ``pytest-homeassistant-custom-component`` version. A block that
+   disagrees type-checks against a different Home Assistant
+   release, and ``scripts/hacc_upgrade.py`` cannot repair it: that
+   tool rewrites sites carrying the version being replaced, so one
+   already drifted elsewhere is invisible to it.
+
+3. The pinned ``pytest-homeassistant-custom-component`` version
    appears only where the dependency is declared, never in prose.
    Automation rewrites the pin literal at every declaration site;
    prose restating it is not rewritten and goes stale silently.
@@ -105,6 +114,39 @@ class TestPep723YamlStubs:
             "`yaml` resolves to `Any` and `mypy --strict` passes "
             "vacuously. Add `types-PyYAML` to each block's "
             "dependencies."
+        )
+
+
+class TestPinAgreement:
+    def test_every_declaration_site_agrees(self) -> None:
+        """A PEP 723 block that disagrees type-checks against a
+        different Home Assistant version than the project claims,
+        and the upgrade tool cannot repair it: that tool rewrites
+        sites carrying the version being replaced, so one already
+        drifted to some third version is invisible to it.
+        """
+        expected = _pinned_hacc_version()
+        # Match version digits only. A greedy ``[\w.]+`` would
+        # swallow the period ending a markdown sentence, reporting
+        # a site the upgrade tool's boundary-anchored match treats
+        # as fine -- a permanent red with no automated repair.
+        pattern = re.compile(re.escape(f"{HACC}==") + r"(\d+(?:\.\d+)*)")
+        offenders: list[str] = []
+        for path in _tracked(".py", ".toml", ".md"):
+            for lineno, line in enumerate(
+                path.read_text().splitlines(), start=1
+            ):
+                found = pattern.search(line)
+                if found is None or found.group(1) == expected:
+                    continue
+                rel = path.relative_to(REPO_ROOT)
+                offenders.append(f"{rel}:{lineno}: pins {found.group(1)}")
+
+        assert not offenders, (
+            f"declaration site(s) disagree with the pinned {expected}:"
+            "\n  " + "\n  ".join(offenders) + "\n\nEvery site must "
+            "name the same version; a stray one silently type-checks "
+            "against a different Home Assistant release."
         )
 
 

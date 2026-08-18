@@ -544,7 +544,10 @@ decide.
 - Never push without explicit per-action approval. Local commits + ff-merge to
   local main are fine; `git push` is not. The user reviews each commit and
   authorizes the push. This applies to every commit, including amended ones
-  from code-review feedback.
+  from code-review feedback. The rule addresses agent sessions; it does not
+  govern `scripts/hacc_upgrade.py`, whose whole purpose is to land a verified
+  dependency bump unattended (see `DEVELOPMENT.md`,
+  "pytest-homeassistant-custom-component harness").
 - Stay in scope. Each commit edits only what its own description calls for.
   Adjacent cleanup that "would be nice to do anyway" goes into a separate
   commit, OR is bumped into a new entry in the relevant tracking doc.
