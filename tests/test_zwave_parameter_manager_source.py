@@ -32,7 +32,7 @@ from unittest.mock import MagicMock
 # ``python -m pytest`` would.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
+import pytest
 
 # zwave_js_server and our own pure modules are safe to import at module
 # scope. pytest-HACC's patch_recorder plugin refuses to load if
@@ -40,13 +40,13 @@ import pytest  # noqa: E402
 # anything from pytest_homeassistant_custom_component.common pulls it in
 # transitively -- so MockConfigEntry, the HA registries, and the recorder
 # helper are deferred into the functions that use them.
-from zwave_js_server.model.node import Node  # noqa: E402
+from zwave_js_server.model.node import Node
 
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (
     DeviceType,
     ParamId,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.source import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.source import (
     build_node_read,
     read_fleet,
 )

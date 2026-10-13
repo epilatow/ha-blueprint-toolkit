@@ -36,7 +36,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.adapter import 
     derive_device_types,
     node_param_metas,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     CATALOG,
     WAKE_UP_INTERVAL_VALUE,
     Device,

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Self
 
@@ -308,7 +309,7 @@ class TestLatestVersion:
                 return b'{"info": {"version": "1.2.3.post1"}}'
 
         monkeypatch.setattr(
-            hacc_upgrade.urllib.request,
+            urllib.request,
             "urlopen",
             lambda *_a, **_k: _Response(),
         )
@@ -331,7 +332,7 @@ class TestLatestVersion:
                 return b'{"info": {"version": 13}}'
 
         monkeypatch.setattr(
-            hacc_upgrade.urllib.request,
+            urllib.request,
             "urlopen",
             lambda *_a, **_k: _Response(),
         )

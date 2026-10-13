@@ -26,10 +26,10 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E402
     ConvergenceDevice,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     Device,
     GenericParamNames,
     ParamId,
@@ -37,7 +37,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import ( 
     Plan,
     PlannedWrite,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.report import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.report import (  # noqa: E402
     build_report,
 )
 

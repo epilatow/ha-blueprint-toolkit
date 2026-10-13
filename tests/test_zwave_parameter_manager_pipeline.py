@@ -23,12 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
+import pytest
 
-from custom_components.blueprint_toolkit.zwave_parameter_manager import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager import (
     pipeline,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (
     MappingTable,
 )
 

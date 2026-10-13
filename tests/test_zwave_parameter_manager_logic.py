@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     CATALOG,
     WAKE_UP_INTERVAL_VALUE,
     Device,
@@ -62,7 +62,7 @@ TCI = GenericParamNames.THRESHOLD_CHECK_INTERVAL
 WUI = GenericParamNames.WAKE_UP_INTERVAL
 
 
-def pv(name: GenericParamNames, value: bool | int | float) -> ParamValue:
+def pv(name: GenericParamNames, value: bool | float) -> ParamValue:
     """Build a ParamValue for a concept the way the boundary would."""
 
     return ParamValue.of(CATALOG[name], value)

@@ -61,7 +61,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.catalog import 
     GenericParamNames,
     ParamType,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     MappingTable,
     _convert_quantity,
 )

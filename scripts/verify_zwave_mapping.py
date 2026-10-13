@@ -47,7 +47,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     CATALOG,
     Device,
     FixedValueId,
@@ -72,7 +72,7 @@ _DEFAULT_MAPPING = (
 # A safe placeholder per ParamType -- resolution status (RESOLVED vs
 # AMBIGUOUS vs NOT_APPLICABLE) is what verify cares about; the value
 # itself never gets written.
-_DUMMY_VALUE: dict[str, bool | int | float] = {
+_DUMMY_VALUE: dict[str, bool | float] = {
     "bool": True,
     "range": 5,
     "value": 1,

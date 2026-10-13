@@ -351,16 +351,18 @@ decides whether each call warrants a full reconcile:
 
 ### Why zwave-js-ui and not zwave-js-server directly?
 
-The priority-route command family was added to zwave-js-server schema 47
-(zwave-js-server PR 1513, merged 2026-03-10) but not yet released as of this
-writing. The HA Z-Wave JS addon bundles zwave-js-ui, which drives zwave-js
+The priority-route command family arrived in zwave-js-server schema 47, which
+has since shipped, but `zwave-js-server-python` still exposes no typed wrapper
+for it -- its `Controller` has no `setPriorityRoute` equivalent, so reaching
+those commands through the Python client would mean hand-rolling raw schema
+messages. The HA Z-Wave JS addon bundles zwave-js-ui, which drives zwave-js
 core's route APIs directly via its own socket.io `ZWAVE_API` event -- no
 schema negotiation, and the APIs we need (`setPriorityRoute`,
 `assignPrioritySUCReturnRoute`, etc.) are all allow-listed in its ZwaveClient.
-Shipping through zwave-js-ui avoids waiting for the upstream release chain.
+Shipping through zwave-js-ui avoids waiting for the Python client to catch up.
 
-When zwave-js-server schema 47 ships and HA core surfaces priority-route
-services natively, migration is one file:
+When `zwave-js-server-python` grows those wrappers and HA core surfaces
+priority-route services natively, migration is one file:
 `custom_components/blueprint_toolkit/zwave_route_manager/bridge.py`. Its
 public API (ZwaveJsUiClient + typed methods) stays the same; the
 implementation swaps from socket.io to the HA client.

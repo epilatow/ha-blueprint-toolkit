@@ -78,7 +78,7 @@ def _resolve_latest_tag() -> str:
         body = json.loads(resp.read())
     tag = body.get("tag_name")
     if not isinstance(tag, str):
-        raise RuntimeError(
+        raise RuntimeError(  # noqa: TRY004 - API payload shape
             f"unexpected GitHub Releases payload: tag_name={tag!r}"
         )
     return tag
@@ -105,7 +105,7 @@ def _resolve_tag_commit(tag: str) -> tuple[str, str]:
     committer = commit.get("committer", {}) if isinstance(commit, dict) else {}
     date = committer.get("date") if isinstance(committer, dict) else None
     if not isinstance(sha, str) or not isinstance(date, str):
-        raise RuntimeError(
+        raise RuntimeError(  # noqa: TRY004 - API payload shape
             f"unexpected GitHub commits payload for {tag!r}: "
             f"sha={sha!r} date={date!r}"
         )
@@ -203,7 +203,9 @@ def _load_jsonc(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     data = json.loads(_strip_jsonc(text))
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: top-level must be an object")
+        raise ValueError(  # noqa: TRY004 - callers catch ValueError
+            f"{path}: top-level must be an object"
+        )
     return data
 
 

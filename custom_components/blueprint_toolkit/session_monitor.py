@@ -84,7 +84,7 @@ async def async_refresh(
     live = _read_live(hass)
     if live is None:
         return None
-    from homeassistant.util import dt as dt_util  # noqa: PLC0415
+    from homeassistant.util import dt as dt_util
 
     session: DriverSession = await hass.async_add_executor_job(
         functools.partial(
@@ -108,7 +108,7 @@ async def _safe_refresh(hass: HomeAssistant, path: Path) -> None:
 
 async def async_start(hass: HomeAssistant, path: Path) -> Callable[[], None]:
     """Sample once now, then every minute; return the timer's unsubscribe."""
-    from homeassistant.helpers.event import (  # noqa: PLC0415
+    from homeassistant.helpers.event import (
         async_track_time_interval,
     )
 

@@ -35,6 +35,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, StrEnum, auto
+from typing import TypeAlias
 
 from .catalog import (
     CATALOG,
@@ -58,6 +59,14 @@ __all__ = (
 )
 
 
+# A concept's user value. ``float`` covers ``int`` through the numeric
+# tower, so spelling the union with ``int`` as well is redundant --
+# PYI041 rejects it in a parameter annotation and would leave the
+# dataclass fields spelled differently from the functions that take
+# them. One alias keeps every site identical.
+GenericValue: TypeAlias = bool | float
+
+
 # -- Z-Wave protocol ---------------------------------------------
 
 
@@ -75,18 +84,15 @@ class CommandClass(IntEnum):
 class ParamValue:
     """A user value for a GenericParam, tagged with its type.
 
-    The single place the ``bool | int | float`` union lives. Build via
-    ``of`` so ``param_type`` is taken from the catalog param and can't
-    drift from the concept it belongs to.
+    Build via ``of`` so ``param_type`` is taken from the catalog param
+    and can't drift from the concept it belongs to.
     """
 
     param_type: ParamType
-    value: bool | int | float
+    value: GenericValue
 
     @classmethod
-    def of(
-        cls, generic_param: GenericParam, value: bool | int | float
-    ) -> ParamValue:
+    def of(cls, generic_param: GenericParam, value: GenericValue) -> ParamValue:
         return cls(generic_param.param_type, value)
 
 
@@ -920,12 +926,10 @@ def selector_matches(selector: Selector, device: Device) -> bool:
         is_battery = not device.is_listening
         if is_battery != (selector.power is Power.BATTERY):
             return False
-    if (
-        selector.device_type is not None
-        and selector.device_type not in device.device_types
-    ):
-        return False
-    return True
+    return (
+        selector.device_type is None
+        or selector.device_type in device.device_types
+    )
 
 
 def policy_matches(policy: Policy, device: Device) -> bool:
@@ -952,7 +956,7 @@ class PlannedWrite:
     policy: str
     id: ParamId
     value: int
-    generic_value: bool | int | float
+    generic_value: GenericValue
 
 
 @dataclass(frozen=True)
@@ -1113,7 +1117,7 @@ def _record(
     device: Device,
     concept_name: GenericParamNames,
     policy: Policy,
-    generic_value: bool | int | float,
+    generic_value: GenericValue,
     res: Resolution,
     writes: list[PlannedWrite],
     warnings: list[PlanIssue],

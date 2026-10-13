@@ -30,16 +30,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 
-from custom_components.blueprint_toolkit.helpers_logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.helpers_logic import (  # noqa: E402
     device_link,
 )
-from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave.convergence import (  # noqa: E402
     ConvergenceDevice,
     ConvergenceReport,
     DeviceConvergence,
     ParamConvergence,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     GenericParamNames,
     UnusedSetting,
 )

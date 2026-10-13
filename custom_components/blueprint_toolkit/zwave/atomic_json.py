@@ -38,7 +38,7 @@ def locked(path: Path) -> Iterator[None]:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        import fcntl  # noqa: PLC0415 - POSIX only; absent -> no locking
+        import fcntl
     except ImportError:
         yield
         return

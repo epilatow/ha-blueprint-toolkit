@@ -35,7 +35,7 @@ import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -55,10 +55,10 @@ from conftest import (  # noqa: E402
 
 install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
-from custom_components.blueprint_toolkit.zwave_parameter_manager import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager import (  # noqa: E402
     handler,
 )
-from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: E402
     Device,
     GenericParamNames,
     ParamId,
@@ -394,7 +394,7 @@ class _CapturingHass:
 
 class TestDispatchWrites:
     def test_dispatches_both_command_classes(self) -> None:
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         dev = _dev(device_id="dev-uuid")
         writes = (
@@ -445,7 +445,7 @@ class TestDispatchWrites:
     def test_partial_config_param_uses_set_value(self) -> None:
         # A bitmask / partial Configuration param carries a property_key; it
         # must go through set_value so the key is not dropped.
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         writes = (
             PlannedWrite(
@@ -476,7 +476,7 @@ class TestDispatchWrites:
         ]
 
     def test_skips_write_without_device_id(self) -> None:
-        import asyncio  # noqa: PLC0415
+        import asyncio
 
         writes = (
             PlannedWrite(
@@ -506,7 +506,7 @@ class TestBlueprintSchemaDrift(BlueprintSchemaDriftBase):
 class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
     handler = handler
     blueprint_filename = "zwave_parameter_manager.yaml"
-    template_defaults = {
+    template_defaults: ClassVar = {
         "instance_id": "automation.zpm_default_check",
         "trigger_id": "manual",
     }

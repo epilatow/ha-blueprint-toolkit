@@ -29,12 +29,12 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
-from homeassistant.auth.models import (  # noqa: E402
+import pytest
+from homeassistant.auth.models import (
     TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN,
 )
 
-from custom_components.blueprint_toolkit import cli_token  # noqa: E402
+from custom_components.blueprint_toolkit import cli_token
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -12,10 +12,11 @@ module can be imported in test environments that don't have
 ``python-socketio`` installed. At runtime inside HA Core's
 Python environment, ``socketio`` is preinstalled.
 
-Migration target: when zwave-js-server ships schema 47 (merged
-upstream 2026-03-10 but not yet released as of writing) and
-``zwave-js-server-python`` gains ``async_set_priority_route`` /
-``async_assign_priority_suc_return_route`` wrappers, this file is
+Migration target: the priority-route commands are in the shipped
+zwave-js-server schema, but ``zwave-js-server-python`` exposes no
+``async_set_priority_route`` /
+``async_assign_priority_suc_return_route`` wrapper for them. When it
+gains those, this file is
 the single switch-point -- either swap the implementation to call
 the typed client (via ``hass.data``) or delete the file entirely
 once HA's integration surfaces these as services.

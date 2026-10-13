@@ -246,7 +246,7 @@ class BlueprintDefaultsRoundTripBase(BlueprintSchemaDriftBase):
         class TestBlueprintDefaultsRoundTrip(BlueprintDefaultsRoundTripBase):
             handler = my_handler_module
             blueprint_filename = "my_handler.yaml"
-            template_defaults = {
+            template_defaults: ClassVar = {
                 "instance_id": "automation.test",
                 "trigger_id": "manual",
             }

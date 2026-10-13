@@ -480,6 +480,21 @@ file. Ruff follows the current default rules and keeps the canonical `E`, `F`,
 from standalone Ruff runs; its exact content is covered by the shared drift
 test.
 
+`[tool.ruff.lint.per-file-ignores]` exempts `TRY004` for two files, each for a
+reason that holds in that file. The Z-Wave mapping parser
+(`zwave_parameter_manager/logic.py`) reports every malformed-input problem as
+`ValueError`, and `scripts/validate_zwave_mapping_proposal.py` catches exactly
+that while the logic tests assert it -- raising `TypeError` for the type
+failures alone would escape that handler and turn a bad mapping file into a
+traceback. The mapping verifier (`scripts/verify_zwave_mapping.py`) is a
+standalone operator-facing tool whose exceptions nothing catches, so it uses
+`ValueError` uniformly to match the parser it verifies.
+
+Prefer fixing a rule's complaint over adding an entry here, and suppress a
+one-off inline with `# noqa: <rule> - <reason>` -- as
+`scripts/zwave_db_extract.py` does at its three sites, where no uniform
+contract exists to justify exempting the file.
+
 mypy `--strict` deps come from each file's PEP 723 `# /// script` block when
 present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
 `pyproject.toml` (HACC, `zwave-js-server-python` and `types-PyYAML`, at
@@ -542,11 +557,12 @@ choice the repo gets to make. Home Assistant's `zwave_js` component declares
 an exact requirement for the client and imports from it, so the only client a
 given Home Assistant release can be imported against is the one its
 `zwave_js/manifest.json` names. The pin therefore tracks the HACC pin: move
-one and the other must move to whatever that release requires. Left behind, it
-takes down every Z-Wave phase in collection, reported as a missing name in the
-library -- which says nothing about the pin that chose it. It is declared at
-more sites than the fallback alone, because the bundled CLI installs it at
-runtime too, and all of them must name the same version.
+one and the other must move to whatever that release requires -- read the
+target release's `homeassistant/components/zwave_js/manifest.json` to find
+it. Left behind, it takes down every Z-Wave phase in collection, reported as a
+missing name in the library -- which says nothing about the pin that chose it.
+It is declared at more sites than the fallback alone, because the bundled CLI
+installs it at runtime too, and all of them must name the same version.
 
 Type-stub packages (`types-PyYAML`) are left unpinned. They ship nothing to
 Home Assistant and have no effect on the deployed integration -- they are

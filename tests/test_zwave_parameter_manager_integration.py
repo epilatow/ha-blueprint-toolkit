@@ -32,8 +32,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
-from conftest import RecoveryEventsIntegrationBase  # noqa: E402
+import pytest
+from conftest import RecoveryEventsIntegrationBase
 
 if TYPE_CHECKING:
     from collections.abc import Generator

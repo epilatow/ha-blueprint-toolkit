@@ -103,7 +103,7 @@ def _param_row(write: PlannedWrite, actual: int | None) -> ParamConvergence:
     )
 
 
-def _render_generic(value: bool | int | float) -> str:
+def _render_generic(value: bool | float) -> str:
     """The generic concept value (what the policy set) as a display string.
 
     ``bool`` is checked first -- it is an ``int`` subclass -- so a boolean

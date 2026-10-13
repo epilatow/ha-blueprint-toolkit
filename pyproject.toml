@@ -97,6 +97,23 @@ extend-exclude = ["_repo_shared"]
 [tool.ruff.lint]
 extend-select = ["E", "F", "W", "I", "B", "UP", "ARG"]
 
+[tool.ruff.lint.per-file-ignores]
+# The mapping parser reports every malformed-input problem as ValueError
+# -- wrong types, unknown keys, and out-of-range values alike -- and
+# scripts/validate_zwave_mapping_proposal.py catches exactly that to
+# report a bad proposal, while the logic tests assert it. Splitting the
+# type failures out as TypeError would escape that handler and surface a
+# bad mapping file as a traceback. The contract is deliberate and spans
+# 14 raises, so the suppression belongs to the file that implements it.
+"custom_components/blueprint_toolkit/zwave_parameter_manager/logic.py" = [
+    "TRY004",
+]
+# The mapping verifier is a standalone operator-facing tool: nothing
+# catches what it raises, so the exception class is cosmetic and it
+# uses ValueError uniformly for malformed input, matching the parser it
+# verifies. Suppressed per-file because that choice covers all 8 raises.
+"scripts/verify_zwave_mapping.py" = ["TRY004"]
+
 [tool.mypy]
 # HACC's HA stubs use Python 3.12+ syntax (``type X[T] = ...``).
 # Bumping the analyzer to 3.14 lets it parse the stubs; the integration's

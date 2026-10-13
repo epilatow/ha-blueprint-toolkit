@@ -73,7 +73,7 @@ def test_fetch_zwave_nodes_rejects_malformed_result() -> None:
         patch.dict(sys.modules, {"socketio": socketio}),
         pytest.raises(TypeError, match="unexpected shape"),
     ):
-        asyncio.run(zni.fetch_zwave_nodes())
+        asyncio.run(zc.fetch_zwave_nodes())
 
 
 # --- _parse_numeric ---------------------------------------------
@@ -1558,14 +1558,14 @@ class TestParamManagerFleet:
         # source._WAKE_LOOKBACK. The two must stay equal or the CLI and the
         # automation would disagree on which wake is "last".
         zc._ensure_integration_importable()
-        from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415
+        from blueprint_toolkit.zwave_parameter_manager import (
             source,
         )
 
         assert zc._WAKE_LOOKBACK == source._WAKE_LOOKBACK
 
     def test_wake_columns_render_via_shared_formatting(self) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         # The extractors import the shared zwave.formatting helpers; the fleet
         # read normally puts the package on sys.path, so do it explicitly here.
@@ -1585,7 +1585,7 @@ class TestParamManagerFleet:
         assert zc._PM_COLUMNS["wake-next"].extract(row) == "2026-06-09 15:30"
 
     def test_wake_columns_blank_when_unknown(self) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         zc._ensure_integration_importable()
         device = SimpleNamespace(
@@ -1677,7 +1677,7 @@ class TestParamManagerFleet:
         ]
 
     def test_pm_desired_rows_render_default_columns(self) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         report = SimpleNamespace(
             devices=[
@@ -1730,7 +1730,7 @@ class TestParamManagerFleet:
         ]
 
     def test_pm_pending_rows_show_current(self) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         param = SimpleNamespace(
             concept="motion_sensitivity",
@@ -1787,7 +1787,7 @@ class TestParamManagerFleet:
         ]
 
     def test_pm_optional_columns_render(self) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         write = SimpleNamespace(
             device=SimpleNamespace(
@@ -1957,7 +1957,7 @@ class TestParamManagerFleet:
     def test_pm_unused_table_renders_named_setting_and_whole_policy(
         self,
     ) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         plan = SimpleNamespace(
             unused=[
@@ -1991,7 +1991,7 @@ def _apply_write(
     node_id: int = 5,
     device_id: str | None = "dev1",
 ) -> Any:
-    from types import SimpleNamespace  # noqa: PLC0415
+    from types import SimpleNamespace
 
     return SimpleNamespace(
         id=SimpleNamespace(command_class=cc, property_=prop, property_key=pkey),
@@ -2155,16 +2155,16 @@ class TestApplyFlow:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        from types import SimpleNamespace  # noqa: PLC0415
+        from types import SimpleNamespace
 
         self._seed(monkeypatch, tmp_path)
         zc._ensure_integration_importable()
-        import blueprint_toolkit.zwave_parameter_manager.apply as ap  # noqa: PLC0415, E501
-        import blueprint_toolkit.zwave_parameter_manager.pipeline as pl  # noqa: PLC0415, E501
-        from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415, E501
+        import blueprint_toolkit.zwave_parameter_manager.apply as ap
+        import blueprint_toolkit.zwave_parameter_manager.pipeline as pl
+        from blueprint_toolkit.zwave_parameter_manager import (
             pending_store,
         )
-        from blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: PLC0415, E501
+        from blueprint_toolkit.zwave_parameter_manager.logic import (
             ParamId,
         )
 

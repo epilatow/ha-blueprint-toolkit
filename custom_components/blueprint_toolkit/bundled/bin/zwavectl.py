@@ -2257,8 +2257,8 @@ async def _fetch_zwave_server_state() -> dict[str, Any]:
     record samples).
     """
 
-    import websockets  # noqa: PLC0415 - needs venv
-    from zwave_js_server.const import (  # noqa: PLC0415 - needs venv
+    import websockets
+    from zwave_js_server.const import (
         MAX_SERVER_SCHEMA_VERSION,
     )
 
@@ -2311,13 +2311,15 @@ async def _fetch_state_device_classes(api_key: str) -> dict[str, str | None]:
     handler's ``source._device_class`` fallback).
     """
 
-    import aiohttp  # noqa: PLC0415 - needs venv
+    import aiohttp
 
     headers = {"Authorization": f"Bearer {api_key}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"{HA_URL}/api/states", headers=headers) as r:
-            r.raise_for_status()
-            states = cast("list[HaState]", await r.json())
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get(f"{HA_URL}/api/states", headers=headers) as r,
+    ):
+        r.raise_for_status()
+        states = cast("list[HaState]", await r.json())
     return {
         s["entity_id"]: s.get("attributes", {}).get("device_class")
         for s in states
@@ -2403,12 +2405,12 @@ def _assemble_fleet(
     last wake time (absent -> unknown). Returns a list of ``NodeRead``."""
 
     _ensure_integration_importable()
-    from blueprint_toolkit.zwave_parameter_manager.source import (  # noqa: PLC0415
+    from blueprint_toolkit.zwave_parameter_manager.source import (
         build_node_read,
     )
-    from zwave_js_server.client import Client  # noqa: PLC0415 - needs venv
-    from zwave_js_server.model.node import Node  # noqa: PLC0415 - needs venv
-    from zwave_js_server.model.node.data_model import (  # noqa: PLC0415
+    from zwave_js_server.client import Client
+    from zwave_js_server.model.node import Node
+    from zwave_js_server.model.node.data_model import (
         NodeDataType,
     )
 
@@ -2585,7 +2587,7 @@ def _pm_dev_key(r: _PmRow) -> str:
 # a wake interval / timestamp identically. Imported lazily -- the package is on
 # sys.path by render time (the fleet read put it there).
 def _pm_wake_interval(r: _PmRow) -> str:
-    from blueprint_toolkit.zwave.formatting import (  # noqa: PLC0415
+    from blueprint_toolkit.zwave.formatting import (
         humanize_duration,
     )
 
@@ -2594,7 +2596,7 @@ def _pm_wake_interval(r: _PmRow) -> str:
 
 
 def _pm_wake_last(r: _PmRow) -> str:
-    from blueprint_toolkit.zwave.formatting import (  # noqa: PLC0415
+    from blueprint_toolkit.zwave.formatting import (
         format_wake_time,
     )
 
@@ -2603,7 +2605,7 @@ def _pm_wake_last(r: _PmRow) -> str:
 
 
 def _pm_wake_next(r: _PmRow) -> str:
-    from blueprint_toolkit.zwave.formatting import (  # noqa: PLC0415
+    from blueprint_toolkit.zwave.formatting import (
         format_wake_time,
     )
 
@@ -2771,7 +2773,7 @@ def _param_manager_config(
         return 2
 
     _ensure_integration_importable()
-    from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415
+    from blueprint_toolkit.zwave_parameter_manager import (
         pipeline,
     )
 
@@ -2813,8 +2815,8 @@ def _read_param_manager_fleet_sync(api_key: str) -> list[NodeRead]:
     socket or the HA API) surface as ``_FleetReadError`` so the caller prints
     a clear message instead of a traceback."""
 
-    import aiohttp  # noqa: PLC0415 - needs venv
-    import websockets.exceptions as ws_exc  # noqa: PLC0415 - needs venv
+    import aiohttp
+    import websockets.exceptions as ws_exc
 
     try:
         return asyncio.run(_read_param_manager_fleet(api_key))
@@ -2885,8 +2887,8 @@ async def _read_apply_inputs(
 def _read_apply_inputs_sync(
     api_key: str,
 ) -> tuple[list[NodeRead], Any, Any, Any]:
-    import aiohttp  # noqa: PLC0415 - needs venv
-    import websockets.exceptions as ws_exc  # noqa: PLC0415 - needs venv
+    import aiohttp
+    import websockets.exceptions as ws_exc
 
     try:
         return asyncio.run(_read_apply_inputs(api_key))
@@ -2908,7 +2910,7 @@ def _write_service_payload(write: PlannedWrite) -> tuple[str, dict[str, Any]]:
     ``set_config_parameter``, a partial/bitmask param or a non-config CC
     (e.g. the wake-up interval) through ``set_value``."""
 
-    from blueprint_toolkit.zwave_parameter_manager.logic import (  # noqa: PLC0415, E501
+    from blueprint_toolkit.zwave_parameter_manager.logic import (
         CommandClass,
     )
 
@@ -2936,7 +2938,7 @@ def _write_service_payload(write: PlannedWrite) -> tuple[str, dict[str, Any]]:
 
 
 async def _issue_writes(api_key: str, writes: list[PlannedWrite]) -> None:
-    import aiohttp  # noqa: PLC0415 - needs venv
+    import aiohttp
 
     headers = {"Authorization": f"Bearer {api_key}"}
     async with aiohttp.ClientSession() as session:
@@ -2953,7 +2955,7 @@ async def _issue_writes(api_key: str, writes: list[PlannedWrite]) -> None:
 
 
 def _issue_writes_sync(api_key: str, writes: list[PlannedWrite]) -> None:
-    import aiohttp  # noqa: PLC0415 - needs venv
+    import aiohttp
 
     try:
         asyncio.run(_issue_writes(api_key, writes))
@@ -2997,8 +2999,8 @@ def _param_manager_apply(
         return 2
 
     _ensure_integration_importable()
-    from blueprint_toolkit.zwave import driver_session  # noqa: PLC0415
-    from blueprint_toolkit.zwave_parameter_manager import (  # noqa: PLC0415
+    from blueprint_toolkit.zwave import driver_session
+    from blueprint_toolkit.zwave_parameter_manager import (
         apply,
         pending_store,
         pipeline,
@@ -3121,9 +3123,13 @@ if TYPE_CHECKING:
     )
     from blueprint_toolkit.zwave_parameter_manager.source import NodeRead
 
+    # argparse exposes no public base for a subparsers action, and
+    # subclassing one is the only way to run a sub-subcommand's parser
+    # against the same namespace. Private, and pinned by the stdlib's
+    # own stability rather than a documented contract.
     _SubParsersActionBase = argparse._SubParsersAction[argparse.ArgumentParser]
 else:
-    _SubParsersActionBase = argparse._SubParsersAction  # noqa: SLF001
+    _SubParsersActionBase = argparse._SubParsersAction
 
 
 class _StrictSubParsersAction(_SubParsersActionBase):
@@ -3147,7 +3153,11 @@ class _StrictSubParsersAction(_SubParsersActionBase):
         arg_strings = values[1:]
         if self.dest is not argparse.SUPPRESS:
             setattr(namespace, self.dest, parser_name)
-        subparser = self._name_parser_map[parser_name]  # noqa: SLF001
+        # ``_name_parser_map`` is argparse's private registry of
+        # subcommand name -> parser; there is no public accessor for it,
+        # and resolving the chosen subparser is the whole point of this
+        # override.
+        subparser = self._name_parser_map[parser_name]
         subnamespace = subparser.parse_args(arg_strings)
         for key, value in vars(subnamespace).items():
             setattr(namespace, key, value)

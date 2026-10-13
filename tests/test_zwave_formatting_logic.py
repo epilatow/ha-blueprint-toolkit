@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
 
-from custom_components.blueprint_toolkit.zwave.formatting import (  # noqa: E402, E501
+from custom_components.blueprint_toolkit.zwave.formatting import (  # noqa: E402
     format_wake_time,
     humanize_duration,
 )
