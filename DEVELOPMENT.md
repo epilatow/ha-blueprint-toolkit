@@ -391,6 +391,36 @@ without explicit approval" rule in `DEVELOPMENT_AGENT.md` addresses agent
 sessions, which must still ask; it does not govern a scheduled job whose
 entire purpose is to land a verified bump unattended.
 
+### The interpreter is pinned too
+
+`.python-version` at the repo root pins the interpreter `uv` resolves against
+-- every PEP 723 script env, the project venv the `repo-shared` phase runs
+`pytest` in, and the `uvx` gate tools. It is tracked, and it is load-bearing:
+the HACC pin fixes which Home Assistant surface the suite validates, but
+without a pinned interpreter `uv` selects the newest one installed, which
+silently changes the environment the moment a host gains a newer Python. Home
+Assistant's native dependencies publish no wheels for a brand-new release, so
+such a host builds them from source and most phases fail at once, with a
+compiler error rather than anything pointing at the interpreter.
+
+The pin governs this machine's analysis and test environments only. Nothing
+that runs on the Home Assistant host is affected: the integration runs under
+HA's own interpreter, and the host-side scripts -- `dev-install.py`,
+`ha_ws_fetch.py`, the bundled CLI, the docker harness helpers -- carry plain
+`python3` shebangs and never see `uv`. What the shipped code must run on is
+declared separately, by `ruff`'s `target-version` and the Home Assistant floor
+in `hacs.json`. The value here tracks the interpreter HA itself ships, so the
+suite validates against the version the integration actually runs on.
+
+Cached envs hide this: only a *fresh* resolution picks the new interpreter, so
+an existing checkout keeps passing while a new worktree, a new machine, or CI
+fails. `tests/test_analysis_deps.py` gates the pin against every PEP 723
+`requires-python` floor and the two mypy knobs, because `uv` ignores a pin it
+cannot satisfy and resolves against the newest interpreter anyway, exiting
+zero -- a pin that drifts below a floor stops pinning without saying so. Raise
+it deliberately when the project moves to a newer Python, and expect the first
+run afterwards to rebuild every script env.
+
 ### Manifest version bump rule
 
 The integration version in `custom_components/blueprint_toolkit/manifest.json`
