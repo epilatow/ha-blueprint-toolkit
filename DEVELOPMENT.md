@@ -482,12 +482,28 @@ test.
 
 mypy `--strict` deps come from each file's PEP 723 `# /// script` block when
 present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
-`pyproject.toml` (HACC and `types-PyYAML`, at `mypy-python-version = "3.14"`).
-Per-file blocks are kept only where a file needs more than the fallback --
-e.g. the HACC test files under `tests/` add `pytest` / `pytest-cov`. Other
-files fall through to plain `mypy --strict` in the project venv;
-`pyproject.toml`'s `[[tool.mypy.overrides]]` covers transitive untyped imports
-(voluptuous, jinja2, socketio, etc.).
+`pyproject.toml` (HACC, `zwave-js-server-python` and `types-PyYAML`, at
+`mypy-python-version = "3.14"`). Per-file blocks are kept only where a file
+needs more than the fallback -- e.g. the HACC test files under `tests/` add
+`pytest` / `pytest-cov`. Other files fall through to plain `mypy --strict` in
+the project venv; `pyproject.toml`'s `[[tool.mypy.overrides]]` covers
+transitive untyped imports (voluptuous, jinja2, socketio, etc.).
+
+**Nothing under `custom_components/` carries a PEP 723 block.** The
+integration modules there are imported by Home Assistant, which runs them on
+its own interpreter against the packages it installed, so a dependency pin
+written beside them describes a dev-machine analysis environment the shipped
+code never resolves. They take the fallback instead, which is why
+`zwave-js-server-python` lives there rather than in the Z-Wave modules.
+`tests/test_analysis_deps.py` gates the rule.
+
+The bundled CLI under `bundled/bin/` is the exception that proves the rule is
+about analysis deps specifically: it ships through the same tree but runs
+outside Home Assistant, on a plain `python3` with a venv it bootstraps itself,
+so its `VENV_DEPS` list is a genuine runtime dependency set rather than an
+analysis one. It pins `zwave-js-server-python` to the version the fallback
+names, because the integration modules it imports are only type-checked
+against that one.
 
 `repo-shared init` injected `testpaths = ["tests", "_repo_shared/tests"]` into
 `[tool.pytest.ini_options]`, so a bare `uv run pytest` runs both this repo's
@@ -495,8 +511,8 @@ own tests and the shared suite in one invocation.
 
 #### Analysis-dep pinning and stub suppressions
 
-The two kinds of analysis dep are pinned on opposite policies, and the
-difference is deliberate.
+The three kinds of analysis dep are pinned on different policies, and the
+differences are deliberate.
 
 `pytest-homeassistant-custom-component` is pinned to an exact version, because
 the pin decides which Home Assistant API surface the code type-checks against
@@ -520,6 +536,17 @@ already drifted to some third version is invisible to it and would type-check
 against a different Home Assistant release indefinitely.
 `tests/test_analysis_deps.py` gates that agreement separately, which is what
 makes such drift recoverable rather than silent.
+
+`zwave-js-server-python` is pinned exactly as well, but its version is not a
+choice the repo gets to make. Home Assistant's `zwave_js` component declares
+an exact requirement for the client and imports from it, so the only client a
+given Home Assistant release can be imported against is the one its
+`zwave_js/manifest.json` names. The pin therefore tracks the HACC pin: move
+one and the other must move to whatever that release requires. Left behind, it
+takes down every Z-Wave phase in collection, reported as a missing name in the
+library -- which says nothing about the pin that chose it. It is declared at
+more sites than the fallback alone, because the bundled CLI installs it at
+runtime too, and all of them must name the same version.
 
 Type-stub packages (`types-PyYAML`) are left unpinned. They ship nothing to
 Home Assistant and have no effect on the deployed integration -- they are

@@ -48,6 +48,16 @@ broken.
    ``uv`` ignores a pin it cannot satisfy and resolves against the
    newest interpreter installed, exiting zero, so a pin that drifts
    below a floor silently stops pinning anything.
+
+5. No file under ``custom_components/`` carries a PEP 723 block.
+   Home Assistant imports those modules and runs them on its own
+   interpreter against the packages it installed, so a block there
+   declares an environment the shipped code never resolves -- and,
+   because a block replaces the fallback rather than extending it,
+   it also has to restate the pins the fallback already carries,
+   giving the repo more sites to keep in agreement for no analysis
+   benefit. The bundled CLI's runtime ``VENV_DEPS`` list is not a
+   PEP 723 block and is unaffected.
 """
 
 from __future__ import annotations
@@ -273,6 +283,40 @@ class TestInterpreterPin:
             )
             + "\n\nmypy would analyse a different interpreter than "
             "the one the suite runs on. Move them together."
+        )
+
+
+class TestShippedCodeTakesTheFallback:
+    def test_no_pep723_block_under_custom_components(self) -> None:
+        """A block there declares an environment nothing resolves.
+
+        Home Assistant imports these modules and runs them against
+        the packages it installed, so the block's dependency set is
+        never consulted at runtime. It is consulted by ``mypy``,
+        which is the trap: because a block replaces the fallback
+        instead of extending it, adding one silently drops every
+        dep the fallback carried and obliges the file to restate
+        the pins, adding sites that then have to be kept in
+        agreement by hand.
+        """
+        offenders: list[str] = []
+        for path in _tracked(".py"):
+            rel = path.relative_to(REPO_ROOT)
+            if rel.parts[0] != "custom_components":
+                continue
+            if _PEP723_BLOCK.search(path.read_text()):
+                offenders.append(str(rel))
+
+        assert not offenders, (
+            "file(s) under `custom_components/` carry a PEP 723 "
+            "block:\n  "
+            + "\n  ".join(offenders)
+            + "\n\nShipped integration code takes "
+            "`[tool.repo-shared.code-quality] mypy-extra-deps` "
+            "instead -- a block replaces that fallback rather than "
+            "extending it, so it drops the deps the fallback "
+            "carries and has to restate its pins. Move whatever "
+            "the file needs into the fallback and delete the block."
         )
 
 

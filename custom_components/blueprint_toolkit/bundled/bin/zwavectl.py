@@ -234,11 +234,13 @@ VENV_DEPS = [
     # param-manager view: the raw 3000 socket + the Node model the shared
     # adapter consumes.
     "websockets",
-    # Pinned to the same version the shared source / adapter modules declare
-    # and are tested against. This venv is isolated from HA's, so HA bundling
-    # a different version is irrelevant: the wire read negotiates the schema
-    # down to what this client parses (capped at MAX_SERVER_SCHEMA_VERSION),
-    # and the integration code runs here against the client it was tested with.
+    # Pinned to the version `[tool.repo-shared.code-quality]
+    # mypy-extra-deps` names, because the shared source / adapter modules
+    # imported below are only type-checked against that one. This venv is
+    # isolated from HA's, so HA bundling a different version is irrelevant:
+    # the wire read negotiates the schema down to what this client parses
+    # (capped at MAX_SERVER_SCHEMA_VERSION), and the integration code runs
+    # here against the client it was analysed with.
     "zwave-js-server-python==0.73.0",
     # param-manager views: the shared pipeline loads the policy file with
     # PyYAML, so the host venv must carry it.

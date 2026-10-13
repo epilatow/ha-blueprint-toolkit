@@ -1,13 +1,4 @@
 # This is AI generated code
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#     "pytest-homeassistant-custom-component==0.13.357",
-#     "zwave-js-server-python==0.73.0",
-#     "pyyaml",
-#     "types-PyYAML",
-# ]
-# ///
 """Build ZPM resolver inputs from a live Z-Wave JS node.
 
 The HA handler reads its in-process ``zwave_js`` driver; the CLI reads

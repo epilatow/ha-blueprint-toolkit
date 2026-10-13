@@ -40,6 +40,18 @@ wrap = 78
 # below is the single source of truth for which version that is --
 # never restate it in prose here or in docs, because automation
 # moves it and the prose would not follow.
+# ``zwave-js-server-python`` is the Z-Wave JS client the ZPM and ZRM
+# modules import types from. HA does not install it as a package
+# dependency -- its ``zwave_js`` component declares it as a component
+# requirement that HA installs at runtime -- so it has to be named
+# here for mypy to resolve those imports at all. Its version is not a
+# choice: the component declares an EXACT requirement and imports from
+# it, so the only client the pinned HA release can be imported against
+# is the one that release's ``zwave_js/manifest.json`` names. It
+# therefore moves whenever the HACC pin above moves. A ``pip``-style
+# resolve will happily install some other version, because the
+# component requirement is invisible to it; the failure shows up only
+# when a Z-Wave phase imports ``zwave_js`` and a name is missing.
 # ``types-PyYAML`` adds the stubs PyYAML itself doesn't ship. It is
 # left unpinned on purpose: stubs ship nothing to HA and are
 # analysis-only, so every run -- local or CI -- resolves the newest
@@ -50,6 +62,7 @@ wrap = 78
 # DEVELOPMENT.md "Analysis-dep pinning and stub suppressions".
 mypy-extra-deps = [
     "pytest-homeassistant-custom-component==0.13.357",
+    "zwave-js-server-python==0.73.0",
     "types-PyYAML",
 ]
 # HACC only installs on Python 3.14; the integration's own
@@ -131,11 +144,11 @@ module = ["socketio", "socketio.exceptions", "aiohttp"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# The ZPM source/adapter modules declare zwave-js-server-python in
-# their own PEP 723 blocks (mypy type-checks against the real package
-# there). Targets that only reach it transitively -- the integration
-# __init__ that imports the ZPM handler -- run on the fallback deps,
-# which omit it, so ignore the missing impl for them.
+# zwave-js-server-python is in the fallback deps, so the Z-Wave
+# modules type-check against the real package. This override covers
+# the targets that carry their own PEP 723 block and omit it -- a
+# block replaces the fallback rather than extending it -- so the
+# import resolves to Any there instead of erroring.
 module = ["zwave_js_server", "zwave_js_server.*"]
 ignore_missing_imports = true
 

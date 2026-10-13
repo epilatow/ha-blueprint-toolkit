@@ -1,14 +1,4 @@
 # This is AI generated code
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#     "pytest-homeassistant-custom-component==0.13.357",
-#     "zwave-js-server-python==0.73.0",
-#     "voluptuous",
-#     "pyyaml",
-#     "types-PyYAML",
-# ]
-# ///
 """Z-Wave Parameter Manager handler.
 
 Reconciles each Z-Wave node's settable config parameters against a
