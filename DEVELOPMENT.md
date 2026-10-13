@@ -338,24 +338,27 @@ HACC test file under `tests/`) plus the
 means the suite won't notice if a future HA release breaks an interface we
 depend on until someone manually bumps the pin. `scripts/hacc_upgrade.py`
 plugs that gap. Run it weekly from a scheduler (see below): it rewrites every
-pin site to the latest released HACC version, runs `tests/run_all.py` against
-the bump in a throwaway worktree, and with `--push` fast-forwards the default
-branch onto it. A red suite blocks the bump: the worktree is kept for
-inspection and the exit status is non-zero, which is what the scheduler
-reports. The failing phase is a reasonable first look -- most phases install
-the pin themselves, which makes the new release the first thing to check
-there, though those blocks also resolve `pytest` and the stubs unpinned -- and
-the `repo-shared` phase does not localize at all, since it carries both the
-HA-typed mypy pass and the markdown gate. To settle it either way, re-run the
-suite in the kept worktree against the branch point; a failure that reproduces
-there is independent of the bump.
+pin site to the latest released HACC version, moves the Z-Wave client pin that
+release requires along with it, bumps the integration version when one of
+those sites was shipped code, runs `tests/run_all.py` against the bump in a
+throwaway worktree, and with `--push` fast-forwards the default branch onto
+it. The coupled pin and the conditional version bump are covered under
+"Analysis-dep pinning and stub suppressions" below. A red suite blocks the
+bump: the worktree is kept for inspection and the exit status is non-zero,
+which is what the scheduler reports. The failing phase is a reasonable first
+look -- most phases install the pin themselves, which makes the new release
+the first thing to check there, though those blocks also resolve `pytest` and
+the stubs unpinned -- and the `repo-shared` phase does not localize at all,
+since it carries both the HA-typed mypy pass and the markdown gate. To settle
+it either way, re-run the suite in the kept worktree against the branch point;
+a failure that reproduces there is independent of the bump.
 
 The bump lands unattended on green by design. A bump that only ever opens a
 proposal is a bump nobody merges, and the pin then sits still while the HA
 surface it claims to validate against moves on.
 
 ```bash
-scripts/hacc_upgrade.py --dry-run    # report drift, touch nothing
+scripts/hacc_upgrade.py --dry-run    # report drift, change nothing
 scripts/hacc_upgrade.py              # build + verify, leave on its branch
 scripts/hacc_upgrade.py --push       # ... and land it on green
 scripts/hacc_upgrade.py --to X.Y.Z   # target a version other than latest
@@ -395,13 +398,16 @@ entire purpose is to land a verified bump unattended.
 
 `.python-version` at the repo root pins the interpreter `uv` resolves against
 -- every PEP 723 script env, the project venv the `repo-shared` phase runs
-`pytest` in, and the `uvx` gate tools. It is tracked, and it is load-bearing:
-the HACC pin fixes which Home Assistant surface the suite validates, but
-without a pinned interpreter `uv` selects the newest one installed, which
-silently changes the environment the moment a host gains a newer Python. Home
-Assistant's native dependencies publish no wheels for a brand-new release, so
-such a host builds them from source and most phases fail at once, with a
-compiler error rather than anything pointing at the interpreter.
+`pytest` in, the `uvx` gate tools, and the throwaway environment
+`scripts/hacc_upgrade.py` resolves the Z-Wave client requirement in (which is
+why that call runs from the repo root rather than anywhere else). It is
+tracked, and it is load-bearing: the HACC pin fixes which Home Assistant
+surface the suite validates, but without a pinned interpreter `uv` selects the
+newest one installed, which silently changes the environment the moment a host
+gains a newer Python. Home Assistant's native dependencies publish no wheels
+for a brand-new release, so such a host builds them from source and most
+phases fail at once, with a compiler error rather than anything pointing at
+the interpreter.
 
 The pin governs this machine's analysis and test environments only. Nothing
 that runs on the Home Assistant host is affected: the integration runs under
@@ -552,17 +558,30 @@ against a different Home Assistant release indefinitely.
 `tests/test_analysis_deps.py` gates that agreement separately, which is what
 makes such drift recoverable rather than silent.
 
-`zwave-js-server-python` is pinned exactly as well, but its version is not a
-choice the repo gets to make. Home Assistant's `zwave_js` component declares
-an exact requirement for the client and imports from it, so the only client a
-given Home Assistant release can be imported against is the one its
-`zwave_js/manifest.json` names. The pin therefore tracks the HACC pin: move
-one and the other must move to whatever that release requires -- read the
-target release's `homeassistant/components/zwave_js/manifest.json` to find
-it. Left behind, it takes down every Z-Wave phase in collection, reported as a
-missing name in the library -- which says nothing about the pin that chose it.
-It is declared at more sites than the fallback alone, because the bundled CLI
-installs it at runtime too, and all of them must name the same version.
+`zwave-js-server-python` is a second exact pin, but its value is not a choice:
+it has to be whatever Home Assistant's own `zwave_js` component requires at
+the pinned release, because that component imports from the library and pins
+one exact version in its manifest. When the two disagree, HA's component fails
+to import against the older library and every Z-Wave phase dies in collection
+on a missing name -- a failure that names the library, not the pin that chose
+it. It is declared at more sites than the fallback alone, because the bundled
+CLI installs it at runtime too, and all of them must name the same version.
+
+Because the value is derived rather than chosen, `scripts/hacc_upgrade.py`
+reads it out of the release it is bumping to and rewrites every site in the
+same commit, so the weekly bump keeps both pins coherent without a human in
+the loop. It resolves nothing when the repo declares no such pin, and stops
+rather than guessing if the sites already disagree.
+`tests/test_analysis_deps.py` gates the agreement separately, for the case
+where the pins move by some other route.
+
+One of those sites is the bundled CLI's runtime list, which lives under
+`custom_components/`, so the tool's own rewrite changes shipped code and
+`tests/test_manifest.py` then requires the integration version to increment.
+The bump therefore runs `scripts/bump-manifest-version.py` whenever its
+rewrite touched that tree -- the version really did change for users -- and
+leaves the manifest alone otherwise, which is what that test demands in the
+other direction.
 
 Type-stub packages (`types-PyYAML`) are left unpinned. They ship nothing to
 Home Assistant and have no effect on the deployed integration -- they are

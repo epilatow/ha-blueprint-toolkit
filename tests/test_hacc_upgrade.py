@@ -19,6 +19,8 @@ fast-forward without a multi-minute suite run.
 
 from __future__ import annotations
 
+import json
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -47,6 +49,42 @@ def _pyproject(*deps: str) -> str:
     return f"[tool.repo-shared.code-quality]\nmypy-extra-deps = [\n{body}]\n"
 
 
+MANIFEST_REL = "custom_components/blueprint_toolkit/manifest.json"
+SHIPPED_PIN_REL = "custom_components/blueprint_toolkit/bundled/bin/cli.py"
+
+
+def _add_shipped_pin_site(root: Path, companion_pin: str) -> None:
+    """Give ``root`` a pin site that ships, plus the manifest machinery.
+
+    Mirrors the real repo's shape: the bundled CLI declares the Z-Wave
+    client in its runtime venv list, so a bump that moves that pin
+    edits shipped code and owes the manifest an increment. The real
+    bump script is copied in rather than faked, so the test exercises
+    the integration and not a stand-in.
+    """
+    manifest = root / MANIFEST_REL
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    body = {"domain": "blueprint_toolkit", "version": "0.0.1"}
+    manifest.write_text(json.dumps(body, indent=2) + "\n")
+    shipped = root / SHIPPED_PIN_REL
+    shipped.parent.mkdir(parents=True, exist_ok=True)
+    shipped.write_text(
+        f'VENV_DEPS = [\n    "{hacc_upgrade.COMPANION}=={companion_pin}",\n]\n'
+    )
+    scripts = root / "scripts"
+    scripts.mkdir(exist_ok=True)
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "bump-manifest-version.py",
+        scripts / "bump-manifest-version.py",
+    )
+    subprocess.run(
+        ["git", "add", "custom_components", "scripts"], cwd=root, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "shipped"], cwd=root, check=True
+    )
+
+
 def _init_repo(root: Path, pin: str) -> None:
     """Create a one-commit git repo pinning ``pin``."""
     subprocess.run(["git", "init", "-b", "main", "-q"], cwd=root, check=True)
@@ -63,7 +101,9 @@ def _init_repo(root: Path, pin: str) -> None:
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
 
 
-def _clone_pair(tmp_path: Path, pin: str) -> tuple[Path, Path]:
+def _clone_pair(
+    tmp_path: Path, pin: str, *, shipped_companion: str | None = None
+) -> tuple[Path, Path]:
     """Return (bare upstream, clone) both pinning ``pin``.
 
     The upstream is bare so a push to its checked-out branch is not
@@ -73,6 +113,8 @@ def _clone_pair(tmp_path: Path, pin: str) -> tuple[Path, Path]:
     seed = tmp_path / "seed"
     seed.mkdir()
     _init_repo(seed, pin)
+    if shipped_companion is not None:
+        _add_shipped_pin_site(seed, shipped_companion)
     upstream = tmp_path / "up.git"
     subprocess.run(
         ["git", "clone", "-q", "--bare", str(seed), str(upstream)],
@@ -340,6 +382,417 @@ class TestLatestVersion:
             hacc_upgrade.latest_version()
 
 
+class TestCompanionPin:
+    """The Z-Wave client pin is derived, so the bump moves it too."""
+
+    def _repo_with_companion(self, tmp_path: Path) -> tuple[Path, Path]:
+        upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        (clone / "pyproject.toml").write_text(
+            _pyproject(
+                f"{PACKAGE}==1.2.3",
+                f"{hacc_upgrade.COMPANION}==0.70.0",
+                "types-PyYAML",
+            )
+        )
+        subprocess.run(
+            ["git", "commit", "-aqm", "declare the companion"],
+            cwd=clone,
+            check=True,
+        )
+        subprocess.run(["git", "push", "-q"], cwd=clone, check=True)
+        return upstream, clone
+
+    def test_bump_moves_the_companion_to_the_required_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A coupled pin left behind breaks the Z-Wave phases."""
+        _upstream, clone = self._repo_with_companion(tmp_path)
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.73.1",
+        )
+
+        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        landed = (clone / "pyproject.toml").read_text()
+        assert f"{PACKAGE}==4.5.6" in landed
+        assert f"{hacc_upgrade.COMPANION}==0.73.1" in landed
+        assert "0.70.0" not in landed
+        message = subprocess.check_output(
+            ["git", "log", "-1", "--format=%B"], cwd=clone, text=True
+        )
+        assert "Z-Wave client pin moves with it" in message
+
+    def test_message_claims_the_coupled_move_only_when_it_happened(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pin can be declared and already right for the target.
+
+        The landed message is permanent, so it must not describe a
+        rewrite that did not occur.
+        """
+        _upstream, clone = self._repo_with_companion(tmp_path)
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.70.0",
+        )
+
+        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        message = subprocess.check_output(
+            ["git", "log", "-1", "--format=%B"], cwd=clone, text=True
+        )
+        assert f"Bump {PACKAGE} to 4.5.6" in message
+        assert "Z-Wave" not in message
+
+    def test_undeclared_companion_is_never_resolved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Resolving it costs a dependency download, so skip it.
+
+        A repo that does not declare the client library has nothing to
+        move, and the resolution would fail there anyway.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+
+        def _explode(_root: Path, _version: str) -> str:
+            raise AssertionError("resolved a pin the repo never declared")
+
+        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _explode)
+
+        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+    def test_disagreeing_companion_sites_stop_the_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Which of the two to replace would be a guess."""
+        _upstream, clone = self._repo_with_companion(tmp_path)
+        (clone / "extra.toml").write_text(
+            f'dep = "{hacc_upgrade.COMPANION}==0.71.0"\n'
+        )
+        subprocess.run(["git", "add", "extra.toml"], cwd=clone, check=True)
+        subprocess.run(["git", "commit", "-qm", "drift"], cwd=clone, check=True)
+        subprocess.run(["git", "push", "-q"], cwd=clone, check=True)
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.73.1",
+        )
+
+        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+
+
+class TestDeclaredVersions:
+    def test_collects_every_pinned_version(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path, "1.2.3")
+        (tmp_path / "other.md").write_text(
+            f"- `{hacc_upgrade.COMPANION}==0.70.0`\n"
+        )
+        subprocess.run(["git", "add", "other.md"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "doc"], cwd=tmp_path, check=True
+        )
+
+        assert hacc_upgrade.declared_versions(tmp_path, PACKAGE) == {"1.2.3"}
+        assert hacc_upgrade.declared_versions(
+            tmp_path, hacc_upgrade.COMPANION
+        ) == {"0.70.0"}
+        assert hacc_upgrade.declared_versions(tmp_path, "absent-pkg") == set()
+
+    def test_sites_carry_the_file_each_version_came_from(
+        self, tmp_path: Path
+    ) -> None:
+        """The failure message names files, so the walk must keep them."""
+        _init_repo(tmp_path, "1.2.3")
+
+        sites = hacc_upgrade.declared_sites(tmp_path, PACKAGE)
+
+        assert [
+            (path.relative_to(tmp_path).as_posix(), version)
+            for path, version in sites
+        ] == [("pyproject.toml", "1.2.3")]
+
+
+class TestCompanionRequirement:
+    """The one new boundary that talks to the outside world.
+
+    Its result drives an unattended rewrite, so both failure paths
+    and the parse itself are exercised against a stubbed ``uv``
+    rather than only through callers that monkeypatch it away.
+    """
+
+    @staticmethod
+    def _stub(
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        def _run(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["uv"],
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+    def test_reads_the_exact_requirement(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(
+            monkeypatch,
+            stdout=f"pyserial==3.5\n{hacc_upgrade.COMPANION}==0.73.1\n",
+        )
+
+        assert (
+            hacc_upgrade.companion_requirement(tmp_path, "0.13.372") == "0.73.1"
+        )
+
+    def test_failed_resolution_raises_naming_the_pin(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A download or resolve failure must not read as "no pin"."""
+        self._stub(monkeypatch, returncode=1, stderr="no such version")
+
+        with pytest.raises(ValueError, match="cannot read Home Assistant"):
+            hacc_upgrade.companion_requirement(tmp_path, "9.9.9")
+
+    def test_inexact_requirement_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A range gives nothing to pin, so the bump stops.
+
+        Matching is anchored: a requirement that merely contains the
+        package name is not an exact pin and must not be read as one.
+        """
+        self._stub(
+            monkeypatch,
+            stdout=f"{hacc_upgrade.COMPANION}>=0.73.0,<0.74\n",
+        )
+
+        with pytest.raises(ValueError, match="no exact"):
+            hacc_upgrade.companion_requirement(tmp_path, "0.13.372")
+
+
+class TestCompanionDriftReport:
+    """What a dry run tells a human about the coupled pin.
+
+    The rewrite itself is covered elsewhere. This is the report
+    someone reads before authorizing an unattended bump, so every
+    branch has to say something true -- including the branches that
+    decline to resolve.
+    """
+
+    @staticmethod
+    def _repo(tmp_path: Path, *versions: str) -> Path:
+        """A clone declaring the companion at each given version."""
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        paths = []
+        for index, version in enumerate(versions):
+            rel = f"site{index}.md"
+            (clone / rel).write_text(
+                f"- `{hacc_upgrade.COMPANION}=={version}`\n"
+            )
+            paths.append(rel)
+        if paths:
+            subprocess.run(["git", "add", *paths], cwd=clone, check=True)
+            subprocess.run(
+                ["git", "commit", "-q", "-m", "sites"], cwd=clone, check=True
+            )
+        return clone
+
+    def test_says_so_when_nothing_is_coupled(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        clone = self._repo(tmp_path)
+
+        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+
+        assert "nothing coupled to move" in capsys.readouterr().out
+
+    def test_declines_to_resolve_when_sites_disagree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A real run stops here, so the report must not imply a move.
+
+        Resolution is also pointless before the disagreement is
+        settled, and it costs a download, so it must not be attempted.
+        """
+        clone = self._repo(tmp_path, "0.70.0", "0.73.0")
+
+        def _never(*_a: object, **_k: object) -> str:
+            raise AssertionError("resolved despite disagreeing sites")
+
+        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _never)
+        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+
+        out = capsys.readouterr().out
+        assert "already disagrees" in out
+        assert "0.70.0" in out
+        assert "0.73.0" in out
+
+    def test_reports_a_failed_resolution_without_failing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A reporting run must not die on a resolve problem."""
+        clone = self._repo(tmp_path, "0.70.0")
+
+        def _raise(*_a: object, **_k: object) -> str:
+            raise ValueError("declares no exact requirement")
+
+        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _raise)
+        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+
+        assert "cannot resolve" in capsys.readouterr().out
+
+    def test_reports_an_already_correct_pin(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        clone = self._repo(tmp_path, "0.73.0")
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.73.0",
+        )
+
+        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+
+        assert "already matches" in capsys.readouterr().out
+
+    def test_lists_the_sites_a_move_would_rewrite(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Names the files, and which tree it read them from.
+
+        A dry run builds no worktree, so it reports the local
+        checkout -- which can declare different sites than the branch
+        point the real run would rewrite.
+        """
+        clone = self._repo(tmp_path, "0.70.0")
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.73.1",
+        )
+
+        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+
+        out = capsys.readouterr().out
+        assert "would also move" in out
+        assert "0.70.0 -> 0.73.1" in out
+        assert "site0.md" in out
+        assert "worktree built from origin/main" in out
+
+    def test_dry_run_wires_the_report_in(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The report is only useful if --dry-run actually reaches it."""
+        clone = self._repo(tmp_path, "0.70.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.73.1",
+        )
+
+        args = hacc_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        assert "would also move" in capsys.readouterr().out
+
+
+class TestCompanionResolutionFailure:
+    def test_a_real_run_stops_and_keeps_the_worktree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The stop-rather-than-guess outcome on the write path.
+
+        Guessing would rewrite a shipped runtime pin to a version the
+        target release does not use, so the bump refuses. The suite
+        must not run either -- it would attribute the failure to the
+        pin under test.
+        """
+        _upstream, clone = _clone_pair(
+            tmp_path, "1.2.3", shipped_companion="0.70.0"
+        )
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+
+        def _raise(*_a: object, **_k: object) -> str:
+            raise ValueError("declares no exact requirement")
+
+        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _raise)
+
+        def _never(_wt: Path) -> int:
+            raise AssertionError("ran the suite despite an unresolved pin")
+
+        monkeypatch.setattr(hacc_upgrade, "run_suite", _never)
+
+        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+
+
+class TestShippedCodeChanged:
+    """Whether the bump owes the manifest a version increment.
+
+    One pin site is the bundled CLI's runtime dep list, which ships
+    to users, and ``tests/test_manifest.py`` requires the version to
+    move exactly when something under that tree does.
+    """
+
+    def test_true_when_a_staged_path_ships(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path, "1.2.3")
+        shipped = tmp_path / "custom_components" / "blueprint_toolkit"
+        shipped.mkdir(parents=True)
+        (shipped / "bundled.py").write_text("VENV_DEPS = []\n")
+        subprocess.run(
+            ["git", "add", "custom_components"], cwd=tmp_path, check=True
+        )
+
+        assert hacc_upgrade.shipped_code_changed(tmp_path) is True
+
+    def test_false_for_analysis_only_changes(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path, "1.2.3")
+        (tmp_path / "pyproject.toml").write_text(
+            _pyproject(f"{PACKAGE}==1.2.4", "types-PyYAML")
+        )
+        subprocess.run(
+            ["git", "add", "pyproject.toml"], cwd=tmp_path, check=True
+        )
+
+        assert hacc_upgrade.shipped_code_changed(tmp_path) is False
+
+
 class TestPinSitesSymlinks:
     def test_symlinks_are_skipped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -503,6 +956,79 @@ class TestLanding:
 
         args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
         assert hacc_upgrade.run(args) == hacc_upgrade.Exit.DIRTY
+
+    def test_rewriting_shipped_code_bumps_the_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Otherwise the bump's own commit fails the manifest rule.
+
+        The bundled CLI's runtime list is a pin site under
+        ``custom_components/``, so moving the coupled pin changes
+        shipped code. ``tests/test_manifest.py`` then requires the
+        integration version to increment in that same commit, and the
+        bump has no human to do it.
+        """
+        upstream, clone = _clone_pair(
+            tmp_path, "1.2.3", shipped_companion="0.70.0"
+        )
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.73.1",
+        )
+
+        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        shipped = subprocess.check_output(
+            ["git", "show", f"main:{SHIPPED_PIN_REL}"],
+            cwd=upstream,
+            text=True,
+        )
+        assert f"{hacc_upgrade.COMPANION}==0.73.1" in shipped
+        manifest = json.loads(
+            subprocess.check_output(
+                ["git", "show", f"main:{MANIFEST_REL}"],
+                cwd=upstream,
+                text=True,
+            )
+        )
+        assert manifest["version"] == "0.0.2"
+
+    def test_analysis_only_rewrite_leaves_the_manifest_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The manifest rule binds in both directions.
+
+        A bump that touches no shipped file must not move the version,
+        or it fails the same test from the other side.
+        """
+        upstream, clone = _clone_pair(
+            tmp_path, "1.2.3", shipped_companion="0.70.0"
+        )
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        # The coupled pin is already what the target release wants, so
+        # only analysis-only sites move.
+        monkeypatch.setattr(
+            hacc_upgrade,
+            "companion_requirement",
+            lambda _root, _version: "0.70.0",
+        )
+
+        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        manifest = json.loads(
+            subprocess.check_output(
+                ["git", "show", f"main:{MANIFEST_REL}"],
+                cwd=upstream,
+                text=True,
+            )
+        )
+        assert manifest["version"] == "0.0.1"
 
     def test_published_pin_beats_the_local_one(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

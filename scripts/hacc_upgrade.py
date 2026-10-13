@@ -39,9 +39,25 @@ The flow mirrors ``repo-shared upgrade``:
 - Publish the bump and fast-forward the default branch, with
   ``--push``. Without it the bump stays on its branch.
 
-The manifest version is deliberately not bumped. No pin site lives
-under ``custom_components/``, and ``tests/test_manifest.py``
-requires the version to stay equal when nothing there changed.
+The Z-Wave client pin rides along. It is pinned exactly too, but its
+value is dictated by the Home Assistant release the HACC pin selects,
+so the bump reads it out of that release and rewrites it in the same
+commit rather than leaving a coupled pin behind. That value comes from
+the release's own component manifest, which is read as a file rather
+than imported -- importing ``zwave_js`` requires the very library whose
+version is being resolved. If a future Home Assistant release relaxes
+that requirement to a range there is nothing exact to read, and the
+bump stops instead of guessing; note that this halts the whole weekly
+bump, not just its Z-Wave part.
+
+The manifest version is bumped only when a rewrite actually touched
+``custom_components/``. ``tests/test_manifest.py`` enforces that
+relationship in both directions, and both can happen here: most pin
+sites are analysis-only and leave shipped code alone, but the bundled
+CLI declares the Z-Wave client in its runtime venv list, so moving that
+pin does change what users receive. Asking git what changed, rather
+than assuming either answer, is what keeps the suite green whichever
+sites a given bump rewrites.
 """
 
 from __future__ import annotations
@@ -54,11 +70,16 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+from collections.abc import Iterator
 from enum import IntEnum
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "pytest-homeassistant-custom-component"
+# The Z-Wave client library is pinned exactly too, but its value is not
+# a choice: it has to be whatever the pinned Home Assistant release's
+# zwave_js component requires. See ``companion_requirement``.
+COMPANION = "zwave-js-server-python"
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 NETWORK_TIMEOUT_SECONDS = 30
 
@@ -152,30 +173,28 @@ def latest_version() -> str:
     return version
 
 
-def rewrite_pins(text: str, old: str, new: str) -> str:
-    """Replace every ``PACKAGE==old`` occurrence with ``==new``.
+def rewrite_pins(text: str, old: str, new: str, package: str = PACKAGE) -> str:
+    """Replace every ``package==old`` occurrence with ``==new``.
 
     Anchored on the package name so an unrelated dependency that
     happens to share a version string is left alone.
     """
     return re.sub(
-        re.escape(f"{PACKAGE}=={old}") + r"(?!\.?\d)",
-        f"{PACKAGE}=={new}",
+        re.escape(f"{package}=={old}") + r"(?!\.?\d)",
+        f"{package}=={new}",
         text,
     )
 
 
-def pin_sites(root: Path, version: str) -> list[Path]:
-    """Return tracked files under ``root`` declaring that version.
+def candidate_files(root: Path) -> Iterator[tuple[Path, str]]:
+    """Tracked files a pin could live in, with their contents.
 
-    Matched on a version boundary so a longer version sharing the
-    prefix (``0.13.331`` against ``0.13.33``) is not a hit; a
-    substring match there would rewrite it into a malformed one.
+    One walk for every caller that searches for pins, so none can
+    disagree with the others about which files exist -- a file this
+    skipped but a sibling visited would be rewritten without being
+    checked, or checked without being rewritable.
     """
-    needle = re.compile(re.escape(f"{PACKAGE}=={version}") + r"(?!\.?\d)")
-    listing = git("ls-files", "-z", cwd=root).split("\0")
-    hits: list[Path] = []
-    for rel in listing:
+    for rel in git("ls-files", "-z", cwd=root).split("\0"):
         if not rel or not rel.endswith(PIN_SUFFIXES):
             continue
         path = root / rel
@@ -185,9 +204,90 @@ def pin_sites(root: Path, version: str) -> list[Path]:
         # ``git add`` on the link stages nothing.
         if path.is_symlink():
             continue
-        if needle.search(path.read_text()):
-            hits.append(path)
-    return hits
+        yield path, path.read_text()
+
+
+def pin_sites(root: Path, version: str, package: str = PACKAGE) -> list[Path]:
+    """Return tracked files under ``root`` declaring that version.
+
+    Matched on a version boundary so a longer version sharing the
+    prefix (``0.13.331`` against ``0.13.33``) is not a hit; a
+    substring match there would rewrite it into a malformed one.
+    """
+    needle = re.compile(re.escape(f"{package}=={version}") + r"(?!\.?\d)")
+    return [path for path, text in candidate_files(root) if needle.search(text)]
+
+
+def declared_sites(root: Path, package: str) -> list[tuple[Path, str]]:
+    """Every (file, version) pair ``package`` is pinned to."""
+    found = re.compile(re.escape(f"{package}==") + r"(\d+(?:\.\d+)*)")
+    return [
+        (path, match.group(1))
+        for path, text in candidate_files(root)
+        for match in found.finditer(text)
+    ]
+
+
+def declared_versions(root: Path, package: str) -> set[str]:
+    """Every version ``package`` is pinned to across tracked files."""
+    return {version for _, version in declared_sites(root, package)}
+
+
+def companion_requirement(root: Path, hacc_version: str) -> str:
+    """Return the Z-Wave client version the target HACC release needs.
+
+    Home Assistant's own ``zwave_js`` component pins one exact
+    ``zwave-js-server-python`` and imports from it, so the version this
+    repo declares has to be that one: an older library fails those
+    imports and takes every Z-Wave phase down in collection, naming the
+    library rather than the pin that chose it. The answer is a property
+    of the release being pinned, so it is read out of the release rather
+    than tracked by hand -- from the component's own manifest, without
+    importing the component, which would need the library present.
+
+    Runs from ``root`` so this throwaway environment resolves against
+    the repo's ``.python-version`` like every other one. Without that it
+    would take the newest interpreter on the host, which is how a
+    resolution silently stops meaning what the suite validates against.
+    """
+    code = (
+        "import json, pathlib, homeassistant;"
+        "p = pathlib.Path(homeassistant.__file__).parent"
+        " / 'components' / 'zwave_js' / 'manifest.json';"
+        "print('\\n'.join(json.loads(p.read_text())['requirements']))"
+    )
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--quiet",
+            "--no-project",
+            "--with",
+            f"{PACKAGE}=={hacc_version}",
+            "python",
+            "-c",
+            code,
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError(
+            f"cannot read Home Assistant's zwave_js requirements at "
+            f"{PACKAGE}=={hacc_version}: {result.stderr.strip()[:400]}"
+        )
+    needle = re.compile(re.escape(f"{COMPANION}==") + r"(\d+(?:\.\d+)*)")
+    for line in result.stdout.splitlines():
+        found = needle.fullmatch(line.strip())
+        if found:
+            return found.group(1)
+    raise ValueError(
+        f"Home Assistant's zwave_js manifest at {PACKAGE}=="
+        f"{hacc_version} declares no exact {COMPANION} requirement: "
+        f"{result.stdout.strip()[:200]}"
+    )
 
 
 def mismatched_sites(root: Path, expected: str) -> list[tuple[Path, str]]:
@@ -199,19 +299,11 @@ def mismatched_sites(root: Path, expected: str) -> list[tuple[Path, str]]:
     worktree, where it would surface as an undifferentiated suite
     failure; named here, it points straight at the offending file.
     """
-    found = re.compile(re.escape(f"{PACKAGE}==") + r"(\d+(?:\.\d+)*)")
-    listing = git("ls-files", "-z", cwd=root).split("\0")
-    stale: list[tuple[Path, str]] = []
-    for rel in listing:
-        if not rel or not rel.endswith(PIN_SUFFIXES):
-            continue
-        path = root / rel
-        if path.is_symlink():
-            continue
-        for match in found.finditer(path.read_text()):
-            if match.group(1) != expected:
-                stale.append((path, match.group(1)))
-    return stale
+    return [
+        (path, version)
+        for path, version in declared_sites(root, PACKAGE)
+        if version != expected
+    ]
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -272,6 +364,88 @@ def sweep_stale_worktrees() -> None:
             git_ok("branch", "-D", branch)
 
 
+def report_companion_drift(root: Path, target: str, branch_point: str) -> None:
+    """Print what the coupled pin would become, for ``--dry-run``.
+
+    Reports rather than raises: a reporting run should not fail over
+    a resolution problem a real run would stop on, and the resolution
+    costs a download, so the reason for skipping it is printed too.
+
+    Reads ``root``, the local checkout, because a dry run builds no
+    worktree -- so it says which tree it read. A checkout that has
+    drifted from the branch point can declare different sites than the
+    ones a real run would rewrite.
+    """
+    declared = declared_versions(root, COMPANION)
+    if not declared:
+        print(f"no {COMPANION} pin declared; nothing coupled to move")
+        return
+    print(
+        f"reading {COMPANION} sites from this checkout; a real run "
+        f"rewrites them in a worktree built from {branch_point}"
+    )
+    if len(declared) > 1:
+        print(
+            f"warning: {COMPANION} already disagrees across sites "
+            f"({', '.join(sorted(declared))}); a real run would stop "
+            "rather than guess which to replace"
+        )
+        return
+    try:
+        wanted = companion_requirement(root, target)
+    except ValueError as exc:
+        print(f"warning: cannot resolve {COMPANION} for {target}: {exc}")
+        return
+    current = declared.pop()
+    if current == wanted:
+        print(f"{COMPANION}: {current} already matches {PACKAGE}=={target}")
+        return
+    sites = pin_sites(root, current, COMPANION)
+    print(
+        f"would also move {COMPANION}: {current} -> {wanted} "
+        f"across {len(sites)} site(s):"
+    )
+    for path in sites:
+        print(f"  {path.relative_to(root)}")
+
+
+def shipped_code_changed(worktree: Path) -> bool:
+    """Whether anything staged in ``worktree`` ships to users.
+
+    Asked of git rather than inferred from which packages were
+    rewritten, so a declaration site that moves into or out of the
+    shipped tree later needs no change here.
+    """
+    staged = git(
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        "custom_components",
+        cwd=worktree,
+    )
+    return bool(staged.strip())
+
+
+def bump_manifest(worktree: Path) -> bool:
+    """Increment the integration version and stage the manifest.
+
+    Delegates to the repo's own script, and specifically to
+    ``worktree``'s copy of it: that script derives the manifest it
+    edits from its own location, so running this checkout's copy
+    against the worktree would bump the wrong tree's manifest. It
+    stages the file itself.
+    """
+    return (
+        subprocess.run(
+            [str(worktree / "scripts" / "bump-manifest-version.py")],
+            cwd=worktree,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def run_suite(worktree: Path) -> int:
     """Run the repo's own suite inside ``worktree``.
 
@@ -296,7 +470,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  0  success, or already on the newest release\n"
             "  2  usage error\n"
             "  3  dirty checkout, wrong branch, or unpushed commits\n"
-            "  4  the suite could not be run at all\n"
+            "  4  the bump could not be built or verified at all --\n"
+            "     a git, resolution, or rewrite problem, including\n"
+            "     declaration sites that already disagree\n"
             "  5  the suite failed while verifying the new pin\n"
             "\n5 does not by itself implicate the new pin: the suite\n"
             "covers more than the API surface the pin selects. To tell,\n"
@@ -321,7 +497,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Report the drift and exit. Fetches, so the comparison "
             "is against the published pin, but changes no working "
-            "tree or branch."
+            "tree or branch. Where a coupled pin is declared it also "
+            "resolves the target release to report that pin, which "
+            "downloads into uv's cache."
         ),
     )
     parser.add_argument(
@@ -412,6 +590,10 @@ def run(args: argparse.Namespace) -> Exit:
                 "site list above is unavailable; the real run rewrites "
                 f"sites in a worktree built from {branch_point}."
             )
+        # Report the coupled pin too. A reader deciding whether to let
+        # a bump land wants the whole diff it would produce, and this
+        # is the part that can also move shipped code.
+        report_companion_drift(REPO_ROOT, target, branch_point)
         return Exit.SUCCESS
 
     # Sweep before the guards, not after: a run that refuses would
@@ -495,11 +677,70 @@ def run(args: argparse.Namespace) -> Exit:
         )
 
     rel_sites = [str(p.relative_to(worktree)) for p in sites]
+
+    # The Z-Wave client pin is derived from the target release, so it
+    # moves in the same commit. Left behind, it fails the Z-Wave phases
+    # on an import error that names the library instead of the pin.
+    companion_declared = declared_sites(worktree, COMPANION)
+    companion_current = {version for _, version in companion_declared}
+    if len(companion_current) > 1:
+        # An unattended run leaves only what it printed, so name the
+        # files rather than just the versions that disagree.
+        listing = "\n  ".join(
+            f"{path.relative_to(worktree)} pins {version}"
+            for path, version in sorted(
+                companion_declared, key=lambda site: str(site[0])
+            )
+        )
+        return _fail(
+            f"{COMPANION} is pinned to several versions; reconcile them "
+            f"by hand before a bump can move them (worktree {worktree} "
+            f"kept):\n  {listing}",
+            Exit.ERROR,
+        )
+    companion_moved = False
+    if companion_current:
+        # Exactly one version, per the guard above.
+        stale_companion = companion_current.pop()
+        try:
+            companion_target = companion_requirement(worktree, target)
+        except ValueError as exc:
+            return _fail(f"{exc} (worktree {worktree} kept)", Exit.ERROR)
+        if companion_target != stale_companion:
+            companion_moved = True
+            print(
+                f"{COMPANION}: {stale_companion} -> {companion_target} "
+                f"(required by {PACKAGE}=={target})"
+            )
+            companion_sites = pin_sites(worktree, stale_companion, COMPANION)
+            for path in companion_sites:
+                path.write_text(
+                    rewrite_pins(
+                        path.read_text(),
+                        stale_companion,
+                        companion_target,
+                        COMPANION,
+                    )
+                )
+            rel_sites.extend(
+                str(p.relative_to(worktree))
+                for p in companion_sites
+                if str(p.relative_to(worktree)) not in rel_sites
+            )
+
     if not git_ok("add", *rel_sites, cwd=worktree):
         return _fail(
             f"cannot stage the rewritten pins (worktree {worktree} kept)",
             Exit.ERROR,
         )
+
+    if shipped_code_changed(worktree):
+        print("rewrite touched custom_components/; bumping the manifest")
+        if not bump_manifest(worktree):
+            return _fail(
+                f"cannot bump the manifest version (worktree {worktree} kept)",
+                Exit.ERROR,
+            )
 
     message = (
         f"- deps: Bump {PACKAGE} to {target}.\n"
@@ -508,6 +749,17 @@ def run(args: argparse.Namespace) -> Exit:
         "API surface the suite validates against, so it tracks the\n"
         "newest release rather than a version chosen by hand.\n"
     )
+    # Only claim the coupled move when it happened. The pin can be
+    # declared and already correct for the target release, and these
+    # messages are permanent.
+    if companion_moved:
+        message += (
+            "\n"
+            "The Z-Wave client pin moves with it. That version is not\n"
+            "a choice: Home Assistant's own zwave_js component requires\n"
+            "one exact client and imports from it, so it is read out of\n"
+            "the release being pinned.\n"
+        )
     if not git_ok("commit", "-m", message, cwd=worktree):
         return _fail(
             f"cannot commit the bump (worktree {worktree} kept)",

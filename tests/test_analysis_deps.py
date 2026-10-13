@@ -10,10 +10,12 @@
 """Analysis-dependency invariants, gating written conventions.
 
 The rules come from ``DEVELOPMENT.md`` "Analysis-dep pinning and
-stub suppressions". The first and third gate conventions that were
-violated in practice before anything enforced them; the second
-gates one that holds today but which no tooling can repair once
-broken.
+stub suppressions". Several were violated in practice before
+anything enforced them; the rest hold today but share a failure
+mode that makes them worth gating anyway -- each breaks quietly,
+either passing a check vacuously or surfacing far from its cause,
+and some cannot be repaired by the automation that owns the pins
+once broken.
 
 1. Every file carrying a PEP 723 ``# /// script`` block that
    imports ``yaml`` declares ``types-PyYAML``. A PEP 723 block
@@ -49,7 +51,19 @@ broken.
    newest interpreter installed, exiting zero, so a pin that drifts
    below a floor silently stops pinning anything.
 
-5. No file under ``custom_components/`` carries a PEP 723 block.
+5. Every site pinning ``zwave-js-server-python`` names the same
+   version. That pin's value is dictated by the Home Assistant
+   release the HACC pin selects -- HA's ``zwave_js`` component
+   requires one exact client and imports from it -- so a site left
+   behind runs against a client that release does not use, and says
+   so as a missing name in ``zwave_js`` rather than as a pin
+   problem. ``scripts/hacc_upgrade.py`` moves these together; this
+   gates the result, for a pin that moved by some other route.
+   Agreement is all it checks: whether the agreed version is the
+   right one is settled by the Z-Wave phases, which import the
+   component for real.
+
+6. No file under ``custom_components/`` carries a PEP 723 block.
    Home Assistant imports those modules and runs them on its own
    interpreter against the packages it installed, so a block there
    declares an environment the shipped code never resolves -- and,
@@ -73,6 +87,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 HACC = "pytest-homeassistant-custom-component"
+ZWAVE_CLIENT = "zwave-js-server-python"
 
 # Body of a PEP 723 inline-metadata block, per the spec's opening
 # and closing sentinel lines.
@@ -83,15 +98,25 @@ _YAML_IMPORT = re.compile(r"^\s*(?:import yaml\b|from yaml\b)", re.MULTILINE)
 
 
 def _tracked(*suffixes: str) -> list[Path]:
+    """Tracked files with these suffixes, symlinks excluded.
+
+    Skipping links matches what ``scripts/hacc_upgrade.py`` rewrites:
+    it refuses to edit through a tracked symlink, because the target
+    is vendored content a drift test owns and ``git add`` on the link
+    stages nothing. A gate that read through them could flag a pin the
+    tool structurally cannot repair -- a permanent red with no
+    automated fix. Vendored content is covered by its own drift test.
+    """
     out = subprocess.check_output(
         ["git", "ls-files", "-z"],
         cwd=REPO_ROOT,
         text=True,
     )
     return [
-        REPO_ROOT / rel
+        path
         for rel in out.split("\0")
         if rel and rel.endswith(suffixes)
+        if not (path := REPO_ROOT / rel).is_symlink()
     ]
 
 
@@ -127,7 +152,8 @@ def _pep723_python_floors() -> list[tuple[Path, tuple[int, ...]]]:
     return floors
 
 
-def _pinned_hacc_version() -> str:
+def _declared_version(package: str) -> str | None:
+    """The version the shared fallback pins ``package`` to, if any."""
     cfg = tomllib.loads(PYPROJECT.read_text())
     deps = cfg["tool"]["repo-shared"]["code-quality"]["mypy-extra-deps"]
     # tomllib hands back ``Any``; narrow before use so the return
@@ -135,12 +161,20 @@ def _pinned_hacc_version() -> str:
     assert isinstance(deps, list)
     for dep in deps:
         assert isinstance(dep, str)
-        if dep.startswith(f"{HACC}=="):
+        if dep.startswith(f"{package}=="):
             return dep.split("==", 1)[1]
-    raise AssertionError(
-        f"no pinned {HACC} found in "
-        "[tool.repo-shared.code-quality] mypy-extra-deps"
-    )
+    return None
+
+
+def _pinned_version(package: str) -> str:
+    """As above, for a pin whose absence is itself a failure."""
+    version = _declared_version(package)
+    if version is None:
+        raise AssertionError(
+            f"no pinned {package} found in "
+            "[tool.repo-shared.code-quality] mypy-extra-deps"
+        )
+    return version
 
 
 class TestPep723YamlStubs:
@@ -175,7 +209,7 @@ class TestPinAgreement:
         sites carrying the version being replaced, so one already
         drifted to some third version is invisible to it.
         """
-        expected = _pinned_hacc_version()
+        expected = _pinned_version(HACC)
         # Match version digits only. A greedy ``[\w.]+`` would
         # swallow the period ending a markdown sentence, reporting
         # a site the upgrade tool's boundary-anchored match treats
@@ -201,27 +235,81 @@ class TestPinAgreement:
 
 
 class TestPinnedVersionNotInProse:
-    def test_hacc_version_only_at_declaration_sites(self) -> None:
-        version = _pinned_hacc_version()
+    @pytest.mark.parametrize("package", [HACC, ZWAVE_CLIENT])
+    def test_version_only_at_declaration_sites(self, package: str) -> None:
+        """Both pins are automation-moved, so both have this hazard.
+
+        ``scripts/hacc_upgrade.py`` rewrites every declaration site
+        for both packages in one commit. Prose naming either version
+        is not a declaration site, so the rewrite leaves it behind.
+
+        Skips a package the fallback does not declare, matching the
+        tool, which resolves nothing where there is no such pin. Only
+        the Z-Wave client is optional in practice, but hard-coding
+        which one would make this disagree with the tool the moment
+        that changes.
+        """
+        version = _declared_version(package)
+        if version is None:
+            pytest.skip(f"{package} is not declared in mypy-extra-deps")
         offenders: list[str] = []
         for path in _tracked(".md", ".toml"):
             for lineno, line in enumerate(
                 path.read_text().splitlines(), start=1
             ):
-                if version not in line or f"{HACC}==" in line:
+                if version not in line or f"{package}==" in line:
                     continue
                 rel = path.relative_to(REPO_ROOT)
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
         assert not offenders, (
-            f"the pinned {HACC} version ({version}) appears outside a "
-            "dependency declaration:\n  "
+            f"the pinned {package} version ({version}) appears outside "
+            "a dependency declaration:\n  "
             + "\n  ".join(offenders)
             + "\n\nThe pin literal is the single source of truth for "
             "the version, and automation rewrites it at every "
             "declaration site. Prose naming the version is not "
             "rewritten, so it goes stale as soon as the pin moves. "
             "Refer to the pin instead of restating it."
+        )
+
+
+class TestCompanionPinAgreement:
+    def test_zwave_client_names_one_version(self) -> None:
+        """Disagreeing sites break Home Assistant's own imports.
+
+        ``scripts/hacc_upgrade.py`` derives this pin from the Home
+        Assistant release the HACC pin selects and rewrites every site
+        in the same commit. This gates the result: a site left behind
+        type-checks and runs against a client the pinned Home Assistant
+        does not use, and the failure surfaces as a missing name in
+        ``zwave_js``, naming the library rather than the pin.
+
+        It gates agreement only, not correctness against Home
+        Assistant. Checking the latter here would mean resolving the
+        pinned release on every run; the suite's Z-Wave phases import
+        ``zwave_js`` for real and fail if the agreed version is the
+        wrong one, so a uniformly stale pin is caught there.
+        """
+        pattern = re.compile(
+            re.escape(f"{ZWAVE_CLIENT}==") + r"(\d+(?:\.\d+)*)"
+        )
+        sites: dict[str, list[str]] = {}
+        for path in _tracked(".py", ".toml", ".md"):
+            for found in pattern.finditer(path.read_text()):
+                rel = str(path.relative_to(REPO_ROOT))
+                sites.setdefault(found.group(1), []).append(rel)
+
+        assert len(sites) <= 1, (
+            f"{ZWAVE_CLIENT} is pinned to several versions:\n  "
+            + "\n  ".join(
+                f"{version}: {', '.join(sorted(paths))}"
+                for version, paths in sorted(sites.items())
+            )
+            + "\n\nEvery site must name the version Home Assistant's "
+            "`zwave_js` component requires at the pinned HACC release. "
+            "`scripts/hacc_upgrade.py` moves them together; a site it "
+            "missed is one it could not match."
         )
 
 
