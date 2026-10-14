@@ -86,6 +86,9 @@ exposes.</li>
 <ul>
 <li>The <strong>Z-Wave JS</strong> integration, loaded and connected to its driver. ZPM reads
 and writes through it in-process; it does not talk to zwave-js-ui directly.</li>
+<li><strong>One</strong> Z-Wave JS controller. If you run two, ZPM manages the fleet behind
+one of them and leaves the other's devices untouched -- they are not
+reported as pending or unconverged, simply not seen.</li>
 <li>A policy file under <code>/config</code> (see
 <a href="#policy-file-format">Policy file format</a>). A missing file simply means no
 policies yet.</li>
@@ -221,6 +224,11 @@ context off the in-process driver, the registries, and the recorder),
 <code>logic.evaluate_policies</code> (plan writes against the shipped <code>mapping.json</code>),
 <code>apply.select_writes</code> (which writes to issue this cycle), and <code>report</code> +
 <code>notification</code> (render the reports).</p>
+<p>One Z-Wave JS controller is in scope. The read takes the first <em>loaded</em>
+<code>zwave_js</code> config entry -- an ignored or disabled one is passed over rather
+than reported as an unavailable driver -- and resolves devices within that
+entry only, so an installation with two working controllers gets the first
+one's fleet and leaves the other unmanaged.</p>
 <h3>Apply model</h3>
 <p>Pending state -- the writes ZPM has issued but not yet seen converge -- is
 kept in <code>/config/blueprint_toolkit/zpm_pending.json</code>, a file the automation

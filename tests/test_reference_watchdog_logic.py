@@ -150,7 +150,6 @@ def _device(
         integration=integration,
         config_entry_title=config_entry_title,
         via_device_id=via_device_id,
-        config_entries=(),
         entry_type=entry_type,
     )
 

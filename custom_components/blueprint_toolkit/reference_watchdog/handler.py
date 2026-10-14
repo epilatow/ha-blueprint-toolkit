@@ -523,23 +523,16 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
         # so notification body always renders a non-empty
         # link text.
         name = device.name_by_user or device.name or "(unnamed)"
-        # ``primary_config_entry`` is the canonical entry for
-        # the device. Older HA releases didn't have this
-        # attribute; fall back to the first ``config_entries``
-        # member for backward compatibility.
-        primary_id = getattr(device, "primary_config_entry", None)
-        if not primary_id and device.config_entries:
-            primary_id = next(iter(device.config_entries))
-        integration = (
-            config_entry_domains.get(primary_id or "", "") if primary_id else ""
-        )
-        ce_title = (
-            config_entry_titles.get(primary_id or "") if primary_id else None
-        )
+        # A device belongs to exactly one config entry, which is
+        # what supplies the integration domain and the title the
+        # attribution header shows.
+        entry_id = device.config_entry_id
+        integration = config_entry_domains.get(entry_id, "")
+        ce_title = config_entry_titles.get(entry_id)
         # ``entry_type`` is HA's ``DeviceEntryType`` -- a
         # ``StrEnum`` with one member, ``SERVICE``. Coerce to
         # ``str`` so the logic-layer comparison is import-free.
-        et = getattr(device, "entry_type", None)
+        et = device.entry_type
         entry_type_value = str(et) if et is not None else None
         device_records[device.id] = logic.DeviceRecord(
             device_id=device.id,
@@ -549,7 +542,6 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
             integration=integration,
             config_entry_title=ce_title,
             via_device_id=device.via_device_id,
-            config_entries=tuple(device.config_entries or ()),
             entry_type=entry_type_value,
         )
 

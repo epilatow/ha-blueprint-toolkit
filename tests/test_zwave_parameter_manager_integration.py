@@ -166,6 +166,7 @@ def _install_zwave_js(hass: Any) -> str:
     Returns the HA device_id the write must target.
     """
     from homeassistant.components.zwave_js.helpers import get_device_id
+    from homeassistant.config_entries import ConfigEntryState
     from homeassistant.helpers import device_registry as dr
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -177,7 +178,11 @@ def _install_zwave_js(hass: Any) -> str:
     # sample to detect a driver restart (a drop below the stored value).
     driver.controller.statistics.messages_rx = 1000
     driver.controller.statistics.messages_tx = 500
-    entry = MockConfigEntry(domain="zwave_js", data={})
+    # The read selects LOADED entries, and a real one carries
+    # ``runtime_data`` only while loaded.
+    entry = MockConfigEntry(
+        domain="zwave_js", data={}, state=ConfigEntryState.LOADED
+    )
     entry.add_to_hass(hass)
     runtime = MagicMock()
     runtime.client.driver = driver

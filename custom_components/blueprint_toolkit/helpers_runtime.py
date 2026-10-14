@@ -49,6 +49,30 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_ZWAVE_JS_DOMAIN = "zwave_js"
+
+
+def zwave_js_entry(hass: HomeAssistant) -> ConfigEntry | None:
+    """Return the ``zwave_js`` config entry the Z-Wave readers share.
+
+    The first LOADED entry, not the first entry: Home Assistant hands
+    back ignored, disabled, and setup-retrying entries alongside the
+    live one, and an ignored discovery entry ahead of the working
+    controller in insertion order would make every reader here report
+    the driver as unavailable while a usable controller sat behind it.
+    An entry that is not loaded also carries no ``runtime_data`` to
+    reach a driver through -- HA deletes the attribute on unload --
+    so the state filter is what lets consumers read it directly.
+
+    One accessor for every Z-Wave consumer, so the driver, the
+    device-registry lookups scoped to its entry, and the session
+    monitor's controller statistics all name the same controller. A
+    single controller is in scope (one ``home_id`` per shared record);
+    a second loaded one is left unmanaged.
+    """
+    entries = hass.config_entries.async_loaded_entries(_ZWAVE_JS_DOMAIN)
+    return entries[0] if entries else None
+
 
 def entry_for_domain(hass: HomeAssistant) -> ConfigEntry | None:
     """Return the integration's lone config entry, if loaded.
@@ -1135,4 +1159,5 @@ __all__ = [
     "unregister_blueprint_handler",
     "update_instance_state",
     "validate_payload_or_emit_config_error",
+    "zwave_js_entry",
 ]

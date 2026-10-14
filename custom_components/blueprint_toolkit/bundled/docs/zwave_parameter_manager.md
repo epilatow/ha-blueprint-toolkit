@@ -40,6 +40,9 @@ re-sending the same command on every pass.
 
 - The **Z-Wave JS** integration, loaded and connected to its driver. ZPM reads
   and writes through it in-process; it does not talk to zwave-js-ui directly.
+- **One** Z-Wave JS controller. If you run two, ZPM manages the fleet behind
+  one of them and leaves the other's devices untouched -- they are not
+  reported as pending or unconverged, simply not seen.
 - A policy file under `/config` (see
   [Policy file format](#policy-file-format)). A missing file simply means no
   policies yet.
@@ -137,6 +140,12 @@ context off the in-process driver, the registries, and the recorder),
 `logic.evaluate_policies` (plan writes against the shipped `mapping.json`),
 `apply.select_writes` (which writes to issue this cycle), and `report` +
 `notification` (render the reports).
+
+One Z-Wave JS controller is in scope. The read takes the first *loaded*
+`zwave_js` config entry -- an ignored or disabled one is passed over rather
+than reported as an unavailable driver -- and resolves devices within that
+entry only, so an installation with two working controllers gets the first
+one's fleet and leaves the other unmanaged.
 
 ### Apply model
 

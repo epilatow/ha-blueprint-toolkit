@@ -100,6 +100,7 @@ from .helpers_runtime import (
     unregister_blueprint_handler,
     update_instance_state,
     validate_payload_or_emit_config_error,
+    zwave_js_entry,
 )
 
 __all__ = [
@@ -180,4 +181,5 @@ __all__ = [
     "validate_directives_item",
     "validate_directives_regex",
     "validate_payload_or_emit_config_error",
+    "zwave_js_entry",
 ]

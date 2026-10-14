@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from .helpers import zwave_js_entry
 from .zwave import driver_session
 
 if TYPE_CHECKING:
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _INTERVAL = timedelta(seconds=60)
-_ZWAVE_JS_DOMAIN = "zwave_js"
 
 
 @dataclass(frozen=True)
@@ -47,14 +47,17 @@ class _LiveStats:
 def _read_live(hass: HomeAssistant) -> _LiveStats | None:
     """The live controller stats, or ``None`` when the driver is unavailable.
 
-    Walks ``zwave_js`` entry -> client -> driver -> controller -> statistics by
-    duck-typing, returning ``None`` at any missing hop (zwave_js not loaded,
-    the driver still connecting, statistics not yet populated).
+    Walks the shared ``zwave_js`` entry -> client -> driver -> controller ->
+    statistics by duck-typing, returning ``None`` at any missing hop (zwave_js
+    not loaded, the driver still connecting, statistics not yet populated).
+    Taking the entry from ``zwave_js_entry`` is what keeps the record's
+    ``home_id`` naming the same controller the ZPM handler reconciles against,
+    rather than whichever entry each module happened to pick.
     """
-    entries = hass.config_entries.async_entries(_ZWAVE_JS_DOMAIN)
-    if not entries:
+    entry = zwave_js_entry(hass)
+    if entry is None:
         return None
-    runtime = getattr(entries[0], "runtime_data", None)
+    runtime = getattr(entry, "runtime_data", None)
     client = getattr(runtime, "client", None)
     driver = getattr(client, "driver", None)
     controller = getattr(driver, "controller", None)

@@ -14,6 +14,16 @@ registry's value, falling back to the live state's -- zwave_js sets the
 device class on the entity, not the registered entity description, so the
 registry value is often unset); the last wake from the node-status
 entity's recorder history.
+
+Import contract: this module is imported by ``zwavectl`` as well as by
+the handler, and the CLI runs on the Terminal & SSH add-on's
+interpreter in a venv holding only ``VENV_DEPS`` -- no Home Assistant,
+and so none of what Home Assistant brings with it. ``build_node_read``
+and ``NodeRead`` are what the CLI takes. So nothing here may import
+Home Assistant, or a module that does, at module scope: those imports
+are either ``TYPE_CHECKING`` or deferred into the function that needs
+them. ``tests/test_zwavectl.py`` walks this closure and fails on a
+module-scope import the CLI's venv could not satisfy.
 """
 
 from __future__ import annotations
@@ -27,12 +37,15 @@ from .adapter import actual_values, build_device, derive_device_types
 from .logic import CommandClass, Device, ParamId
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_registry import RegistryEntry
     from zwave_js_server.model.driver import Driver
     from zwave_js_server.model.node import Node
 
-_ZWAVE_JS_DOMAIN = "zwave_js"
+# The entity-registry ``platform`` the node-status entity is registered
+# under.
+_ZWAVE_JS_PLATFORM = "zwave_js"
 
 # The wakeUpInterval value-id (CC 132); its live value is the device's
 # wake interval, read straight out of the per-node actuals.
@@ -61,24 +74,54 @@ class NodeRead:
 async def read_fleet(hass: HomeAssistant) -> list[NodeRead]:
     """Read every node the in-process zwave_js driver knows about.
 
-    Returns an empty list when zwave_js is not loaded.
+    Returns an empty list when zwave_js is absent, not loaded, or
+    loaded without a connected driver. The handler renders that as
+    its "Z-Wave JS unavailable" notification, so every such state has
+    to reach it as an empty read rather than as an exception.
     """
+    # Deferred: see this module's docstring on the import contract.
+    from ..helpers import zwave_js_entry
 
-    driver = get_driver(hass)
+    entry = zwave_js_entry(hass)
+    if entry is None:
+        return []
+    driver = _entry_driver(entry)
     if driver is None:
         return []
     return [
-        await _read_node(hass, driver, node)
+        await _read_node(hass, driver, entry.entry_id, node)
         for node in driver.controller.nodes.values()
     ]
 
 
 def get_driver(hass: HomeAssistant) -> Driver | None:
-    """The in-process zwave_js driver, or ``None`` when it is not loaded."""
-    entries = hass.config_entries.async_entries(_ZWAVE_JS_DOMAIN)
-    if not entries:
-        return None
-    return cast("Driver | None", entries[0].runtime_data.client.driver)
+    """The in-process zwave_js driver, or ``None`` without one.
+
+    ``None`` covers every way the driver can be out of reach: no
+    ``zwave_js`` entry at all, none of them loaded, or a loaded entry
+    whose client has not finished connecting.
+    """
+    # Deferred: see this module's docstring on the import contract.
+    from ..helpers import zwave_js_entry
+
+    entry = zwave_js_entry(hass)
+    return _entry_driver(entry) if entry is not None else None
+
+
+def _entry_driver(entry: ConfigEntry) -> Driver | None:
+    """A loaded entry's driver, or ``None`` while it is still connecting.
+
+    Reaching through ``runtime_data`` is safe here only because the
+    entry came from ``zwave_js_entry``, which hands back loaded
+    entries: ``zwave_js`` publishes the attribute as it finishes
+    setting one up and Home Assistant deletes it again on unload.
+    ``None`` covers the window where the entry is loaded but its
+    client has no driver yet, which ``read_fleet`` reports as an empty
+    read -- the handler renders that as its "Z-Wave JS unavailable"
+    notification, so it has to reach it as a value rather than a
+    raise.
+    """
+    return cast("Driver | None", entry.runtime_data.client.driver)
 
 
 def build_node_read(
@@ -119,9 +162,11 @@ def build_node_read(
 
 
 async def _read_node(
-    hass: HomeAssistant, driver: Driver, node: Node
+    hass: HomeAssistant, driver: Driver, entry_id: str, node: Node
 ) -> NodeRead:
-    device_id, name, location, entities = _registry_context(hass, driver, node)
+    device_id, name, location, entities = _registry_context(
+        hass, driver, entry_id, node
+    )
     last_awake = (
         await _last_awake(hass, device_id) if device_id is not None else None
     )
@@ -136,7 +181,7 @@ async def _read_node(
 
 
 def _registry_context(
-    hass: HomeAssistant, driver: Driver, node: Node
+    hass: HomeAssistant, driver: Driver, entry_id: str, node: Node
 ) -> tuple[str | None, str, str | None, list[tuple[str, str | None]]]:
     """The HA-registry view of a node: ``device_id``, display name, area,
     and each entity's ``(domain, device_class)``. Falls back to the node's
@@ -148,8 +193,8 @@ def _registry_context(
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
 
-    dev_entry = dr.async_get(hass).async_get_device(
-        identifiers={get_device_id(driver, node)}
+    dev_entry = dr.async_get(hass).async_get_device_by_identifier(
+        get_device_id(driver, node), entry_id
     )
     if dev_entry is None:
         return None, node.name or "", None, []
@@ -209,7 +254,7 @@ async def _last_awake(hass: HomeAssistant, device_id: str) -> datetime | None:
             entry
             for entry in er.async_entries_for_device(ent_reg, device_id)
             if entry.translation_key == "node_status"
-            and entry.platform == _ZWAVE_JS_DOMAIN
+            and entry.platform == _ZWAVE_JS_PLATFORM
         ),
         None,
     )

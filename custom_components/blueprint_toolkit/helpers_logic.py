@@ -866,10 +866,11 @@ class DeviceRef:
     framework renders the shared ``Device`` / ``Config Entry``
     header lines centrally instead of each handler
     hand-formatting them. RW additionally sets
-    ``config_entry_title`` / ``manufacturer`` / ``model`` from
-    the device's primary config entry. All but ``device_id`` +
-    ``name`` are optional; absent config-entry / mfr / model
-    omit the ``Config Entry`` line.
+    ``manufacturer`` / ``model`` off the device's own registry
+    entry, and ``config_entry_title`` off the config entry the
+    device belongs to. All but ``device_id`` + ``name`` are
+    optional; absent config-entry / mfr / model omit the
+    ``Config Entry`` line.
 
     Integrations are NOT carried here -- they ride on the
     notification spec's ``integrations`` field so a deviceless

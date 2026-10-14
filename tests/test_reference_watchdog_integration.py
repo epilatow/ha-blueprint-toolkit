@@ -1038,7 +1038,7 @@ class TestUnusedDeviceCheckEndToEnd:
             config_entry_id=fake_entry.entry_id,
             identifiers={("fake_cascade", "child")},
             name="Child Sensor",
-            via_device=("fake_cascade", "parent"),
+            via_device_id=parent.id,
         )
         ent_reg.async_get_or_create(
             domain="sensor",

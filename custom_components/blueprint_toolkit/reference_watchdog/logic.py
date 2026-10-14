@@ -469,8 +469,8 @@ class DeviceRecord:
     """One row from the device registry as a value type.
 
     Built once per run from ``device_registry.async_get(hass)``
-    plus a back-resolve of each device's ``primary_config_entry``
-    against the parsed ``core.config_entries``. Threaded into
+    plus a back-resolve of each device's ``config_entry_id``
+    against the live config-entry registry. Threaded into
     ``TruthSet.device_records`` so the unused-device check can
     classify devices, build per-device notification bodies, and
     walk ``via_device_id`` for cascade-up rescue without making
@@ -482,9 +482,9 @@ class DeviceRecord:
     don't render an empty link.
 
     ``integration`` is the config-entry domain (``shelly``,
-    ``mqtt``, ``zwave_js``, ...) of the device's primary config
-    entry. Drives the ``_UNUSED_DEVICE_SKIP_INTEGRATIONS`` test
-    and the ``exclude_integrations`` cross-check.
+    ``mqtt``, ``zwave_js``, ...) of the config entry the device
+    belongs to. Drives the ``_UNUSED_DEVICE_SKIP_INTEGRATIONS``
+    test and the ``exclude_integrations`` cross-check.
 
     ``entry_type`` mirrors HA's ``DeviceEntry.entry_type``:
     ``"service"`` for devices an integration registers as agents
@@ -503,7 +503,6 @@ class DeviceRecord:
     integration: str
     config_entry_title: str | None
     via_device_id: str | None
-    config_entries: tuple[str, ...]
     entry_type: str | None = None
 
 
@@ -566,8 +565,9 @@ class TruthSet:
     device_to_entities: dict[str, frozenset[str]] = field(
         default_factory=dict,
     )
-    # config_entry_id -> human title from the parsed
-    # ``core.config_entries``. Used in the unused-device
+    # config_entry_id -> human title, from the live config-entry
+    # registry rather than the ``core.config_entries`` the scan
+    # parses as a reference source. Used in the unused-device
     # notification body to disambiguate multi-instance
     # integrations (e.g. which Apple TV).
     config_entry_titles: dict[str, str] = field(default_factory=dict)

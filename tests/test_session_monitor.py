@@ -58,7 +58,12 @@ class _Controller:
 
 
 class _Hass:
-    """Minimal hass: one optional zwave_js entry + a sync executor."""
+    """Minimal hass: one optional loaded zwave_js entry + a sync executor.
+
+    The monitor selects its entry through the shared accessor, which
+    asks for LOADED entries only, so the stub answers
+    ``async_loaded_entries``.
+    """
 
     def __init__(self, controller: object | None) -> None:
         driver = None
@@ -71,7 +76,7 @@ class _Hass:
         self.config_entries = type(
             "CE",
             (),
-            {"async_entries": lambda _self, _domain: entries},
+            {"async_loaded_entries": lambda _self, _domain: entries},
         )()
 
     async def async_add_executor_job(self, func: Any, *args: Any) -> Any:

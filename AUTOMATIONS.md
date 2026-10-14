@@ -150,9 +150,15 @@ reset TIME (rather than each consumer comparing a counter it sampled itself)
 is what lets a consumer that runs rarely -- the CLI, every few days -- still
 see a restart the counter has since climbed back past.
 
-Only the first `zwave_js` controller is tracked (a single `home_id` per
-record); a second controller is out of scope. The atomic write + advisory lock
-that back both this record and the ZPM pending store live in
+Both in-process consumers of the driver select their controller through
+`helpers.zwave_js_entry` -- the monitor for the statistics it samples, ZPM's
+fleet read for the driver and the entry its device lookups are scoped to -- so
+the record's `home_id` and the fleet ZPM reconciles always name the same
+controller. Only that one is in scope (a single `home_id` per record); a
+second controller is left unmanaged. ZRM is not one of these: it reaches
+zwave-js-ui over HTTP rather than the in-process driver, and keys devices to
+nodes by `node_id` alone, so it is unscoped by entry. The atomic write +
+advisory lock that back both this record and the ZPM pending store live in
 `zwave/atomic_json.py`.
 
 ## Standalone blueprints
@@ -236,6 +242,13 @@ Cross-handler accessors:
 - `entry_for_domain(hass)` -- returns the integration's lone config entry
   (single-entry integration) or `None`. Used by every native handler to scope
   task lifecycle to the entry.
+- `zwave_js_entry(hass)` -- returns the first *loaded* `zwave_js` config
+  entry, or `None`. The single selection every Z-Wave consumer shares, so the
+  driver they read, the registry lookups scoped to its entry, and the session
+  monitor's `home_id` all name one controller. Loaded-only on purpose: HA
+  lists ignored, disabled, and setup-retrying entries too, and one of those
+  sorting ahead of the live controller would otherwise read as "no driver"
+  indefinitely.
 - `notification_prefix(service, instance_id)` -- returns
   `blueprint_toolkit_{service}__{instance_id}__`, the per-instance prefix
   every notification ID under a handler shares. Per-category suffix is

@@ -48,6 +48,7 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.logic import (
 )
 from custom_components.blueprint_toolkit.zwave_parameter_manager.source import (
     build_node_read,
+    get_driver,
     read_fleet,
 )
 
@@ -121,6 +122,7 @@ def _install_fleet(hass: HomeAssistant, node: Node) -> str:
     entity_id (for seeding recorder history)."""
 
     from homeassistant.components.zwave_js.helpers import get_device_id
+    from homeassistant.config_entries import ConfigEntryState
     from homeassistant.helpers import area_registry as ar
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
@@ -129,7 +131,11 @@ def _install_fleet(hass: HomeAssistant, node: Node) -> str:
     driver = MagicMock()
     driver.controller.home_id = HOME_ID
     driver.controller.nodes = {node.node_id: node}
-    entry = MockConfigEntry(domain="zwave_js", data={})
+    # The read selects LOADED entries, and a real one carries
+    # ``runtime_data`` only while loaded.
+    entry = MockConfigEntry(
+        domain="zwave_js", data={}, state=ConfigEntryState.LOADED
+    )
     entry.add_to_hass(hass)
     runtime = MagicMock()
     runtime.client.driver = driver
@@ -197,6 +203,25 @@ async def test_read_fleet_empty_without_zwave_js(hass: HomeAssistant) -> None:
     assert await read_fleet(hass) == []
 
 
+async def test_read_fleet_empty_when_the_entry_is_not_loaded(
+    hass: HomeAssistant,
+) -> None:
+    """An unloaded entry must read as empty, not raise.
+
+    Home Assistant deletes ``runtime_data`` on unload, so reaching
+    for the driver on an entry that is unloaded, retrying setup, or
+    disabled would raise -- and the handler turns an empty read, not
+    an exception, into its "Z-Wave JS unavailable" notification.
+    """
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(domain="zwave_js", data={})
+    entry.add_to_hass(hass)
+
+    assert not hasattr(entry, "runtime_data")
+    assert await read_fleet(hass) == []
+
+
 @pytest.mark.usefixtures("recorder_mock")
 async def test_read_fleet_assembles_device_and_convergence(
     hass: HomeAssistant,
@@ -233,6 +258,116 @@ async def test_read_fleet_assembles_device_and_convergence(
         ParamId(112, 12): 8,
         ParamId(132, "wakeUpInterval"): 3600,
     }
+
+
+@pytest.mark.usefixtures("recorder_mock")
+async def test_read_fleet_resolves_the_device_of_its_own_entry(
+    hass: HomeAssistant,
+) -> None:
+    """The lookup is scoped to the entry whose driver has the node.
+
+    An identifier is unique only within a config entry, so the
+    entry-scoped registry API is the supported way to resolve one.
+    The decoy below registers the same identifier under a different
+    entry -- which ``zwave_js``'s unique-id abort stops two LIVE
+    controllers from doing, but which a stale or pre-migration entry
+    can still own -- and it is registered FIRST, because an
+    identifier-only search returns the earliest registration. That
+    ordering is what makes these assertions fail if the lookup stops
+    being scoped; with the fleet's own device first, an unscoped
+    search would return it too and prove nothing.
+    """
+
+    from homeassistant.components.zwave_js.helpers import get_device_id
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    node = _node()
+    dev_reg = dr.async_get(hass)
+
+    other = MockConfigEntry(domain="zwave_js", data={})
+    other.add_to_hass(hass)
+    other_driver = MagicMock()
+    other_driver.controller.home_id = HOME_ID
+    decoy = dev_reg.async_get_or_create(
+        config_entry_id=other.entry_id,
+        identifiers={get_device_id(other_driver, node)},
+        name="Second Controller Motion",
+    )
+
+    _install_fleet(hass, node)
+
+    reads = await read_fleet(hass)
+    assert len(reads) == 1
+    assert reads[0].convergence.name == "Guest Bath Motion"
+    assert reads[0].convergence.device_id != decoy.id
+
+
+@pytest.mark.usefixtures("recorder_mock")
+async def test_read_fleet_skips_an_ignored_entry_ahead_of_the_live_one(
+    hass: HomeAssistant,
+) -> None:
+    """An ignored discovery entry must not hide the live controller.
+
+    Home Assistant lists ignored, disabled, and setup-retrying entries
+    alongside loaded ones, and such an entry carries no driver. Taking
+    the first entry regardless of state would report the fleet as
+    unavailable for as long as the ignored one sorted ahead of the
+    working controller, which the user cannot fix without deleting it.
+    """
+    from homeassistant.config_entries import SOURCE_IGNORE
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    ignored = MockConfigEntry(domain="zwave_js", data={}, source=SOURCE_IGNORE)
+    ignored.add_to_hass(hass)
+
+    _install_fleet(hass, _node())
+
+    reads = await read_fleet(hass)
+    assert len(reads) == 1
+    assert reads[0].convergence.name == "Guest Bath Motion"
+
+
+async def test_read_fleet_empty_while_the_driver_is_connecting(
+    hass: HomeAssistant,
+) -> None:
+    """A loaded entry whose client has no driver yet reads as empty."""
+    from homeassistant.config_entries import ConfigEntryState
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain="zwave_js", data={}, state=ConfigEntryState.LOADED
+    )
+    entry.add_to_hass(hass)
+    runtime = MagicMock()
+    runtime.client.driver = None
+    entry.runtime_data = runtime
+
+    assert await read_fleet(hass) == []
+
+
+async def test_get_driver_returns_the_loaded_entrys_driver(
+    hass: HomeAssistant,
+) -> None:
+    """The driver accessor the reconnect subscription arms itself from."""
+    node = _node()
+    _install_fleet(hass, node)
+
+    driver = get_driver(hass)
+    assert driver is not None
+    assert driver.controller.nodes == {node.node_id: node}
+
+
+async def test_get_driver_none_without_a_loaded_entry(
+    hass: HomeAssistant,
+) -> None:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    assert get_driver(hass) is None
+
+    entry = MockConfigEntry(domain="zwave_js", data={})
+    entry.add_to_hass(hass)
+    assert get_driver(hass) is None
 
 
 @pytest.mark.usefixtures("recorder_mock")

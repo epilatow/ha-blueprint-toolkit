@@ -19,6 +19,7 @@ row assembly); focused mocks cover important fetcher error paths.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import subprocess
 import sys
@@ -720,6 +721,198 @@ class TestBootstrapVenv:
             d.lower().split("==")[0].replace("-", "") for d in zc.VENV_DEPS
         }
         assert "pyyaml" in names
+
+
+# --- the integration modules the CLI imports --------------------
+
+# Distribution name in ``VENV_DEPS`` -> the module it provides. The two
+# differ often enough that deriving one from the other is guesswork, so
+# the mapping is written out.
+_VENV_MODULES = {
+    "python-socketio": "socketio",
+    "aiohttp": "aiohttp",
+    "websockets": "websockets",
+    "zwave-js-server-python": "zwave_js_server",
+    "pyyaml": "yaml",
+}
+
+_CUSTOM_COMPONENTS = REPO_ROOT / "custom_components"
+_PACKAGE = "blueprint_toolkit"
+
+
+def _is_type_checking_guard(node: ast.stmt) -> bool:
+    """True for ``if TYPE_CHECKING:`` in any spelling used here."""
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
+def _module_scope_imports(
+    tree: ast.Module,
+) -> list[ast.Import | ast.ImportFrom]:
+    """Imports that run when the module is imported.
+
+    A function body is deferred, so an import there costs nothing at
+    import time; a ``TYPE_CHECKING`` block never executes at all. Class
+    bodies and ``try`` / ``with`` blocks do run, so they count.
+    """
+    found: list[ast.Import | ast.ImportFrom] = []
+
+    def walk(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, ast.Import | ast.ImportFrom):
+                found.append(node)
+            elif isinstance(
+                node, ast.FunctionDef | ast.AsyncFunctionDef
+            ) or _is_type_checking_guard(node):
+                continue
+            else:
+                for field in ("body", "orelse", "finalbody"):
+                    inner = getattr(node, field, None)
+                    if isinstance(inner, list):
+                        walk(inner)
+                for handler in getattr(node, "handlers", []):
+                    walk(handler.body)
+
+    walk(tree.body)
+    return found
+
+
+def _resolve(
+    module: str,
+    *,
+    is_package: bool,
+    level: int,
+    name: str | None,
+) -> str:
+    """Resolve a possibly-relative import to an absolute module name.
+
+    ``level`` 1 means the importing module's own package, which is the
+    module itself when it is a package (``__init__.py``) and its parent
+    otherwise; each further level strips one more component.
+    """
+    if level == 0:
+        return name or ""
+    parts = module.split(".")
+    package = parts if is_package else parts[:-1]
+    package = package[: len(package) - (level - 1)]
+    return ".".join([*package, name]) if name else ".".join(package)
+
+
+def _module_path(module: str) -> tuple[Path, bool] | None:
+    """The module's file plus whether it is a package."""
+    rel = Path(*module.split("."))
+    plain = _CUSTOM_COMPONENTS / rel.with_suffix(".py")
+    if plain.is_file():
+        return plain, False
+    package = _CUSTOM_COMPONENTS / rel / "__init__.py"
+    if package.is_file():
+        return package, True
+    return None
+
+
+class TestCliImportClosure:
+    """The CLI's venv must satisfy every module-scope import it causes.
+
+    ``zwavectl`` runs on the Terminal & SSH add-on's interpreter in a
+    venv holding only ``VENV_DEPS``. It imports integration modules for
+    their shared logic, so anything those reach at module scope has to
+    resolve there -- including what Home Assistant would otherwise have
+    supplied. Checking that a dependency is *named* in ``VENV_DEPS``
+    cannot see a newly added transitive import, which is what this
+    walks instead.
+    """
+
+    def _entrypoints(self) -> set[str]:
+        tree = ast.parse(_SCRIPT_PATH.read_text())
+        found = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.split(".")[0] == _PACKAGE
+        }
+        assert found, (
+            "no `blueprint_toolkit` imports found in zwavectl.py; the "
+            "closure walk would check nothing"
+        )
+        return found
+
+    def _closure(self) -> dict[str, Path]:
+        queue = list(self._entrypoints())
+        seen: dict[str, Path] = {}
+        while queue:
+            module = queue.pop()
+            if module in seen:
+                continue
+            found = _module_path(module)
+            if found is None:
+                continue
+            path, is_package = found
+            seen[module] = path
+            tree = ast.parse(path.read_text())
+            for node in _module_scope_imports(tree):
+                if isinstance(node, ast.ImportFrom):
+                    target = _resolve(
+                        module,
+                        is_package=is_package,
+                        level=node.level,
+                        name=node.module,
+                    )
+                    if target.split(".")[0] == _PACKAGE:
+                        queue.append(target)
+                        # ``from .pkg import name`` may name a module.
+                        queue.extend(
+                            f"{target}.{alias.name}" for alias in node.names
+                        )
+        return seen
+
+    def test_closure_is_non_empty(self) -> None:
+        closure = self._closure()
+        assert "blueprint_toolkit.zwave_parameter_manager.source" in closure, (
+            f"expected the param-manager source module in the CLI's "
+            f"import closure; found {sorted(closure)}"
+        )
+
+    def test_no_module_scope_import_the_venv_cannot_satisfy(self) -> None:
+        allowed = {
+            _VENV_MODULES[d.lower().split("==")[0].split("[")[0]]
+            for d in zc.VENV_DEPS
+            if d.lower().split("==")[0].split("[")[0] in _VENV_MODULES
+        }
+        offenders: list[str] = []
+        for module, path in sorted(self._closure().items()):
+            tree = ast.parse(path.read_text())
+            for node in _module_scope_imports(tree):
+                if isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        continue
+                    roots = [(node.module or "").split(".")[0]]
+                else:
+                    roots = [a.name.split(".")[0] for a in node.names]
+                for root in roots:
+                    if not root or root == _PACKAGE:
+                        continue
+                    if root in sys.stdlib_module_names or root in allowed:
+                        continue
+                    offenders.append(
+                        f"{module} (line {node.lineno}) imports {root}"
+                    )
+
+        assert not offenders, (
+            "module-scope import(s) the CLI's bootstrapped venv cannot "
+            "satisfy:\n  " + "\n  ".join(offenders) + "\n\nzwavectl runs "
+            "on the add-on's interpreter with only `VENV_DEPS` "
+            "installed, so an import Home Assistant would have supplied "
+            "fails there with ModuleNotFoundError. Defer it into the "
+            "function that needs it, put it under `TYPE_CHECKING`, or "
+            "add the distribution to `VENV_DEPS`."
+        )
 
 
 # --- API key file resolution ------------------------------------
