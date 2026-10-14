@@ -20,12 +20,17 @@ claims to validate against moves on.
 
 The flow mirrors ``repo-shared upgrade``:
 
-- Compare the pin *as published* against PyPI. The comparison reads
-  the remote's tree, not the local checkout, so a local branch that
-  has drifted ahead cannot make the tool report "already current"
-  while the published pin sits still.
+- Compare the pin *as published* against PyPI. Without ``--base``
+  the comparison reads the remote's tree, not the local checkout, so
+  a local branch that has drifted ahead cannot make the tool report
+  "already current" while the published pin sits still.
 - Build the bump in a throwaway worktree branched off the remote
-  default branch, never in the main checkout.
+  default branch, never in the main checkout. ``--base`` moves that
+  branch point, for a long-lived branch whose work has to be in the
+  tree the suite runs against -- a pin bump that needs an API
+  migration landing alongside it cannot be verified against a default
+  branch that lacks the migration. Such a run verifies only, and the
+  verified result is left for a hand merge.
 - Rewrite every site declaring the version being replaced. There
   are many: each HACC-coupled test file repeats the pin in its own
   PEP 723 block, and a block that disagrees with ``pyproject.toml``
@@ -341,13 +346,26 @@ def current_branch() -> str:
     return git("rev-parse", "--abbrev-ref", "HEAD").strip()
 
 
-def sweep_stale_worktrees() -> None:
+def sweep_stale_worktrees(keep: str | None = None) -> None:
     """Remove worktrees this tool left behind on earlier attempts.
 
     A red suite keeps its worktree for inspection, and next week's
     attempt targets a different version and so a different path.
     Without a sweep every failed week leaks another worktree and
     its test venv.
+
+    ``keep`` is a commit the caller is building on. The branch in
+    this namespace whose tip is that commit keeps its ref, because a
+    verified bump awaiting a hand merge is exactly what ``--base`` is
+    pointed at and deleting it would destroy the base mid-run. Only
+    the ref is spared: its directory and venv are still reclaimed,
+    and a branch no longer checked out anywhere is still a valid base
+    for the next ``worktree add``.
+
+    Matching is by resolved commit rather than by branch name, so a
+    base spelled as a raw SHA is covered too -- and by the same
+    token, any ref in this namespace sitting at that commit is
+    spared. A pending bump at some other commit is swept.
     """
     wt_root = REPO_ROOT / ".wt" / WORKTREE_PREFIX
     if not wt_root.is_dir():
@@ -355,12 +373,20 @@ def sweep_stale_worktrees() -> None:
     for path in sorted(wt_root.iterdir()):
         if not path.is_dir():
             continue
+        branch = f"{WORKTREE_PREFIX}/{path.name}"
+        exists = git_ok("rev-parse", "--verify", "--quiet", branch, quiet=True)
+        spare = (
+            keep is not None
+            and exists
+            and git("rev-parse", branch).strip() == keep
+        )
         print(f"removing stale worktree {path}")
         git_ok("worktree", "remove", "--force", str(path), quiet=True)
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)
-        branch = f"{WORKTREE_PREFIX}/{path.name}"
-        if git_ok("rev-parse", "--verify", "--quiet", branch, quiet=True):
+        if spare:
+            print(f"keeping {branch}; this run builds on it")
+        elif exists:
             git_ok("branch", "-D", branch)
 
 
@@ -510,6 +536,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Skips the PyPI lookup."
         ),
     )
+    parser.add_argument(
+        "--base",
+        metavar="REF",
+        help=(
+            "Build and verify the bump on this ref instead of the "
+            "published default branch. For a long-lived branch whose "
+            "work has to be in the tree the suite runs against. "
+            "Cannot be combined with --push, which lands on the "
+            "default branch."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -528,17 +565,62 @@ def run(args: argparse.Namespace) -> Exit:
             Exit.USAGE,
         )
 
-    try:
-        branch = default_branch()
-    except ValueError as exc:
-        return _fail(str(exc), Exit.ERROR)
+    # An empty value is a wrapper script passing an unset variable
+    # through. The ref check below would reject it too, but only as
+    # an unresolvable ref, which sends the reader looking for a
+    # misspelled branch instead of an unset variable.
+    if args.base is not None and not args.base.strip():
+        return _fail("--base needs a ref; got an empty value", Exit.USAGE)
+
+    # Refused here with the other shape checks, ahead of any network
+    # work, so an unreachable origin cannot report a usage error as
+    # an infrastructure one.
+    if args.base is not None and args.push:
+        return _fail(
+            "--base builds the bump somewhere other than the "
+            "default branch, so --push has nothing to fast-forward; "
+            "verify on the base, then land the result yourself",
+            Exit.USAGE,
+        )
+
     has_origin = git_ok("remote", "get-url", "origin", quiet=True)
     # Fetch on every path, dry-run included: comparing against a
     # stale remote-tracking ref would not be comparing against the
     # published pin, which is the whole point of reading it there.
     if has_origin and not git_ok("fetch", "origin"):
         return _fail("git fetch origin failed", Exit.ERROR)
-    branch_point = f"origin/{branch}" if has_origin else branch
+
+    base_commit: str | None = None
+    if args.base is not None:
+        # Resolved after the fetch so a base naming a remote-tracking
+        # ref reads the ref this run just updated. The resolved commit
+        # is what the sweep below is told to spare, so a base in this
+        # tool's own namespace survives the run built on it.
+        if not git_ok(
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"{args.base}^{{commit}}",
+            quiet=True,
+        ):
+            return _fail(
+                f"--base {args.base!r} is not a commit in this repository",
+                Exit.USAGE,
+            )
+        base_commit = git("rev-parse", f"{args.base}^{{commit}}").strip()
+        branch_point = args.base
+        # A sentinel, never read: every use of ``branch`` below is
+        # --push-gated and --push is refused above. Leaving it
+        # unresolved is what lets this mode run on a checkout whose
+        # origin/HEAD was never recorded -- resolving it would refuse
+        # the one mode that has no use for it.
+        branch = ""
+    else:
+        try:
+            branch = default_branch()
+        except ValueError as exc:
+            return _fail(str(exc), Exit.ERROR)
+        branch_point = f"origin/{branch}" if has_origin else branch
 
     # The published pin is the one that matters. Reading it from the
     # local checkout would let a checkout sitting ahead of the remote
@@ -600,7 +682,7 @@ def run(args: argparse.Namespace) -> Exit:
     # otherwise leave the previous attempt's worktree and its test
     # venv behind indefinitely. Past the dry-run return, so a
     # reporting run still changes nothing.
-    sweep_stale_worktrees()
+    sweep_stale_worktrees(keep=base_commit)
 
     # Everything below guards the landing step only. Without
     # --push the bump is built in a worktree off the branch point
@@ -642,11 +724,33 @@ def run(args: argparse.Namespace) -> Exit:
     worktree = REPO_ROOT / ".wt" / WORKTREE_PREFIX / target
 
     git_ok("worktree", "prune")
-    if git_ok("rev-parse", "--verify", "--quiet", bump_branch, quiet=True):
+    bump_exists = git_ok(
+        "rev-parse", "--verify", "--quiet", bump_branch, quiet=True
+    )
+    # The branch this run rebuilds is deleted first, which would
+    # destroy a base that happens to be that same ref -- the sweep
+    # spares it only to have it deleted here. Refuse instead: the
+    # caller has to merge or rename it, since this run cannot both
+    # preserve and rewrite one ref.
+    if (
+        base_commit is not None
+        and bump_exists
+        and git("rev-parse", bump_branch).strip() == base_commit
+    ):
+        return _fail(
+            f"--base {args.base!r} is {bump_branch}, the branch this run "
+            f"rebuilds for {target}; merge or rename it first",
+            Exit.USAGE,
+        )
+    if bump_exists:
         git_ok("branch", "-D", bump_branch)
 
+    # Built from the resolved commit, not the ref: the ref can have
+    # been swept or deleted between resolution and here, and the
+    # commit cannot move under the run.
+    build_from = base_commit if base_commit is not None else branch_point
     if not git_ok(
-        "worktree", "add", "-b", bump_branch, str(worktree), branch_point
+        "worktree", "add", "-b", bump_branch, str(worktree), build_from
     ):
         return _fail(f"cannot create worktree at {worktree}", Exit.ERROR)
 
@@ -742,13 +846,31 @@ def run(args: argparse.Namespace) -> Exit:
                 Exit.ERROR,
             )
 
-    message = (
-        f"- deps: Bump {PACKAGE} to {target}.\n"
-        "\n"
-        "Automated weekly bump. The pin decides which Home Assistant\n"
-        "API surface the suite validates against, so it tracks the\n"
-        "newest release rather than a version chosen by hand.\n"
-    )
+    # The body states how this run was driven, because it is
+    # permanent history on the default branch and the three modes are
+    # not interchangeable: only the unattended one can claim the pin
+    # followed the newest release on its own.
+    if args.to is None:
+        provenance = (
+            "Automated weekly bump. The pin decides which Home\n"
+            "Assistant API surface the suite validates against, so it\n"
+            "tracks the newest release rather than a version chosen by\n"
+            "hand.\n"
+        )
+    else:
+        provenance = (
+            f"Bumped to {target} deliberately rather than to whatever\n"
+            "PyPI published last. The pin decides which Home Assistant\n"
+            "API surface the suite validates against.\n"
+        )
+    if args.base is not None:
+        provenance += (
+            "\n"
+            "Verified against a chosen base rather than the default\n"
+            "branch, for a pin whose accompanying code changes are not\n"
+            "landed yet, so this was merged by hand.\n"
+        )
+    message = f"- deps: Bump {PACKAGE} to {target}.\n\n{provenance}"
     # Only claim the coupled move when it happened. The pin can be
     # declared and already correct for the target release, and these
     # messages are permanent.
@@ -800,6 +922,16 @@ def run(args: argparse.Namespace) -> Exit:
             Exit.ERROR if infra else Exit.TESTS_FAILED,
         )
     print("suite passed")
+
+    if args.base is not None:
+        # The merge is the only instruction left, and it is
+        # perishable: the next run sweeps this namespace and spares
+        # only the one branch it is itself handed.
+        print(
+            f"bump left on {bump_branch}; merge it before the next "
+            "run sweeps it."
+        )
+        return Exit.SUCCESS
 
     if not args.push:
         print(f"bump left on {bump_branch}; pass --push to land it.")

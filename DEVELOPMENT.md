@@ -362,7 +362,28 @@ scripts/hacc_upgrade.py --dry-run    # report drift, change nothing
 scripts/hacc_upgrade.py              # build + verify, leave on its branch
 scripts/hacc_upgrade.py --push       # ... and land it on green
 scripts/hacc_upgrade.py --to X.Y.Z   # target a version other than latest
+scripts/hacc_upgrade.py --base REF   # verify on REF, not the default branch
 ```
+
+`--base` exists for the case the weekly job cannot handle: a bump that only
+passes with code changes landing beside it. When a Home Assistant release
+removes an API the integration uses, the migration and the pin are a single
+unit of work -- each is red without the other -- so verifying the pin against
+a default branch that lacks the migration proves nothing. Point `--base` at
+the branch carrying it instead. Such a run verifies only; landing
+fast-forwards the default branch, which a bump built elsewhere cannot do, so
+`--base` and `--push` are refused together and the result is merged by hand.
+Combining it with `--dry-run` reports the base's drift and builds nothing.
+
+Two things to know about the handoff. The base is taken as a committed ref, so
+work still sitting in the checkout is not what gets verified -- commit it
+first. And the verified bump is left on a `hacc-upgrade/<version>` branch,
+which is the namespace every later run sweeps: merge it before the next run,
+or pass that branch as the next run's `--base`, which spares its ref (not its
+worktree). Only refs sitting at the base commit are spared, so a second
+pending bump elsewhere in that namespace is swept either way. A base that *is*
+the branch the next run rebuilds -- `hacc-upgrade/<the new target>` -- is
+refused rather than clobbered; merge or rename it first.
 
 Scheduling is host-side and therefore a setup step, not something the repo
 carries: a `crony` drop-in bundle at `~/.config/crony/config/` runs the

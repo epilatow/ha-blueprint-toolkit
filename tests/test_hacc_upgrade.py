@@ -268,14 +268,18 @@ class TestGuards:
         args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
         assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
 
-    def test_remote_without_default_branch_refuses(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_unreachable_remote_refuses(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """An unresolvable origin/HEAD must not fall back.
+        """Every path fetches, so an unreachable origin stops the run.
 
-        Falling back to the current branch would make the
-        wrong-branch guard compare a value against itself, so an
-        unattended --push could land on a feature branch.
+        The drift comparison reads the published pin, which a stale
+        remote-tracking ref is not, so there is nothing useful to do
+        with a remote that cannot be reached. The reason is asserted
+        because other steps refuse with the same status.
         """
         _init_repo(tmp_path, "1.2.3")
         subprocess.run(
@@ -284,9 +288,11 @@ class TestGuards:
             check=True,
         )
         monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        capsys.readouterr()
 
         args = hacc_upgrade.parse_args(["--to", "4.5.6"])
         assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        assert "git fetch origin failed" in capsys.readouterr().err
 
     def test_dirty_checkout_refuses_the_landing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -762,6 +768,370 @@ class TestCompanionResolutionFailure:
         assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
 
 
+def _branch_exists(clone: Path, branch: str) -> bool:
+    """Whether ``branch`` resolves in ``clone``."""
+    return (
+        subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", branch],
+            cwd=clone,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def _branch_with_pin(clone: Path, name: str, pin: str) -> str:
+    """Commit ``pin`` on a new branch ``name`` and return its SHA."""
+    subprocess.run(["git", "checkout", "-q", "-b", name], cwd=clone, check=True)
+    (clone / "pyproject.toml").write_text(
+        _pyproject(f"{PACKAGE}=={pin}", "types-PyYAML")
+    )
+    subprocess.run(["git", "add", "pyproject.toml"], cwd=clone, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", f"{name} pin"], cwd=clone, check=True
+    )
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=clone, text=True
+    ).strip()
+
+
+class TestBaseRef:
+    """Verifying a bump against a branch instead of the default.
+
+    A bump that needs code changes landing alongside it -- an API
+    migration the new pin requires -- cannot be verified against a
+    default branch that lacks them.
+    """
+
+    def test_verifies_against_the_given_ref(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The pin read and the bump both come from the base.
+
+        The base carries a pin the default branch does not, so the
+        reported drift and the bump's parent both differ from what a
+        run that ignored the flag would produce.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        feature = _branch_with_pin(clone, "feature", "2.0.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        capsys.readouterr()
+
+        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        # The drift is read off the base's pin, not the default
+        # branch's, and the bump is built on the base's commit.
+        out = capsys.readouterr().out
+        assert "drift on feature: 2.0.0 -> 4.5.6" in out
+        parent = subprocess.check_output(
+            ["git", "rev-parse", "hacc-upgrade/4.5.6^"], cwd=clone, text=True
+        ).strip()
+        assert parent == feature
+        built = subprocess.check_output(
+            ["git", "show", "hacc-upgrade/4.5.6:pyproject.toml"],
+            cwd=clone,
+            text=True,
+        )
+        assert f"{PACKAGE}==4.5.6" in built
+        landed = subprocess.check_output(
+            ["git", "show", "main:pyproject.toml"], cwd=clone, text=True
+        )
+        assert f"{PACKAGE}==1.2.3" in landed
+
+    def test_reports_drift_without_building_on_dry_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """``--dry-run`` reports the base's drift and builds nothing."""
+
+        def _never(_wt: Path) -> int:
+            raise AssertionError("ran the suite on a reporting run")
+
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        _branch_with_pin(clone, "feature", "2.0.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", _never)
+        capsys.readouterr()
+
+        args = hacc_upgrade.parse_args(
+            ["--base", "feature", "--dry-run", "--to", "4.5.6"]
+        )
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        assert "drift on feature: 2.0.0 -> 4.5.6" in capsys.readouterr().out
+        assert not (clone / ".wt").exists()
+
+    def test_push_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Landing fast-forwards the default branch onto the bump.
+
+        A bump built on some other base has nothing it could legally
+        fast-forward onto, so the combination is a usage error rather
+        than a surprising merge.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+
+        args = hacc_upgrade.parse_args(
+            ["--base", "main", "--push", "--to", "4.5.6"]
+        )
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+
+    def test_push_refusal_precedes_the_fetch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unreachable origin must not mask a usage error.
+
+        The refusal depends on nothing the network supplies, so
+        reporting it as an infrastructure failure would send the
+        caller after the wrong problem.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", str(tmp_path / "gone.git")],
+            cwd=clone,
+            check=True,
+        )
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+
+        args = hacc_upgrade.parse_args(
+            ["--base", "main", "--push", "--to", "4.5.6"]
+        )
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+
+    def test_does_not_need_a_recorded_default_branch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """This mode never reads ``origin/HEAD``; the other one does.
+
+        A fetch usually restores a missing one, so reaching the
+        refusal needs the resolution itself to fail -- a remote that
+        advertises no HEAD. The default path is still refused there,
+        which is what makes the base path's exemption a real
+        difference rather than a reordering.
+        """
+
+        def _unresolvable() -> str:
+            raise ValueError("origin records no default branch")
+
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        _branch_with_pin(clone, "feature", "2.0.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(hacc_upgrade, "default_branch", _unresolvable)
+
+        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        without_base = hacc_upgrade.parse_args(["--to", "4.5.6"])
+        assert hacc_upgrade.run(without_base) == hacc_upgrade.Exit.ERROR
+
+    def test_a_base_in_the_tool_namespace_survives_the_sweep(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sweep must not delete the branch it was told to build on.
+
+        A verified bump awaiting a hand merge lives on exactly the
+        branch the sweep clears, so chaining a second bump onto one
+        would otherwise destroy its own base mid-run.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+
+        first = hacc_upgrade.parse_args(["--to", "4.5.6"])
+        assert hacc_upgrade.run(first) == hacc_upgrade.Exit.SUCCESS
+
+        second = hacc_upgrade.parse_args(
+            ["--base", "hacc-upgrade/4.5.6", "--to", "7.8.9"]
+        )
+        assert hacc_upgrade.run(second) == hacc_upgrade.Exit.SUCCESS
+
+        for branch in ("hacc-upgrade/4.5.6", "hacc-upgrade/7.8.9"):
+            assert _branch_exists(clone, branch), f"{branch} was swept"
+        built = subprocess.check_output(
+            ["git", "show", "hacc-upgrade/7.8.9:pyproject.toml"],
+            cwd=clone,
+            text=True,
+        )
+        assert f"{PACKAGE}==7.8.9" in built
+        # The base's ref is spared; its directory and venv are not.
+        assert not (clone / ".wt" / "hacc-upgrade" / "4.5.6").exists()
+        # This run's own worktree stays for inspection.
+        assert (clone / ".wt" / "hacc-upgrade" / "7.8.9").is_dir()
+
+    def test_a_base_elsewhere_does_not_spare_the_namespace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sparing is per-commit, not a blanket exemption.
+
+        Without this, dropping the tip comparison would stop every
+        base run from sweeping at all and no test would notice.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+
+        first = hacc_upgrade.parse_args(["--to", "4.5.6"])
+        assert hacc_upgrade.run(first) == hacc_upgrade.Exit.SUCCESS
+
+        _branch_with_pin(clone, "feature", "2.0.0")
+        second = hacc_upgrade.parse_args(["--base", "feature", "--to", "7.8.9"])
+        assert hacc_upgrade.run(second) == hacc_upgrade.Exit.SUCCESS
+        assert not _branch_exists(clone, "hacc-upgrade/4.5.6")
+
+    def test_reports_the_result_as_perishable(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """``--push`` is refused here, so the merge is the instruction.
+
+        Pointing the reader at the flag this mode rejects would be
+        advice that errors out, and omitting the sweep window would
+        leave the result looking durable.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        _branch_with_pin(clone, "feature", "2.0.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        capsys.readouterr()
+
+        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        out = capsys.readouterr().out
+        assert "merge it before the next run sweeps it" in out
+        assert "--push" not in out
+
+    def test_an_empty_base_names_the_unset_value(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A wrapper passing an unset variable says so.
+
+        The ref check refuses an empty value too, but as an
+        unresolvable ref -- which sends the reader after a misspelled
+        branch rather than an unset variable. Asserted without
+        ``--push``, whose own refusal returns the same status.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        capsys.readouterr()
+
+        args = hacc_upgrade.parse_args(["--base", "", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        assert "needs a ref" in capsys.readouterr().err
+
+    def test_a_base_that_is_the_rebuilt_branch_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One ref cannot be both preserved and rewritten.
+
+        The run deletes the branch it rebuilds, so a base that is
+        that same ref would be destroyed after the sweep spared it.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        _branch_with_pin(clone, "hacc-upgrade/4.5.6", "2.0.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+
+        args = hacc_upgrade.parse_args(
+            ["--base", "hacc-upgrade/4.5.6", "--to", "4.5.6"]
+        )
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        assert _branch_exists(clone, "hacc-upgrade/4.5.6")
+
+    def test_the_bump_message_records_how_the_run_was_driven(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The body lands on the default branch as permanent history.
+
+        Only the unattended run can claim the pin followed the newest
+        release on its own, so a hand-driven one must not say so.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        _branch_with_pin(clone, "feature", "2.0.0")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+
+        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+        body = subprocess.check_output(
+            ["git", "log", "-1", "--format=%B", "hacc-upgrade/4.5.6"],
+            cwd=clone,
+            text=True,
+        )
+        assert "Automated weekly" not in body
+        assert "deliberately" in body
+        assert "chosen base" in body
+
+    def test_a_remote_only_base_resolves_after_the_fetch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Resolution must see refs this run's fetch brought in.
+
+        A base naming a branch that exists only on the remote is
+        unresolvable until the fetch creates its tracking ref, so
+        resolving before the fetch would reject a valid base.
+        """
+        upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        pushed = tmp_path / "pusher"
+        subprocess.run(
+            ["git", "clone", "-q", str(upstream), str(pushed)], check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "t@example.com"],
+            cwd=pushed,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=pushed, check=True
+        )
+        _branch_with_pin(pushed, "migration", "2.0.0")
+        subprocess.run(
+            ["git", "push", "-q", "origin", "migration"],
+            cwd=pushed,
+            check=True,
+        )
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+
+        assert not _branch_exists(clone, "origin/migration")
+        args = hacc_upgrade.parse_args(
+            ["--base", "origin/migration", "--to", "4.5.6"]
+        )
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+
+    def test_unknown_ref_is_a_usage_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Caught before any worktree is built.
+
+        Resolution happens after the fetch so a base naming a
+        remote-tracking ref reads the updated ref.
+        """
+        _upstream, clone = _clone_pair(tmp_path, "1.2.3")
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+
+        args = hacc_upgrade.parse_args(
+            ["--base", "no-such-ref", "--to", "4.5.6"]
+        )
+        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        assert not (clone / ".wt").exists()
+
+
 class TestShippedCodeChanged:
     """Whether the bump owes the manifest a version increment.
 
@@ -879,6 +1249,29 @@ class TestDefaultBranch:
         _init_repo(tmp_path, "1.2.3")
         monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
         assert hacc_upgrade.default_branch() == "main"
+
+    def test_unresolvable_head_raises_rather_than_falling_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With a remote configured, no recorded HEAD is an error.
+
+        Falling back to the current branch would make the
+        wrong-branch guard compare a value against itself, so an
+        unattended landing could base a bump on whatever branch the
+        checkout was parked on and push the result there. Asserted
+        against the function rather than a whole run: resolution does
+        not fetch, so a run reaches it only when the fetch succeeded.
+        """
+        _init_repo(tmp_path, "1.2.3")
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(tmp_path / "nowhere")],
+            cwd=tmp_path,
+            check=True,
+        )
+        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+
+        with pytest.raises(ValueError, match="no default branch"):
+            hacc_upgrade.default_branch()
 
 
 class TestLanding:
