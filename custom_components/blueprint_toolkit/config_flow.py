@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+import probatio
 from homeassistant import config_entries
 from homeassistant.core import callback
 
@@ -53,7 +53,7 @@ class BlueprintToolkitConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
         )
 
     @staticmethod
@@ -83,10 +83,12 @@ class BlueprintToolkitOptionsFlow(config_entries.OptionsFlow):
         provision = self.config_entry.options.get(
             OPTION_PROVISION_CLI_TOKEN, False
         )
-        schema = vol.Schema(
+        schema = probatio.Schema(
             {
-                vol.Optional(OPTION_CLI_SYMLINK_DIR, default=current_dir): str,
-                vol.Optional(
+                probatio.Optional(
+                    OPTION_CLI_SYMLINK_DIR, default=current_dir
+                ): str,
+                probatio.Optional(
                     OPTION_PROVISION_CLI_TOKEN, default=provision
                 ): bool,
             },

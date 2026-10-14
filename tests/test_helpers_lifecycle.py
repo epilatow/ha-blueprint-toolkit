@@ -5,7 +5,7 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -48,8 +48,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, cast
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import probatio  # noqa: E402
 import pytest  # noqa: E402
-import voluptuous as vol  # noqa: E402
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -598,7 +598,7 @@ class TestMakeConfigErrorNotification:
         assert n.message == "- bad"
 
     def test_md_escape_applied_to_error_bullets(self) -> None:
-        # vol.Invalid messages can echo the offending
+        # probatio.Invalid messages can echo the offending
         # input value back, which can contain ``[`` /
         # ``]`` (e.g. bad list literal in YAML). Escape
         # so those don't render as a markdown link.
@@ -3236,7 +3236,7 @@ class TestRegisterFixService:
         # payload and rejects a missing notification_id.
         schema = hass.services.registered_kwargs[key]["schema"]
         assert schema({"notification_id": "x"}) == {"notification_id": "x"}
-        with pytest.raises(vol.Invalid):
+        with pytest.raises(probatio.Invalid):
             schema({})
 
     @pytest.mark.asyncio

@@ -186,7 +186,7 @@ def md_escape(s: str) -> str:
       render literally.
 
     Escaping IS needed for human-typed strings such as
-    automation friendly names, vol.Invalid messages
+    automation friendly names, probatio.Invalid messages
     (which can include the offending input value),
     error messages from external APIs, etc.
     """
@@ -1017,7 +1017,7 @@ def make_config_error_notification(
 
     Every interpolated user-controlled string -- each
     entry of ``errors`` -- is ``md_escape``-d here.
-    ``vol.Invalid`` messages can include the offending
+    ``probatio.Invalid`` messages can include the offending
     input value, which could otherwise smuggle stray
     ``[`` / ``]`` / ``\\`` into the rendered markdown.
     """

@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+import probatio
 
 from .const import DOMAIN
 from .helpers_logic import (
@@ -641,7 +641,9 @@ async def emit_fix_service_crash_notification(
     await process_persistent_notifications(hass, [spec])
 
 
-_FIX_SERVICE_SCHEMA = vol.Schema({vol.Required("notification_id"): str})
+_FIX_SERVICE_SCHEMA = probatio.Schema(
+    {probatio.Required("notification_id"): str}
+)
 
 
 def register_fix_service(
@@ -796,26 +798,18 @@ async def validate_payload_or_emit_config_error(
 
     Returns the validated payload on success, or ``None``
     when a notification was emitted -- callers short-circuit
-    dispatch on ``None``. ``voluptuous`` is third-party (not
-    a ``homeassistant.*`` module), so the function-body import
-    here doesn't violate the runtime flavour's
-    ``test_helpers_runtime_has_no_runtime_ha_imports`` rule.
-    Late-importing keeps this module loadable in a no-vol
-    environment, mirroring the lazy-import shape used in the
-    lifecycle file's HA-side late imports.
+    dispatch on ``None``.
     """
-    import voluptuous as vol
-
     try:
         return schema(raw)
-    except vol.MultipleInvalid as err:
+    except probatio.MultipleInvalid as err:
         await emit_config_error(
             hass,
             instance_id_for_config_error(raw),
             [f"schema: {sub}" for sub in err.errors],
         )
         return None
-    except vol.Invalid as err:
+    except probatio.Invalid as err:
         await emit_config_error(
             hass,
             instance_id_for_config_error(raw),

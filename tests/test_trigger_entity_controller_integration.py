@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -13,7 +13,7 @@
 
 Exercises the parts that the in-process unit tests
 (``tests/test_trigger_entity_controller_handler.py``) deliberately don't cover:
-the live ``vol.Schema`` argparse, cross-field + state
+the live ``probatio.Schema`` argparse, cross-field + state
 validation, the full ``_async_service_layer`` build-and-
 apply loop against ``hass.states`` / ``hass.services``,
 the response-shape contract that hands the user-facing
@@ -160,7 +160,7 @@ class TestArgparseEmitsConfigErrorNotification:
         """A bad call must show up as a persistent notification."""
         await _setup_integration(hass)
 
-        # Send only ``instance_id`` -- vol.MultipleInvalid
+        # Send only ``instance_id`` -- probatio.MultipleInvalid
         # collects every missing required key.
         await hass.services.async_call(
             DOMAIN,

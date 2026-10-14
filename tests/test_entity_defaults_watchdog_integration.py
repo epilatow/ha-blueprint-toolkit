@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -13,7 +13,7 @@
 
 Exercises the parts the in-process unit tests
 (``tests/test_entity_defaults_watchdog_handler.py``)
-deliberately don't cover: the live ``vol.Schema`` argparse,
+deliberately don't cover: the live ``probatio.Schema`` argparse,
 the helper-driven multi-line regex validation, the full
 ``_async_service_layer`` build-and-apply loop against
 ``hass.states`` / ``hass.config_entries.async_entries`` /

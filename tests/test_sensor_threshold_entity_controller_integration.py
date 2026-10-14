@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -13,7 +13,7 @@
 
 Exercises the parts the in-process unit tests
 (``tests/test_sensor_threshold_entity_controller_handler.py``)
-deliberately don't cover: the live ``vol.Schema`` argparse,
+deliberately don't cover: the live ``probatio.Schema`` argparse,
 the cross-field check against ``hass.states`` for
 ``controlled_entities``, the full ``_async_service_layer``
 state-load / action-dispatch / response-shape loop (including

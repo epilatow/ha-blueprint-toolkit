@@ -5,9 +5,9 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "voluptuous",
+#     "probatio",
 #     "PyYAML",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -76,7 +76,7 @@ def _async_call_later(
 
 _stubs.event.async_call_later = _async_call_later  # type: ignore[attr-defined]
 
-# voluptuous import succeeds because our dev env has it
+# probatio import succeeds because our dev env has it
 # (vendored under the test runner). If not, ImportError
 # would fail the test loudly -- which is the right
 # behaviour, since the handler genuinely needs it.
@@ -444,13 +444,13 @@ class TestKickWiring:
 # --------------------------------------------------------
 #
 # Catches the failure mode where someone adds / renames a
-# blueprint input but forgets to update the vol.Schema (or
+# blueprint input but forgets to update the probatio.Schema (or
 # vice-versa). Currently single-port; when more handlers
 # want this guard, hoist into a shared registry + iterate.
 
 
 class TestBlueprintSchemaDrift(BlueprintSchemaDriftBase):
-    """Native blueprint YAML stays in sync with the handler's vol.Schema."""
+    """Blueprint YAML stays in sync with the handler's schema."""
 
     handler = handler
     blueprint_filename = "trigger_entity_controller.yaml"

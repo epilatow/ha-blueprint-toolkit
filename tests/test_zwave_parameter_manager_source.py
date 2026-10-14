@@ -4,8 +4,8 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.357",
-#     "zwave-js-server-python==0.73.0",
+#     "pytest-homeassistant-custom-component==0.13.372",
+#     "zwave-js-server-python==0.73.1",
 #     "pyyaml",
 #     "types-PyYAML",
 # ]

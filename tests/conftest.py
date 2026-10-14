@@ -153,7 +153,7 @@ class BlueprintSchemaDriftBase:
     Inherited tests verify:
 
     - The first action's ``data:`` keys match the handler's
-      ``_SCHEMA`` ``vol.Required`` keys.
+      ``_SCHEMA`` ``probatio.Required`` keys.
     - The first action's ``action:`` targets the handler's
       registered service (``blueprint_toolkit.<service>``).
 
@@ -167,7 +167,6 @@ class BlueprintSchemaDriftBase:
     blueprint_filename: str = ""  # subclass override
 
     def _load_blueprint(self) -> dict[str, Any]:
-        import voluptuous as vol  # noqa: F401
         import yaml
 
         class _PermissiveLoader(yaml.SafeLoader):
@@ -197,10 +196,12 @@ class BlueprintSchemaDriftBase:
 
     @staticmethod
     def _required_keys(schema: Any) -> set[str]:
-        import voluptuous as vol
+        import probatio
 
         return {
-            str(k.schema) for k in schema.schema if isinstance(k, vol.Required)
+            str(k.schema)
+            for k in schema.schema
+            if isinstance(k, probatio.Required)
         }
 
     def _first_action(self, bp: dict[str, Any]) -> dict[str, Any]:
@@ -221,7 +222,7 @@ class BlueprintSchemaDriftBase:
         schema_keys = self._required_keys(self.handler._SCHEMA)
         assert yaml_keys == schema_keys, (
             f"blueprint {self.blueprint_filename} 'data:' keys do "
-            f"not match handler._SCHEMA's vol.Required keys.\n"
+            f"not match handler._SCHEMA's probatio.Required keys.\n"
             f"  only in YAML:   {sorted(yaml_keys - schema_keys)}\n"
             f"  only in schema: {sorted(schema_keys - yaml_keys)}"
         )
@@ -268,7 +269,7 @@ class BlueprintDefaultsRoundTripBase(BlueprintSchemaDriftBase):
     in ``data:`` is passed through verbatim.
 
     The constructed payload is then run through
-    ``handler._SCHEMA``; any ``vol.Invalid`` raised fails
+    ``handler._SCHEMA``; any ``probatio.Invalid`` raised fails
     the test.
     """
 
@@ -434,7 +435,7 @@ class HandlerArgparseGuardsBase:
             skipped.
         ``schema_invalid_payload``: an explicitly-invalid
             payload. Defaults to ``{}`` (every handler has
-            ``vol.Required`` keys, so empty fails).
+            ``probatio.Required`` keys, so empty fails).
     """
 
     handler: Any = None  # subclass override

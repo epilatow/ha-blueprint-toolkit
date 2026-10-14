@@ -42,7 +42,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
@@ -146,20 +146,20 @@ async def _async_entrypoint(hass: HomeAssistant, call: ServiceCall) -> None:
 # --------------------------------------------------------
 
 
-_SCHEMA = vol.Schema(
+_SCHEMA = probatio.Schema(
     {
-        vol.Required("instance_id"): cv.entity_id,
-        vol.Required("trigger_id"): vol.In(_TRIGGER_VALUES),
-        vol.Required("config_file_path"): vol.Coerce(str),
-        vol.Required("reconcile_interval_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=10080)
+        probatio.Required("instance_id"): cv.entity_id,
+        probatio.Required("trigger_id"): probatio.In(_TRIGGER_VALUES),
+        probatio.Required("config_file_path"): probatio.Coerce(str),
+        probatio.Required("reconcile_interval_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=10080)
         ),
-        vol.Required("pending_report_interval_hours_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=8760)
+        probatio.Required("pending_report_interval_hours_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=8760)
         ),
-        vol.Required("debug_logging_raw"): cv.boolean,
+        probatio.Required("debug_logging_raw"): cv.boolean,
     },
-    extra=vol.ALLOW_EXTRA,
+    extra=probatio.ALLOW_EXTRA,
 )
 
 

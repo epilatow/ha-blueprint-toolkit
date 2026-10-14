@@ -336,7 +336,7 @@ async def async_setup_entry(
     )
 
     # Per-port service handlers. Lazy-imported because each
-    # handler module pulls in ``voluptuous`` and
+    # handler module pulls in ``probatio`` and
     # ``homeassistant`` at module scope.
     from .device_watchdog import handler as dw_handler
     from .entity_defaults_watchdog import handler as edw_handler

@@ -25,15 +25,18 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.components.repairs import RepairsFlow
 
 from . import InstallConflictsIssue, InstallFailureIssue
 from .const import DOMAIN
 
 if TYPE_CHECKING:
+    # The repairs flow has its own result type. The generic
+    # ``FlowResult`` is a different, incompatible instantiation, so
+    # annotating these steps with it makes every return a type error.
+    from homeassistant.components.repairs import RepairsFlowResult
     from homeassistant.core import HomeAssistant
-    from homeassistant.data_entry_flow import FlowResult
 
 
 class InstallConflictsFlow(RepairsFlow):
@@ -45,13 +48,13 @@ class InstallConflictsFlow(RepairsFlow):
     async def async_step_init(
         self,
         user_input: dict[str, Any] | None = None,  # noqa: ARG002
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         return await self.async_step_confirm()
 
     async def async_step_confirm(
         self,
         user_input: dict[str, Any] | None = None,
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         if user_input is not None:
             await _retry_setup(
                 self.hass,
@@ -62,13 +65,13 @@ class InstallConflictsFlow(RepairsFlow):
             )
             return self.async_create_entry(data={})
 
-        # vol.Schema({}) renders as a single Submit
+        # probatio.Schema({}) renders as a single Submit
         # button; the conflict listing comes through the
         # description placeholder rendered by the
         # frontend with the strings.json template.
         return self.async_show_form(
             step_id="confirm",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
             description_placeholders=asdict(
                 InstallConflictsIssue(
                     conflicts=_format_conflict_list(
@@ -88,20 +91,20 @@ class InstallFailureFlow(RepairsFlow):
     async def async_step_init(
         self,
         user_input: dict[str, Any] | None = None,  # noqa: ARG002
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         return await self.async_step_confirm()
 
     async def async_step_confirm(
         self,
         user_input: dict[str, Any] | None = None,
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         if user_input is not None:
             await _retry_setup(self.hass, self._data.get("entry_id"))
             return self.async_create_entry(data={})
 
         return self.async_show_form(
             step_id="confirm",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
             description_placeholders=asdict(
                 InstallFailureIssue(
                     errors="\n".join(
@@ -142,13 +145,13 @@ class WatchdogFixFlow(RepairsFlow):
     async def async_step_init(
         self,
         user_input: dict[str, Any] | None = None,  # noqa: ARG002
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         return await self.async_step_confirm()
 
     async def async_step_confirm(
         self,
         user_input: dict[str, Any] | None = None,
-    ) -> FlowResult:
+    ) -> RepairsFlowResult:
         if user_input is not None:
             service_name = self._data.get("service_name", "")
             if service_name:
@@ -176,7 +179,7 @@ class WatchdogFixFlow(RepairsFlow):
         )
         return self.async_show_form(
             step_id="confirm",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
             description_placeholders=placeholders,
         )
 

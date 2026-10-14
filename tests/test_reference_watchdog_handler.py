@@ -5,10 +5,10 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "voluptuous",
+#     "probatio",
 #     "PyYAML",
 #     "Jinja2>=3",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -431,9 +431,9 @@ class TestArgparseMultilineRegex:
 # Argparse: int-input rejection (schema-level)
 # --------------------------------------------------------
 #
-# The schema uses ``vol.All(vol.Coerce(int), vol.Range(...))``
+# The schema uses ``probatio.All(probatio.Coerce(int), probatio.Range(...))``
 # for integer inputs; rejections flow through
-# ``vol.MultipleInvalid`` and surface via the ``schema:``
+# ``probatio.MultipleInvalid`` and surface via the ``schema:``
 # prefix in the emit-config-error call. These tests cover
 # user-facing error messages for non-numeric and
 # out-of-range integer inputs.
@@ -520,8 +520,8 @@ class TestArgparseIntValidation:
         assert len(self.config_errors) == 1
         joined = "\n".join(self.config_errors[0])
         assert "check_interval_minutes_raw" in joined
-        # ``vol.Coerce(int)`` produces this phrasing on
-        # bad-int input; if voluptuous changes the message
+        # ``probatio.Coerce(int)`` produces this phrasing on
+        # bad-int input; if probatio changes the message
         # in the future this assertion may need a softer
         # match.
         assert "expected int" in joined
@@ -541,7 +541,7 @@ class TestArgparseIntValidation:
         assert len(self.config_errors) == 1
         joined = "\n".join(self.config_errors[0])
         assert "max_source_notifications_raw" in joined
-        # ``vol.Range(min=0, max=1000)`` -> "value must be
+        # ``probatio.Range(min=0, max=1000)`` -> "value must be
         # at most 1000".
         assert "at most 1000" in joined
 

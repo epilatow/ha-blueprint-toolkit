@@ -37,7 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
@@ -114,29 +114,31 @@ class RwInstanceState:
 # Service-call schema
 # --------------------------------------------------------
 
-_SCHEMA = vol.Schema(
+_SCHEMA = probatio.Schema(
     {
-        vol.Required("instance_id"): cv.entity_id,
-        vol.Required("trigger_id"): vol.Coerce(str),
-        vol.Required("exclude_integrations_raw"): cv_ha_domain_list,
-        vol.Required("exclude_entities_raw"): cv.entity_ids,
-        vol.Required("exclude_entity_id_regex_raw"): vol.Coerce(str),
-        vol.Required("check_disabled_entities_raw"): cv.boolean,
-        vol.Required("check_interval_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=10080)
+        probatio.Required("instance_id"): cv.entity_id,
+        probatio.Required("trigger_id"): probatio.Coerce(str),
+        probatio.Required("exclude_integrations_raw"): cv_ha_domain_list,
+        probatio.Required("exclude_entities_raw"): cv.entity_ids,
+        probatio.Required("exclude_entity_id_regex_raw"): probatio.Coerce(str),
+        probatio.Required("check_disabled_entities_raw"): cv.boolean,
+        probatio.Required("check_interval_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=10080)
         ),
-        vol.Required("max_source_notifications_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=1000)
+        probatio.Required("max_source_notifications_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=1000)
         ),
-        vol.Required("validate_includes_excludes_raw"): cv.boolean,
-        vol.Required("enabled_checks_raw"): vol.All(
-            cv.ensure_list, [vol.Coerce(str)]
+        probatio.Required("validate_includes_excludes_raw"): cv.boolean,
+        probatio.Required("enabled_checks_raw"): probatio.All(
+            cv.ensure_list, [probatio.Coerce(str)]
         ),
-        vol.Required("exclude_device_name_regex_raw"): vol.Coerce(str),
-        vol.Required("exclude_exposed_entities_raw"): cv.boolean,
-        vol.Required("debug_logging_raw"): cv.boolean,
+        probatio.Required("exclude_device_name_regex_raw"): probatio.Coerce(
+            str
+        ),
+        probatio.Required("exclude_exposed_entities_raw"): cv.boolean,
+        probatio.Required("debug_logging_raw"): cv.boolean,
     },
-    extra=vol.ALLOW_EXTRA,
+    extra=probatio.ALLOW_EXTRA,
 )
 
 
@@ -516,7 +518,7 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
 
     dev_reg = dr.async_get(hass)
     device_records: dict[str, logic.DeviceRecord] = {}
-    for device in dev_reg.devices.values():
+    for device in dev_reg.devices:
         device_ids.add(device.id)
         # Display rule: ``name_by_user`` if the user renamed
         # the device, else ``name``. Fallback to "(unnamed)"

@@ -529,7 +529,8 @@ present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
 needs more than the fallback -- e.g. the HACC test files under `tests/` add
 `pytest` / `pytest-cov`. Other files fall through to plain `mypy --strict` in
 the project venv; `pyproject.toml`'s `[[tool.mypy.overrides]]` covers
-transitive untyped imports (voluptuous, jinja2, socketio, etc.).
+transitive imports a checkout may not have installed (`homeassistant.*`,
+probatio, jinja2, socketio, etc.).
 
 **Nothing under `custom_components/` carries a PEP 723 block.** The
 integration modules there are imported by Home Assistant, which runs them on

@@ -5,9 +5,9 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "voluptuous",
+#     "probatio",
 #     "PyYAML",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///
@@ -293,9 +293,9 @@ class _ArgparseHarness:
 # --------------------------------------------------------
 #
 # Schema-level validation:
-# ``vol.All(vol.Coerce(int), vol.Range(min=..., max=...))``
+# ``probatio.All(probatio.Coerce(int), probatio.Range(min=..., max=...))``
 # rejects non-numeric and out-of-range integers; rejections
-# flow through ``vol.MultipleInvalid`` and surface as a
+# flow through ``probatio.MultipleInvalid`` and surface as a
 # config-error notification carrying the offending field
 # name (the ``schema:`` prefix the helper prepends).
 

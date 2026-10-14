@@ -39,7 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
@@ -121,35 +121,37 @@ class DwInstanceState:
 # Service-call schema
 # --------------------------------------------------------
 
-_SCHEMA = vol.Schema(
+_SCHEMA = probatio.Schema(
     {
-        vol.Required("instance_id"): cv.entity_id,
-        vol.Required("trigger_id"): vol.Coerce(str),
-        vol.Required("include_integrations_raw"): cv_ha_domain_list,
-        vol.Required("exclude_integrations_raw"): cv_ha_domain_list,
-        vol.Required("exclude_device_name_regex_raw"): vol.Coerce(str),
-        vol.Required("exclude_entity_id_regex_raw"): vol.Coerce(str),
-        vol.Required("monitored_entity_domains_raw"): cv_ha_domain_list,
-        vol.Required("check_interval_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=10080)
+        probatio.Required("instance_id"): cv.entity_id,
+        probatio.Required("trigger_id"): probatio.Coerce(str),
+        probatio.Required("include_integrations_raw"): cv_ha_domain_list,
+        probatio.Required("exclude_integrations_raw"): cv_ha_domain_list,
+        probatio.Required("exclude_device_name_regex_raw"): probatio.Coerce(
+            str
         ),
-        vol.Required("dead_device_threshold_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=10080)
+        probatio.Required("exclude_entity_id_regex_raw"): probatio.Coerce(str),
+        probatio.Required("monitored_entity_domains_raw"): cv_ha_domain_list,
+        probatio.Required("check_interval_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=10080)
         ),
-        vol.Required("enabled_checks_raw"): vol.All(
-            cv.ensure_list, [vol.Coerce(str)]
+        probatio.Required("dead_device_threshold_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=10080)
         ),
-        vol.Required("max_device_notifications_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=1000)
+        probatio.Required("enabled_checks_raw"): probatio.All(
+            cv.ensure_list, [probatio.Coerce(str)]
         ),
-        vol.Required("create_repairs_raw"): cv.boolean,
-        vol.Required("max_repairs_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=1000)
+        probatio.Required("max_device_notifications_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=1000)
         ),
-        vol.Required("validate_includes_excludes_raw"): cv.boolean,
-        vol.Required("debug_logging_raw"): cv.boolean,
+        probatio.Required("create_repairs_raw"): cv.boolean,
+        probatio.Required("max_repairs_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=1000)
+        ),
+        probatio.Required("validate_includes_excludes_raw"): cv.boolean,
+        probatio.Required("debug_logging_raw"): cv.boolean,
     },
-    extra=vol.ALLOW_EXTRA,
+    extra=probatio.ALLOW_EXTRA,
 )
 
 
@@ -361,9 +363,7 @@ async def _async_service_layer(
     # caught -- a confusing leak of internal ordering.
     dev_reg = dr.async_get(hass)
     device_name_candidates: frozenset[str] = frozenset(
-        name
-        for d in dev_reg.devices.values()
-        if (name := d.name_by_user or d.name)
+        name for d in dev_reg.devices if (name := d.name_by_user or d.name)
     )
     monitored_lower = {d.lower() for d in monitored_entity_domains}
     ent_reg = er.async_get(hass)

@@ -4,9 +4,9 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
-#     "zwave-js-server-python==0.73.0",
+#     "zwave-js-server-python==0.73.1",
 # ]
 # ///
 # This is AI generated code

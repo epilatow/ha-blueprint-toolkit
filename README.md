@@ -105,7 +105,7 @@ automations. Live in the bundled payload and run from the HA host.
 
 ## Prerequisites
 
-- Home Assistant
+- Home Assistant 2026.10 or newer
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (for development)
 

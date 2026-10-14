@@ -43,7 +43,7 @@ custom_components/blueprint_toolkit/
 |   +-- __init__.py            # minimal shim: marker + one-line
 |   |                          # docstring; no exports
 |   +-- logic.py               # decision tree, no HA imports
-|   +-- handler.py             # HA wiring (vol.Schema, service
+|   +-- handler.py             # HA wiring (probatio.Schema, service
 |                              # handlers, lifecycle mutators,
 |                              # spec, register/unregister)
 +-- bundled/
@@ -68,10 +68,10 @@ directly -- no layer propagates a return value.
    that `helpers.register_blueprint_handler` registers as the
    `blueprint_toolkit.<service>` service callback. Receives the raw
    `ServiceCall`. Sole responsibility is to hand off to argparse.
-2. **Argparse** -- runs `vol.Schema` (catching `vol.MultipleInvalid`
-   separately from `vol.Invalid` so every error surfaces at once, not just the
-   first), then accumulates cross-field + HA-state errors, emits config-error
-   notification via `emit_config_error` (which dispatches an
+2. **Argparse** -- runs `probatio.Schema` (catching `probatio.MultipleInvalid`
+   separately from `probatio.Invalid` so every error surfaces at once, not
+   just the first), then accumulates cross-field + HA-state errors, emits
+   config-error notification via `emit_config_error` (which dispatches an
    `active=bool(errors)` spec -- empty errors becomes a dismiss spec, so
    callers call this unconditionally). Builds a `logic.Config` on success.
 3. **Service layer** -- reads `hass.states` to populate `logic.Inputs`, calls
@@ -221,7 +221,7 @@ shim re-export contract.
 
 Schema validators:
 
-- `cv_ha_domain_list(value)` -- voluptuous validator for a list-of-string
+- `cv_ha_domain_list(value)` -- probatio validator for a list-of-string
   blueprint input where each item must match HA's actual domain charset
   (`homeassistant.core.valid_domain`). Rejects hyphens, uppercase,
   leading/trailing underscores, and double-underscores; accepts leading-digit
@@ -402,7 +402,7 @@ Notifications:
 - `make_emit_config_error(*, service, service_tag)` -- factory returning a
   per-handler `_emit_config_error(hass, instance_id, errors)` closure.
 - `validate_payload_or_emit_config_error(hass, raw, schema, emit)` -- run a
-  `vol.Schema` over `raw`; on `MultipleInvalid` / `Invalid`, emit a
+  `probatio.Schema` over `raw`; on `MultipleInvalid` / `Invalid`, emit a
   config-error notification and return `None`; caller short-circuits.
 - `prepare_notifications(...)` -- sort + cap helper consuming `CappableResult`
   objects; emits clean-result notifications when the cap is exceeded; always
@@ -458,10 +458,11 @@ Every validation path in argparse must accumulate problems into a single
 `errors` list and emit them all in one `config_error` notification. Bailing on
 the first failure forces the user to play whack-a-mole.
 
-- Schema-level errors come back via `vol.MultipleInvalid.errors` -- iterate
-  the whole list. Catch `vol.MultipleInvalid` BEFORE `vol.Invalid`.
-  (Voluptuous accumulates all field-level errors automatically; `vol.All`
-  within a single field is short-circuit, which is fine.)
+- Schema-level errors come back via `probatio.MultipleInvalid.errors` --
+  iterate the whole list. Catch `probatio.MultipleInvalid` BEFORE
+  `probatio.Invalid`. (Probatio accumulates all field-level errors
+  automatically; `probatio.All` within a single field is short-circuit, which
+  is fine.)
 - Cross-field validation (no overlapping entity sets, etc.) appends to
   `errors`; never `return` mid-validation.
 - HA-state validation (entities exist, sun.sun is available if any time-of-day
@@ -471,9 +472,9 @@ the first failure forces the user to play whack-a-mole.
 
 ### Schema shape
 
-Use `vol.Schema({...}, extra=vol.ALLOW_EXTRA)`. `extra=vol.ALLOW_EXTRA` is
-intentional for forward-compat with future blueprint inputs -- document, don't
-silently flip to `PREVENT_EXTRA`.
+Use `probatio.Schema({...}, extra=probatio.ALLOW_EXTRA)`.
+`extra=probatio.ALLOW_EXTRA` is intentional for forward-compat with future
+blueprint inputs -- document, don't silently flip to `PREVENT_EXTRA`.
 
 Schema covers shape only. Cross-field rules + HA-state validation belong in
 argparse, not in the schema.
@@ -484,8 +485,8 @@ hardcoded duplicate string lists).
 Run schema validation through
 `helpers.validate_payload_or_emit_config_error(hass, raw, _SCHEMA, _emit_config_error)`
 and short-circuit on `None`. Don't write the try / except block manually --
-the helper catches `vol.MultipleInvalid` BEFORE `vol.Invalid` so the user sees
-every schema error in one notification, not just the first.
+the helper catches `probatio.MultipleInvalid` BEFORE `probatio.Invalid` so the
+user sees every schema error in one notification, not just the first.
 
 ### Common argparse landmines
 
@@ -786,12 +787,12 @@ synthetic paths.
   `selector: entity: { domain: [switch, light, fan] }` restricts what the HA
   UI shows in the entity picker, but a hand-edited automation YAML can pass
   any entity. Argparse must independently validate the domain of every entity
-  input -- either via `vol.In([...])` against the expected domain set in the
-  schema, or via a cross-field check that walks `hass.states.get(entity_id)`
-  and inspects its domain. For on/off-driving handlers (anything that
-  dispatches `homeassistant.turn_on` / `turn_off`), call
-  `helpers.validate_controlled_entity_domains(entity_ids, field_name)` which
-  checks each entity against the shared `helpers.CONTROLLABLE_DOMAINS`
+  input -- either via `probatio.In([...])` against the expected domain set in
+  the schema, or via a cross-field check that walks
+  `hass.states.get(entity_id)` and inspects its domain. For on/off-driving
+  handlers (anything that dispatches `homeassistant.turn_on` / `turn_off`),
+  call `helpers.validate_controlled_entity_domains(entity_ids, field_name)`
+  which checks each entity against the shared `helpers.CONTROLLABLE_DOMAINS`
   frozenset (switch / fan / light / input_boolean / climate / cover / etc.)
   and returns a per-entity config-error bullet for each offender. Trigger /
   disabling / observed entities are NOT subject to this check (they're
@@ -817,7 +818,7 @@ synthetic paths.
   a notification body.** Persistent notifications render through
   `<ha-markdown>`, so stray `[` / `]` / `\` in body text can corrupt the
   rendering -- garbled markdown, dropped content, or a chunk of body rewritten
-  as a link the user didn't expect. Apply to friendly_names, vol.Invalid
+  as a link the user didn't expect. Apply to friendly_names, probatio.Invalid
   messages (which can echo the offending input value back), error messages
   from external APIs, YAML location strings, etc. Constants and values inside
   backtick code spans are exempt (constrained character set / markdown
@@ -1061,7 +1062,7 @@ In `tests/test_<service>_handler.py`, subclass `BlueprintSchemaDriftBase` from
 
 - `test_yaml_data_keys_match_schema_required_keys` -- symmetric set diff
   between blueprint YAML's first `action: data:` keys and `_SCHEMA`'s
-  `vol.Required` keys.
+  `probatio.Required` keys.
 - `test_blueprint_action_targets_registered_service` -- blueprint's `action:`
   line is `blueprint_toolkit.{_SERVICE}`.
 

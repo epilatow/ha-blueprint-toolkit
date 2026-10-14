@@ -54,7 +54,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
     HomeAssistant,
@@ -139,31 +139,31 @@ class StecInstanceState:
 # Service-call schema
 # --------------------------------------------------------
 
-_SCHEMA = vol.Schema(
+_SCHEMA = probatio.Schema(
     {
-        vol.Required("instance_id"): cv.entity_id,
-        vol.Required("trigger_id"): vol.Coerce(str),
-        vol.Required("controlled_entities_raw"): vol.All(
+        probatio.Required("instance_id"): cv.entity_id,
+        probatio.Required("trigger_id"): probatio.Coerce(str),
+        probatio.Required("controlled_entities_raw"): probatio.All(
             cv.ensure_list, [cv.entity_id]
         ),
-        vol.Required("sensor_value"): vol.Coerce(str),
-        vol.Required("trigger_entity"): vol.Coerce(str),
-        vol.Required("trigger_threshold_raw"): vol.Coerce(float),
-        vol.Required("release_threshold_raw"): vol.Coerce(float),
-        vol.Required("sampling_window_seconds_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=10, max=3600)
+        probatio.Required("sensor_value"): probatio.Coerce(str),
+        probatio.Required("trigger_entity"): probatio.Coerce(str),
+        probatio.Required("trigger_threshold_raw"): probatio.Coerce(float),
+        probatio.Required("release_threshold_raw"): probatio.Coerce(float),
+        probatio.Required("sampling_window_seconds_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=10, max=3600)
         ),
-        vol.Required("disable_window_seconds_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=60)
+        probatio.Required("disable_window_seconds_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=60)
         ),
-        vol.Required("auto_off_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=1440)
+        probatio.Required("auto_off_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=1440)
         ),
-        vol.Required("notification_prefix"): vol.Coerce(str),
-        vol.Required("notification_suffix"): vol.Coerce(str),
-        vol.Required("debug_logging_raw"): cv.boolean,
+        probatio.Required("notification_prefix"): probatio.Coerce(str),
+        probatio.Required("notification_suffix"): probatio.Coerce(str),
+        probatio.Required("debug_logging_raw"): cv.boolean,
     },
-    extra=vol.ALLOW_EXTRA,
+    extra=probatio.ALLOW_EXTRA,
 )
 
 

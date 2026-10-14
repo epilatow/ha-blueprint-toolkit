@@ -7,10 +7,10 @@ Three-layer dispatch:
    wires up. Receives the raw ``ServiceCall``; sole
    responsibility is to hand off to argparse. Owns
    ``blueprint_mismatch`` notifications (currently a
-   no-op since vol.Schema covers that surface --
+   no-op since probatio.Schema covers that surface --
    see comment in ``_async_argparse``).
 
-2. **Argparse** -- runs the vol.Schema, then the
+2. **Argparse** -- runs the probatio.Schema, then the
    cross-field + HA-state checks (entity existence,
    no overlapping sets). Accumulates errors and emits
    a single ``persistent_notification`` config_error
@@ -56,7 +56,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
     Context,
@@ -134,7 +134,7 @@ class TecInstanceState:
 
 
 # --------------------------------------------------------
-# Service-call schema (vol.Schema)
+# Service-call schema (probatio.Schema)
 # --------------------------------------------------------
 #
 # Wire format matches the blueprint's ``data:`` block in
@@ -152,35 +152,37 @@ class TecInstanceState:
 _PERIOD_VALUES = tuple(p.value for p in logic.Period)
 _NOTIF_EVENT_VALUES = tuple(e.value for e in logic.NotificationEvent)
 
-_SCHEMA = vol.Schema(
+_SCHEMA = probatio.Schema(
     {
-        vol.Required("instance_id"): cv.entity_id,
-        vol.Required("controlled_entities_raw"): vol.All(
+        probatio.Required("instance_id"): cv.entity_id,
+        probatio.Required("controlled_entities_raw"): probatio.All(
             cv.ensure_list, [cv.entity_id]
         ),
-        vol.Required("trigger_entity_id"): vol.Coerce(str),
-        vol.Required("trigger_to_state"): vol.Coerce(str),
-        vol.Required("auto_off_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=60)
+        probatio.Required("trigger_entity_id"): probatio.Coerce(str),
+        probatio.Required("trigger_to_state"): probatio.Coerce(str),
+        probatio.Required("auto_off_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=60)
         ),
-        vol.Required("auto_off_disabling_entities_raw"): vol.All(
+        probatio.Required("auto_off_disabling_entities_raw"): probatio.All(
             cv.ensure_list, [cv.entity_id]
         ),
-        vol.Required("trigger_entities_raw"): vol.All(
+        probatio.Required("trigger_entities_raw"): probatio.All(
             cv.ensure_list, [cv.entity_id]
         ),
-        vol.Required("trigger_period_raw"): vol.In(_PERIOD_VALUES),
-        vol.Required("trigger_forces_on_raw"): cv.boolean,
-        vol.Required("trigger_disabling_entities_raw"): vol.All(
+        probatio.Required("trigger_period_raw"): probatio.In(_PERIOD_VALUES),
+        probatio.Required("trigger_forces_on_raw"): cv.boolean,
+        probatio.Required("trigger_disabling_entities_raw"): probatio.All(
             cv.ensure_list, [cv.entity_id]
         ),
-        vol.Required("trigger_disabling_period_raw"): vol.In(_PERIOD_VALUES),
-        vol.Required("notification_prefix_raw"): vol.Coerce(str),
-        vol.Required("notification_suffix_raw"): vol.Coerce(str),
-        vol.Required("notification_events_raw"): vol.All(
-            cv.ensure_list, [vol.In(_NOTIF_EVENT_VALUES)]
+        probatio.Required("trigger_disabling_period_raw"): probatio.In(
+            _PERIOD_VALUES
         ),
-        vol.Required("debug_logging_raw"): cv.boolean,
+        probatio.Required("notification_prefix_raw"): probatio.Coerce(str),
+        probatio.Required("notification_suffix_raw"): probatio.Coerce(str),
+        probatio.Required("notification_events_raw"): probatio.All(
+            cv.ensure_list, [probatio.In(_NOTIF_EVENT_VALUES)]
+        ),
+        probatio.Required("debug_logging_raw"): cv.boolean,
     },
     # We do NOT pass schema= to async_register, so HA
     # doesn't reject the call before our handler runs --
@@ -188,7 +190,7 @@ _SCHEMA = vol.Schema(
     # config errors rather than just a log line. Extra
     # keys are tolerated for forward-compat with future
     # blueprint inputs.
-    extra=vol.ALLOW_EXTRA,
+    extra=probatio.ALLOW_EXTRA,
 )
 
 
@@ -233,10 +235,10 @@ async def _async_entrypoint(
 ) -> ServiceResponse:
     """Service handler -- thin wrapper, hands off to argparse.
 
-    Missing or invalid keys surface via ``vol.Invalid``
+    Missing or invalid keys surface via ``probatio.Invalid``
     inside ``_async_argparse`` and become a
     ``persistent_notification`` config_error.  Unexpected
-    keys are tolerated (see ``extra=vol.ALLOW_EXTRA`` on
+    keys are tolerated (see ``extra=probatio.ALLOW_EXTRA`` on
     ``_SCHEMA``) for forward-compat with future blueprint
     inputs.
 
@@ -252,7 +254,7 @@ async def _async_entrypoint(
 
 
 # --------------------------------------------------------
-# Layer 2: argparse (vol.Schema + cross-field + state)
+# Layer 2: argparse (probatio.Schema + cross-field + state)
 # --------------------------------------------------------
 
 
@@ -278,7 +280,7 @@ async def _async_argparse(
     raw = dict(call.data)
 
     # Schema validation: shape / type / range, with all
-    # collected errors surfaced (``vol.MultipleInvalid``)
+    # collected errors surfaced (``probatio.MultipleInvalid``)
     # rather than just the first.
     data = await validate_payload_or_emit_config_error(
         hass,

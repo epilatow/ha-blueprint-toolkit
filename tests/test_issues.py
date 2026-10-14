@@ -4,10 +4,10 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     # voluptuous: importing the watchdogs' logic modules (for
+#     # probatio: importing the watchdogs' logic modules (for
 #     # their ``ISSUES``) pulls ``helpers_runtime``, which imports
-#     # voluptuous at module scope.
-#     "voluptuous",
+#     # probatio at module scope.
+#     "probatio",
 #     # types-PyYAML so the per-file ``mypy --strict`` run has real
 #     # yaml stubs: importing the package follows (via ``__init__``'s
 #     # lazy handler imports) into reference_watchdog's

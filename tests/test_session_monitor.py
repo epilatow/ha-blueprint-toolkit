@@ -5,10 +5,10 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "voluptuous",
+#     "probatio",
 #     "pyyaml",
-#     "zwave-js-server-python==0.73.0",
-#     "pytest-homeassistant-custom-component==0.13.357",
+#     "zwave-js-server-python==0.73.1",
+#     "pytest-homeassistant-custom-component==0.13.372",
 #     "types-PyYAML",
 # ]
 # ///

@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
     HomeAssistant,
@@ -177,33 +177,35 @@ class ZrmInstanceState:
 
 
 # --------------------------------------------------------
-# Service-call schema (vol.Schema)
+# Service-call schema (probatio.Schema)
 # --------------------------------------------------------
 
-_SCHEMA = vol.Schema(
+_SCHEMA = probatio.Schema(
     {
-        vol.Required("instance_id"): cv.entity_id,
-        vol.Required("trigger_id"): vol.In(_TRIGGER_VALUES),
-        vol.Required("config_file_path"): vol.Coerce(str),
-        vol.Required("zwave_js_ui_host_raw"): vol.Coerce(str),
-        vol.Required("zwave_js_ui_port_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=65535)
+        probatio.Required("instance_id"): cv.entity_id,
+        probatio.Required("trigger_id"): probatio.In(_TRIGGER_VALUES),
+        probatio.Required("config_file_path"): probatio.Coerce(str),
+        probatio.Required("zwave_js_ui_host_raw"): probatio.Coerce(str),
+        probatio.Required("zwave_js_ui_port_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=65535)
         ),
-        vol.Required("zwave_js_ui_token_raw"): vol.Coerce(str),
-        vol.Required("clear_unmanaged_routes_raw"): cv.boolean,
-        vol.Required("reconcile_interval_minutes_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=10080)
+        probatio.Required("zwave_js_ui_token_raw"): probatio.Coerce(str),
+        probatio.Required("clear_unmanaged_routes_raw"): cv.boolean,
+        probatio.Required("reconcile_interval_minutes_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=10080)
         ),
-        vol.Required("pending_timeout_hours_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=168)
+        probatio.Required("pending_timeout_hours_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=1, max=168)
         ),
-        vol.Required("default_route_speed_raw"): vol.In(_DEFAULT_SPEED_VALUES),
-        vol.Required("max_notifications_raw"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=1000)
+        probatio.Required("default_route_speed_raw"): probatio.In(
+            _DEFAULT_SPEED_VALUES
         ),
-        vol.Required("debug_logging_raw"): cv.boolean,
+        probatio.Required("max_notifications_raw"): probatio.All(
+            probatio.Coerce(int), probatio.Range(min=0, max=1000)
+        ),
+        probatio.Required("debug_logging_raw"): cv.boolean,
     },
-    extra=vol.ALLOW_EXTRA,
+    extra=probatio.ALLOW_EXTRA,
 )
 
 
@@ -270,7 +272,7 @@ async def _async_argparse(
     instance_id: str = data["instance_id"]
 
     # Default speed: "auto" means None. The schema's
-    # vol.In(_DEFAULT_SPEED_VALUES) already rejected anything
+    # probatio.In(_DEFAULT_SPEED_VALUES) already rejected anything
     # outside the legal set, so RouteSpeed(...) is total here.
     default_speed_raw: str = data["default_route_speed_raw"].strip()
     default_route_speed: bridge.RouteSpeed | None = (
@@ -1434,7 +1436,7 @@ def _build_entity_to_resolution(
     nodes_by_id: dict[int, bridge.NodeInfo] = {n.node_id: n for n in nodes}
 
     device_to_node: dict[str, int] = {}
-    for dev in dev_reg.devices.values():
+    for dev in dev_reg.devices:
         for ident in dev.identifiers:
             if len(ident) < 2:
                 continue

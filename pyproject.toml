@@ -23,7 +23,7 @@ wrap = 78
 # ``# /// script`` block (the integration package modules and
 # ``conftest.py``). The delivered ``test_code_quality.py`` runs
 # ``mypy --strict`` per file; without this, ``homeassistant.*``,
-# ``voluptuous``, ``yaml``, etc. resolve to ``Any`` and ``--strict``
+# ``probatio``, ``yaml``, etc. resolve to ``Any`` and ``--strict``
 # then errors on every ``Any`` subclass / untyped decorator.
 # ``pytest-homeassistant-custom-component`` (HACC) ships HA core as
 # a transitive dependency, so its pin picks which HA API surface
@@ -61,8 +61,8 @@ wrap = 78
 # gone unused, never to pair it with ``unused-ignore`` -- see
 # DEVELOPMENT.md "Analysis-dep pinning and stub suppressions".
 mypy-extra-deps = [
-    "pytest-homeassistant-custom-component==0.13.357",
-    "zwave-js-server-python==0.73.0",
+    "pytest-homeassistant-custom-component==0.13.372",
+    "zwave-js-server-python==0.73.1",
     "types-PyYAML",
 ]
 # HACC only installs on Python 3.14; the integration's own
@@ -170,10 +170,10 @@ module = ["zwave_js_server", "zwave_js_server.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# voluptuous is a vendored HA dep; the host dev environment
-# may not have it installed. The integration's TEC handler
-# uses vol.Schema to validate service-call payloads.
-module = ["voluptuous"]
+# probatio arrives with Home Assistant, which validates
+# service-call payloads with it; a checkout analysing a file
+# that skips the HA-bearing fallback would not have it.
+module = ["probatio"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

@@ -162,9 +162,9 @@ def cv_ha_domain_list(value: object) -> list[str]:
     digits are allowed (real HA core integrations like
     ``3_day_blinds`` rely on this).
 
-    Designed for use as a ``vol.Schema`` value.
+    Designed for use as a ``probatio.Schema`` value.
     """
-    import voluptuous as vol
+    import probatio
     from homeassistant.core import valid_domain
     from homeassistant.helpers import config_validation as cv
 
@@ -178,7 +178,7 @@ def cv_ha_domain_list(value: object) -> list[str]:
             "and underscores, with no leading or trailing "
             "underscore and no double-underscore."
         )
-        raise vol.Invalid(msg)
+        raise probatio.Invalid(msg)
     return items
 
 
