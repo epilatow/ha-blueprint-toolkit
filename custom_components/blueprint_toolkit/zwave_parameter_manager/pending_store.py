@@ -31,10 +31,9 @@ from .logic import ParamId
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
-    from typing import TypeAlias
 
     # A pending write's key: the node it targets and the parameter on it.
-    PendingKey: TypeAlias = tuple[int, ParamId]
+    type PendingKey = tuple[int, ParamId]
 
 # Location of the pending store, relative to the HA config dir. The CLI's
 # default resolves to the same absolute path under /config.
@@ -88,7 +87,7 @@ def load(path: Path) -> PendingState | None:
             issued_at=datetime.fromisoformat(data["issued_at"]),
             commands=commands,
         )
-    except (ValueError, KeyError, TypeError):
+    except ValueError, KeyError, TypeError:
         return None
 
 

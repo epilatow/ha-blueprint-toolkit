@@ -12,8 +12,11 @@ The access token is short-lived (~30min). The refresh
 token lives for weeks. Callers exchange the refresh token
 for a fresh access token via /auth/token at runtime.
 
-Not a uv script; Python 3.11+ stdlib only, so it can run
-from inside the HA container where uv is not available.
+Not a uv script: it runs from inside the HA container,
+where uv is not available, so it is standard library only
+on the interpreter floor ``pyproject.toml`` declares for
+shipped code. ``tests/test_analysis_deps.py`` holds every
+off-machine source, this one included, to that floor.
 """
 
 from __future__ import annotations

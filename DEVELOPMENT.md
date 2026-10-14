@@ -65,11 +65,29 @@ covers it.
 
 - **Executable scripts** (test files, `run_all.py`) use the PEP 723 shebang
   `#!/usr/bin/env -S uv run --script` with inline dependency declarations.
-- **Docker harness helpers** under `tests/docker/_harness/` use plain
-  `#!/usr/bin/env python3` when they run inside the HA container, where `uv`
-  is unavailable and the required dependencies are stdlib or provided by HA.
+
+- **Anything that runs where `uv` is absent** uses plain
+  `#!/usr/bin/env python3` with stdlib-only imports (or imports HA provides):
+  the Docker harness helpers under `tests/docker/_harness/`, the host-side
+  `scripts/ha_ws_fetch.py`, the bundled CLI, and
+  `custom_components/blueprint_toolkit/scripts/dev-install.py`.
+
+  That shebang is load-bearing, not cosmetic. `tests/test_analysis_deps.py`
+  reads it as the marker for code that runs on an interpreter this repo does
+  not choose, and parses every file carrying it at the shipped floor (see "Two
+  interpreter floors, and neither is this machine's"). A new host-side helper
+  is covered the moment it gets the shebang.
+
+  Two scripts carry it while still running here on the pinned interpreter, so
+  the test exempts them by name. An exemption has a cost worth understanding
+  before adding a third: the file is still *formatted* at `target-version`,
+  but nothing then checks it against the interpreter it runs on, so it can
+  acquire syntax its `python3` cannot parse.
+
 - **Module files** (handler.py, logic.py, helpers.py, etc.) have no shebang.
-  They are imported, not executed directly.
+  They are imported, not executed directly. Those under `custom_components/`
+  are covered by the floor check regardless of shebang, since Home Assistant
+  imports them.
 
 ### Test files
 
@@ -430,23 +448,68 @@ for a brand-new release, so such a host builds them from source and most
 phases fail at once, with a compiler error rather than anything pointing at
 the interpreter.
 
-The pin governs this machine's analysis and test environments only. Nothing
-that runs on the Home Assistant host is affected: the integration runs under
-HA's own interpreter, and the host-side scripts -- `dev-install.py`,
-`ha_ws_fetch.py`, the bundled CLI, the docker harness helpers -- carry plain
-`python3` shebangs and never see `uv`. What the shipped code must run on is
-declared separately, by `ruff`'s `target-version` and the Home Assistant floor
-in `hacs.json`. The value here tracks the interpreter HA itself ships, so the
-suite validates against the version the integration actually runs on.
+Cached envs hide a moved pin, because only a *fresh* resolution picks the new
+interpreter, so an existing checkout keeps passing while a new worktree, a new
+machine, or CI fails. `tests/test_analysis_deps.py` gates the pin against
+every declared `requires-python` floor and the two mypy knobs, because `uv`
+ignores a pin it cannot satisfy and resolves against the newest interpreter
+anyway, exiting zero -- a pin that drifts below a floor stops pinning without
+saying so. Raise it deliberately when the project moves to a newer Python, and
+expect the first run afterwards to rebuild every script env.
 
-Cached envs hide this: only a *fresh* resolution picks the new interpreter, so
-an existing checkout keeps passing while a new worktree, a new machine, or CI
-fails. `tests/test_analysis_deps.py` gates the pin against every PEP 723
-`requires-python` floor and the two mypy knobs, because `uv` ignores a pin it
-cannot satisfy and resolves against the newest interpreter anyway, exiting
-zero -- a pin that drifts below a floor stops pinning without saying so. Raise
-it deliberately when the project moves to a newer Python, and expect the first
-run afterwards to rebuild every script env.
+The pin governs this machine's analysis and test environments only. The
+host-side scripts -- `dev-install.py`, `ha_ws_fetch.py`, the bundled CLI, the
+docker harness helpers -- carry plain `python3` shebangs and never see `uv`.
+
+### Two interpreter floors, and neither is this machine's
+
+What the code has to RUN on is a separate declaration,
+`[tool.ha-blueprint-toolkit] shipped-python-version`, and it answers to two
+interpreters that are not this one:
+
+- **Home Assistant's own**, which imports the integration modules. The
+  `hacs.json` release floor constrains it -- indirectly, via that release's
+  own `Requires-Python`.
+- **the Terminal & SSH add-on's**, which runs the bundled CLI and
+  `dev-install.py`. Nothing declared in this repo can constrain it: it is
+  whatever `python3` the add-on's Alpine base packages, and the user updates
+  the add-on on their own schedule. 3.14 arrives with Alpine 3.24.
+
+The add-on is the binding one, and the hazard is that it is also the invisible
+one. `ruff format` rewrites to its `target-version` -- at `py314` a
+parenthesized multi-type `except` becomes the PEP 758 unparenthesized form --
+so that knob decides which syntax gets written INTO the bundled CLI and the
+`zwave/` + `zwave_parameter_manager/` modules it shares with the HA side. If
+`target-version` tracked `.python-version`, moving the dev machine to a newer
+Python would quietly push syntax the add-on cannot parse into code it runs,
+with every check here still green. So `target-version` is gated against
+`shipped-python-version`, never against the pin, and `.python-version` is free
+to move ahead of it.
+
+A floor nothing exercises is a claim, so `tests/test_analysis_deps.py` also
+parses every off-machine source -- all of `custom_components/` plus the
+plain-`python3` host helpers -- at the declared floor. `ast.parse`'s
+`feature_version` constrains the grammar, which is the half the formatter
+moves: a construct it emits above the floor fails to parse and the check goes
+red. Semantics are not covered -- a newer stdlib call, or an annotation that
+resolves only under deferred evaluation, parses clean on an older grammar and
+fails later or not at all. That residue is safe only while the declared floor
+really is the lowest interpreter in play, which is why the floor is read off
+those two platforms rather than chosen here, and why it only ever rises.
+
+Raising `shipped-python-version` is a compatibility decision rather than a
+convenience; the checklist lives in the comment on the key itself, next to the
+value it governs. Every `requires-python` in the repo must also sit at or
+above it -- a script declaring less is declaring support it loses the moment
+it imports a module written at the floor.
+
+The README states the add-on requirement where the `apks` list that installs
+`python3` is configured, because that is where a user can act on it. An add-on
+image below the floor does not refuse politely: the CLI dies on a
+`SyntaxError` from whichever module reached the newer grammar first, with
+nothing in the traceback naming the image. The guard cannot live in
+`zwavectl.py` -- the parse failure precedes any statement in it -- so the
+README is the whole of the warning.
 
 ### Manifest version bump rule
 

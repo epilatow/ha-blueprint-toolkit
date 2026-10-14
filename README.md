@@ -99,6 +99,14 @@ automations. Live in the bundled payload and run from the HA host.
     - py3-websockets
   ```
 
+  That `python3` must be 3.14 or newer, which the add-on's Alpine base
+  provides from Alpine 3.24 on. zwavectl runs on the add-on's interpreter
+  rather than Home Assistant's, so keep the add-on updated alongside Home
+  Assistant. On an older image the CLI does not start: it exits with a
+  `SyntaxError` naming one of its own source lines, which is the symptom of
+  too old a `python3` rather than a broken install. Check `python3 --version`
+  in the add-on's terminal before looking anywhere else.
+
   zwavectl also needs an HA token -- enable the integration's **Provision a
   CLI access token** option (writes `/config/blueprint_toolkit/cli_token`) or
   pass `--api-key-file <path>`.
@@ -106,7 +114,7 @@ automations. Live in the bundled payload and run from the HA host.
 ## Prerequisites
 
 - Home Assistant 2026.10 or newer
-- Python 3.11+
+- Python 3.14+
 - [uv](https://docs.astral.sh/uv/) (for development)
 
 ## Installation

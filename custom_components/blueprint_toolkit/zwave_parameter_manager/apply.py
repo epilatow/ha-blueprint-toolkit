@@ -28,12 +28,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from typing import TypeAlias
 
     from .logic import ParamId, Plan, PlannedWrite
 
     # A pending write's key: the node it targets and the parameter on it.
-    PendingKey: TypeAlias = tuple[int, ParamId]
+    type PendingKey = tuple[int, ParamId]
 
 
 @dataclass(frozen=True)

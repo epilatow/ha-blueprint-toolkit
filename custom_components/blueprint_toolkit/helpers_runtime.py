@@ -336,7 +336,7 @@ def _active_notification_ids(hass: HomeAssistant) -> set[str] | None:
     try:
         data = hass.data.get("persistent_notification", {})
         return set(data.keys())
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return None
 
 
@@ -362,7 +362,7 @@ def _existing_notification_content(
     """
     try:
         data = hass.data.get("persistent_notification", {})
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return {}
     return {nid: (n.get("title"), n.get("message")) for nid, n in data.items()}
 

@@ -89,7 +89,7 @@ class State:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "State":
+    def from_dict(cls, data: dict[str, Any]) -> State:
         """Deserialize State from JSON persistence.
 
         Contract: on a malformed input shape, raises
@@ -167,7 +167,7 @@ def parse_float(value: str | None) -> float | None:
         if math.isnan(result) or math.isinf(result):
             return None
         return result
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -188,7 +188,7 @@ def _round_up_to_minute(dt: datetime) -> datetime:
 
 
 def _maybe_arm_auto_off(
-    state: "State",
+    state: State,
     auto_off_minutes: int,
     current_time: datetime,
     controlled_on: bool,
@@ -693,7 +693,7 @@ def handle_service_call(
     else:
         try:
             s = State.from_dict(state_data)
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             # Malformed blob from a prior version -- treat
             # as missing and rebuild from scratch.
             s = State()

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
@@ -43,13 +43,14 @@ once broken.
    pinned that day, so it fails here at the moment it is
    introduced, and a stale one never reaches a commit.
 
-4. ``.python-version`` satisfies every PEP 723 ``requires-python``
-   floor and agrees with the two mypy knobs. The interpreter is
-   pinned for the same reason the HACC version is -- it decides
-   what the suite runs against -- but its failure mode is quieter:
-   ``uv`` ignores a pin it cannot satisfy and resolves against the
-   newest interpreter installed, exiting zero, so a pin that drifts
-   below a floor silently stops pinning anything.
+4. ``.python-version`` satisfies every declared ``requires-python``
+   floor -- the PEP 723 blocks plus ``[project]`` -- and agrees with
+   the two mypy knobs. The interpreter is pinned for the same reason
+   the HACC version is -- it decides what the suite runs against --
+   but its failure mode is quieter: ``uv`` ignores a pin it cannot
+   satisfy and resolves against the newest interpreter installed,
+   exiting zero, so a pin that drifts below a floor silently stops
+   pinning anything.
 
 5. Every site pinning ``zwave-js-server-python`` names the same
    version. That pin's value is dictated by the Home Assistant
@@ -72,10 +73,24 @@ once broken.
    giving the repo more sites to keep in agreement for no analysis
    benefit. The bundled CLI's runtime ``VENV_DEPS`` list is not a
    PEP 723 block and is unaffected.
+
+7. ``[tool.ruff] target-version`` names
+   ``[tool.ha-blueprint-toolkit] shipped-python-version``, and the
+   code that runs at that floor parses there. The formatter emits at
+   its target, so a target above the floor puts syntax into the
+   bundled CLI and the integration modules that the interpreter
+   actually running them cannot parse -- and because that
+   interpreter belongs to the Terminal & SSH add-on rather than to
+   this repo, nothing else in the suite would go red. Every declared
+   floor is at or above the shipped floor for the same reason in
+   reverse: a script claiming an older one is claiming support it
+   cannot deliver the moment it imports a module formatted at the
+   floor.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -138,9 +153,71 @@ def _pinned_python_version() -> tuple[int, ...]:
     return _parse(text)
 
 
-def _pep723_python_floors() -> list[tuple[Path, tuple[int, ...]]]:
-    """Every tracked PEP 723 block's ``requires-python`` lower bound."""
-    floors: list[tuple[Path, tuple[int, ...]]] = []
+# A plain ``python3`` shebang stands in for "cannot assume ``uv``",
+# which is what every host-side helper needs and what makes it a
+# usable marker for off-machine code. These two carry one while still
+# running here on the pinned interpreter -- the manifest bumper before
+# a commit, the docker driver against a local container -- so they are
+# exempt. Any OTHER plain-``python3`` script is treated as
+# off-machine, which errs the safe way: a new host-side helper is
+# covered the moment it gets its shebang, while a new local one has to
+# be exempted deliberately, here, in view of what the exemption costs.
+_LOCAL_PLAIN_PYTHON3 = frozenset(
+    {
+        "scripts/bump-manifest-version.py",
+        "tests/docker/test_dev_workflow.py",
+    }
+)
+_PLAIN_PYTHON3_SHEBANG = "#!/usr/bin/env python3"
+
+
+def _off_machine_sources() -> list[Path]:
+    """Tracked sources run on an interpreter this repo cannot choose.
+
+    Everything under ``custom_components/``, which Home Assistant
+    imports and whose ``bundled/`` subtree the Terminal & SSH add-on
+    runs, plus the host-side helpers outside it -- identified by the
+    plain ``python3`` shebang they need because ``uv`` is absent where
+    they run.
+    """
+    sources: list[Path] = []
+    for path in _tracked(".py"):
+        rel = path.relative_to(REPO_ROOT)
+        if rel.parts[0] == "custom_components":
+            sources.append(path)
+            continue
+        if str(rel) in _LOCAL_PLAIN_PYTHON3:
+            continue
+        if path.read_text().startswith(_PLAIN_PYTHON3_SHEBANG):
+            sources.append(path)
+    return sources
+
+
+def _shipped_python_version() -> tuple[int, ...]:
+    """The floor the code that runs off this machine is held to."""
+    cfg = tomllib.loads(PYPROJECT.read_text())
+    declared = cfg["tool"]["ha-blueprint-toolkit"]["shipped-python-version"]
+    assert isinstance(declared, str)
+    return _parse(declared)
+
+
+def _declared_python_floors() -> list[tuple[str, tuple[int, ...]]]:
+    """Every ``requires-python`` lower bound this repo declares.
+
+    The PEP 723 blocks plus ``[project]``, which governs the venv the
+    shared phase runs ``pytest`` in and is a declaration ``uv`` reads
+    exactly as it reads a block's.
+    """
+    floors: list[tuple[str, tuple[int, ...]]] = []
+    cfg = tomllib.loads(PYPROJECT.read_text())
+    project_floor = cfg["project"]["requires-python"]
+    assert isinstance(project_floor, str)
+    floors.append(
+        (
+            "pyproject.toml [project] requires-python",
+            _parse_bound(project_floor),
+        )
+    )
     for path in _tracked(".py"):
         block = _PEP723_BLOCK.search(path.read_text())
         if block is None:
@@ -148,8 +225,16 @@ def _pep723_python_floors() -> list[tuple[Path, tuple[int, ...]]]:
         found = _REQUIRES_PYTHON.search(block.group(1))
         if found is None:
             continue
-        floors.append((path, _parse(found.group(1))))
+        rel = str(path.relative_to(REPO_ROOT))
+        floors.append((f"{rel} requires-python", _parse(found.group(1))))
     return floors
+
+
+def _parse_bound(specifier: str) -> tuple[int, ...]:
+    """The lower bound of a ``requires-python`` specifier."""
+    found = re.search(r"[^0-9]*(\d+(?:\.\d+)*)", specifier)
+    assert found is not None, f"no version in requires-python {specifier!r}"
+    return _parse(found.group(1))
 
 
 def _declared_version(package: str) -> str | None:
@@ -314,42 +399,44 @@ class TestCompanionPinAgreement:
 
 
 class TestInterpreterPin:
-    def test_pin_satisfies_every_pep723_floor(self) -> None:
-        """A pin below some script's floor is silently ignored.
+    def test_pin_satisfies_every_declared_floor(self) -> None:
+        """A pin below some floor is silently ignored.
 
         ``uv`` does not error when ``.python-version`` cannot
-        satisfy a script's ``requires-python``; it falls back to
-        the newest interpreter installed, which is the drift the
-        pin exists to stop. The fallback exits zero, so nothing
-        but this check would notice.
+        satisfy a ``requires-python``; it falls back to the newest
+        interpreter installed, which is the drift the pin exists to
+        stop. The fallback exits zero, so nothing but this check
+        would notice.
         """
         pinned = _pinned_python_version()
-        offenders: list[str] = []
-        for path, floor in _pep723_python_floors():
-            if floor > pinned:
-                rel = path.relative_to(REPO_ROOT)
-                offenders.append(
-                    f"{rel}: requires-python floor "
-                    f"{_render(floor)} > pinned {_render(pinned)}"
-                )
+        offenders = [
+            f"{name} {_render(floor)} > pinned {_render(pinned)}"
+            for name, floor in _declared_python_floors()
+            if floor > pinned
+        ]
 
         assert not offenders, (
-            "`.python-version` does not satisfy every PEP 723 "
+            "`.python-version` does not satisfy every declared "
             "floor:\n  "
             + "\n  ".join(offenders)
-            + "\n\n`uv` resolves such a script against the newest "
-            "interpreter installed instead, and reports no error "
-            "doing it. Raise `.python-version` to cover the "
-            "highest floor, or lower the floor."
+            + "\n\n`uv` resolves against the newest interpreter "
+            "installed instead, and reports no error doing it. "
+            "Raise `.python-version` to cover the highest floor, "
+            "or lower the floor."
         )
 
-    def test_pin_agrees_with_the_analysis_knobs(self) -> None:
-        """mypy analyses what the suite actually runs on.
+    def test_pin_agrees_with_the_mypy_knobs(self) -> None:
+        """Both mypy knobs name the interpreter the suite runs on.
 
         ``mypy-python-version`` and ``[tool.mypy] python_version``
         select the syntax and stub surface mypy checks against. A
         pin that disagrees type-checks one interpreter's semantics
         while the tests exercise another's.
+
+        The formatter's target is deliberately NOT here: it decides
+        what gets written into the sources rather than what reads
+        them, so it follows the shipped floor instead. See
+        ``TestShippedInterpreterFloor``.
         """
         pinned = _render(_pinned_python_version())
         cfg = tomllib.loads(PYPROJECT.read_text())
@@ -371,6 +458,147 @@ class TestInterpreterPin:
             )
             + "\n\nmypy would analyse a different interpreter than "
             "the one the suite runs on. Move them together."
+        )
+
+
+class TestShippedInterpreterFloor:
+    def test_the_floor_checks_cover_something(self) -> None:
+        """Both floor checks pass trivially over an empty set.
+
+        Each one asserts that no member offends, so a discovery that
+        silently stopped finding members -- a moved tree, a reworded
+        shebang, a renamed table -- reports success having checked
+        nothing. Naming one member that must always be found turns
+        that into a failure. The bundled CLI and the websocket helper
+        are the anchors because they are the two the add-on's
+        interpreter runs, which is the floor's whole reason to exist.
+        """
+        off_machine = {
+            str(p.relative_to(REPO_ROOT)) for p in _off_machine_sources()
+        }
+        for anchor in (
+            "custom_components/blueprint_toolkit/bundled/bin/zwavectl.py",
+            "scripts/ha_ws_fetch.py",
+        ):
+            assert anchor in off_machine, (
+                f"{anchor} is no longer discovered as off-machine code, so "
+                "the parse check no longer covers it. Fix the discovery in "
+                "`_off_machine_sources`, or move the anchor if the file was "
+                "deliberately renamed."
+            )
+
+        floors = dict(_declared_python_floors())
+        assert "pyproject.toml [project] requires-python" in floors, (
+            "the `[project]` floor is no longer discovered, so the "
+            "cover-the-floor check no longer reads it. Fix "
+            "`_declared_python_floors`."
+        )
+        assert len(floors) > 1, (
+            "no PEP 723 `requires-python` floor was discovered, so the "
+            "cover-the-floor check only reads `[project]`. Fix the block "
+            "match in `_declared_python_floors`."
+        )
+
+    def test_formatter_target_matches_the_shipped_floor(self) -> None:
+        """The formatter must not emit above the floor it ships to.
+
+        ``ruff format`` rewrites to its ``target-version``: at py314
+        a parenthesized multi-type ``except`` becomes the PEP 758
+        unparenthesized form, which is a ``SyntaxError`` on 3.13. A
+        target above ``shipped-python-version`` therefore puts syntax
+        into the bundled CLI and the integration modules that the
+        interpreter running them cannot parse, and that interpreter
+        is the add-on's -- nothing else in this suite would notice.
+        One below it silently withholds the upgrades the floor allows.
+        """
+        shipped = _render(_shipped_python_version())
+        cfg = tomllib.loads(PYPROJECT.read_text())
+        target = cfg["tool"]["ruff"]["target-version"]
+        assert isinstance(target, str)
+        rendered = (
+            f"{target[2]}.{target[3:]}" if target.startswith("py") else target
+        )
+
+        assert rendered == shipped, (
+            f"`[tool.ruff] target-version` is {target!r} ({rendered}) "
+            f"but the shipped floor is {shipped}.\n\n"
+            "`ruff format` emits at its target, so this decides which "
+            "syntax lands in code Home Assistant and the Terminal & SSH "
+            "add-on run. Move it with "
+            "`[tool.ha-blueprint-toolkit] shipped-python-version`, "
+            "never with `.python-version`."
+        )
+
+    def test_declared_floors_cover_the_shipped_floor(self) -> None:
+        """A floor below the shipped one claims unreachable support.
+
+        Every script here can import the integration package, which
+        is formatted at the shipped floor, so a block declaring an
+        older interpreter is declaring support that the first such
+        import removes. The failure surfaces as a parse error inside
+        the package rather than at the block that invited it.
+        """
+        shipped = _shipped_python_version()
+        offenders = [
+            f"{name} {_render(floor)} < shipped {_render(shipped)}"
+            for name, floor in _declared_python_floors()
+            if floor < shipped
+        ]
+
+        assert not offenders, (
+            "declared floor(s) sit below the shipped floor:\n  "
+            + "\n  ".join(offenders)
+            + "\n\nCode here is formatted for the shipped floor, so a "
+            "lower declaration is not support -- it fails on the first "
+            "import of a module written at the floor. Raise the "
+            "declaration to cover the floor. The floor itself names the "
+            "lowest interpreter this code is run on, so it tracks those "
+            "platforms rather than what a declaration here would prefer."
+        )
+
+    def test_off_machine_code_parses_at_the_shipped_floor(self) -> None:
+        """The floor is exercised, not merely declared.
+
+        Matching the formatter's target to the floor governs what the
+        formatter writes; it does not stop a hand-written construct
+        from needing something newer, and the interpreters this code
+        runs on belong to Home Assistant and to the Terminal & SSH
+        add-on, so neither would turn the suite red. Parsing the
+        sources at the declared floor is what closes that gap.
+
+        ``feature_version`` restricts the grammar, so this catches a
+        construct the floor cannot parse -- which is what the
+        formatter emits -- and nothing else. A construct whose
+        *semantics* need a newer interpreter parses clean and is not
+        caught: a newer stdlib call, or an annotation that resolves
+        only under deferred evaluation. Those are sound here only
+        because the floor names the interpreters this code actually
+        runs on, so no supported platform sits below it; they would
+        bite a floor that understated reality, which is why the floor
+        is declared from those platforms rather than discovered here.
+        """
+        shipped = _shipped_python_version()
+        offenders: list[str] = []
+        for path in _off_machine_sources():
+            rel = path.relative_to(REPO_ROOT)
+            try:
+                ast.parse(
+                    path.read_text(),
+                    filename=str(rel),
+                    feature_version=shipped[:2],  # type: ignore[arg-type]
+                )
+            except SyntaxError as exc:
+                offenders.append(f"{rel}:{exc.lineno}: {exc.msg}")
+
+        assert not offenders, (
+            f"source(s) do not parse on Python {_render(shipped)}:\n  "
+            + "\n  ".join(offenders)
+            + "\n\nThis code runs on Home Assistant's interpreter or the "
+            "Terminal & SSH add-on's, not on this machine's, and "
+            "`[tool.ha-blueprint-toolkit] shipped-python-version` is "
+            "the floor it claims. Rewrite the construct, or raise that "
+            "floor (a compatibility decision; see the comment on that "
+            "key)."
         )
 
 

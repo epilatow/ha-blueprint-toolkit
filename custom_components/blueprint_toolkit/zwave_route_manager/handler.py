@@ -1029,7 +1029,7 @@ def _circuit_breaker_notification(
     )
     try:
         local_resume = open_until.astimezone().strftime("%H:%M")
-    except (OverflowError, ValueError):
+    except OverflowError, ValueError:
         local_resume = open_until.isoformat(timespec="minutes")
     title = "Controller unresponsive"
     body = (

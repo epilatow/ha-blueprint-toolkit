@@ -1163,7 +1163,7 @@ def _parse_numeric(state: str | None) -> int | float | None:
         return None
     try:
         f = float(state)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return int(f) if f.is_integer() else f
 

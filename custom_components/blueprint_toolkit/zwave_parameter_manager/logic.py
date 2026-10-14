@@ -35,7 +35,6 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, StrEnum, auto
-from typing import TypeAlias
 
 from .catalog import (
     CATALOG,
@@ -64,7 +63,7 @@ __all__ = (
 # PYI041 rejects it in a parameter annotation and would leave the
 # dataclass fields spelled differently from the functions that take
 # them. One alias keeps every site identical.
-GenericValue: TypeAlias = bool | float
+type GenericValue = bool | float
 
 
 # -- Z-Wave protocol ---------------------------------------------

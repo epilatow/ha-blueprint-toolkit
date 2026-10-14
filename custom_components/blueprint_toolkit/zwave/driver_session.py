@@ -73,7 +73,7 @@ def load(path: Path) -> DriverSession | None:
             last_reset_at=datetime.fromisoformat(data["last_reset_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )
-    except (ValueError, KeyError, TypeError):
+    except ValueError, KeyError, TypeError:
         return None
 
 

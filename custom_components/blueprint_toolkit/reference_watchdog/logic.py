@@ -2156,7 +2156,7 @@ def _read_json_file(path: str) -> object:
         return None
     try:
         return json.loads(content)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 

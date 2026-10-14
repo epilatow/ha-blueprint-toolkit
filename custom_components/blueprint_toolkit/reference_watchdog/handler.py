@@ -572,7 +572,7 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
         lab_reg = lr.async_get(hass)
         for label in lab_reg.labels.values():
             label_ids.add(label.label_id)
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         pass
 
     return logic.TruthSet(

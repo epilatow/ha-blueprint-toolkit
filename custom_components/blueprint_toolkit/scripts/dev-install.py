@@ -10,7 +10,10 @@ script remotely on the HA host; ``--restore`` runs the copy
 inside the preserved HACS snapshot.
 
 Not a ``uv run --script`` target; HA nodes are not expected
-to have ``uv`` installed. Python 3.11+ stdlib only.
+to have ``uv`` installed. Standard library only, on the
+interpreter floor ``pyproject.toml`` declares for shipped
+code -- the Terminal & SSH add-on's ``python3`` runs this,
+and ``tests/test_analysis_deps.py`` holds the file to it.
 
 Usage
 -----

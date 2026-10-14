@@ -104,7 +104,7 @@ def _label_frequency(
     for cc_str, block in classes.items():
         try:
             cc = int(cc_str)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if not isinstance(block, dict):
             continue

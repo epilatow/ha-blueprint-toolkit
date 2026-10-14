@@ -125,7 +125,7 @@ def _states(meta: ValueMetadata) -> dict[int, str]:
     for raw, label in (meta.states or {}).items():
         try:
             out[int(raw)] = str(label)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return out
 

@@ -115,7 +115,7 @@ def _no_hallucinations(
         for cc_str, block in classes.items():
             try:
                 cc = int(cc_str)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             if not isinstance(block, dict):
                 continue
@@ -339,7 +339,7 @@ def _direction_findings(
     for concept, loc in locators.items():
         try:
             gp = CATALOG[GenericParamNames(concept)]
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             continue  # a concept the catalog doesn't define
         if gp.param_type is not ParamType.RANGE:
             continue
@@ -385,7 +385,7 @@ def _unit_findings(
     for concept, loc in locators.items():
         try:
             gp = CATALOG[GenericParamNames(concept)]
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             continue  # a concept the catalog doesn't define
         if gp.param_type is not ParamType.VALUE:
             continue

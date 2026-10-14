@@ -42,7 +42,7 @@ def _have_docker() -> bool:
             timeout=5,
             check=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return False
     return r.returncode == 0
 

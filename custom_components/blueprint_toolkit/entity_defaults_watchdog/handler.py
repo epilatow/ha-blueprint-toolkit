@@ -715,7 +715,7 @@ def _build_deviceless_inputs(
             continue
         try:
             fn = str(st.attributes.get("friendly_name", "") or "")
-        except (AttributeError, TypeError):
+        except AttributeError, TypeError:
             continue
         if not fn:
             fn = _default_friendly_name(obj)

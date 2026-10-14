@@ -2,11 +2,32 @@
 name = "ha-blueprint-toolkit"
 version = "1.0.0"
 description = "Home Assistant blueprints backed by a testable HA integration"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "epilatow-repo-shared",
     "pytest",
 ]
+
+[tool.ha-blueprint-toolkit]
+# The lowest Python this repo's code is ever RUN on, as opposed to
+# developed against. Two interpreters answer to it and neither is
+# this machine's: Home Assistant's own, which imports the integration
+# modules and whose floor the ``hacs.json`` release constrains, and
+# the Terminal & SSH add-on's, which runs the bundled CLI and the
+# host-side installer and which no declaration here can constrain --
+# it is whatever ``python3`` the add-on's Alpine base packages.
+# ``[tool.ruff] target-version`` is gated against this rather than
+# against ``.python-version`` so a newer dev interpreter cannot push
+# syntax into the add-on's half of the tree, and
+# ``tests/test_analysis_deps.py`` parses that code at this version so
+# the floor is exercised rather than merely asserted.
+#
+# Raising it is a compatibility decision, not a convenience: confirm
+# the add-on's current base image packages the new ``python3`` (its
+# ``build.yaml`` in home-assistant/addons names the Alpine base) and
+# that the ``hacs.json`` floor's Home Assistant releases require at
+# least it. Alpine 3.24 is the first base to carry 3.14.
+shipped-python-version = "3.14"
 
 [tool.uv.sources]
 epilatow-repo-shared = { git = "https://github.com/epilatow/repo-shared", rev = "cbe583e8526f74e5e5785fee9e557b96aa342c63" }
@@ -65,10 +86,8 @@ mypy-extra-deps = [
     "zwave-js-server-python==0.73.1",
     "types-PyYAML",
 ]
-# HACC only installs on Python 3.14; the integration's own
-# code targets 3.11, but analyzing 3.11 code under a 3.14 mypy is
-# a superset and safe. The HACC-coupled test files already pin
-# ``requires-python = ">=3.14"`` in their PEP 723 blocks.
+# The version the integration declares and runs on, which is also
+# the only one HACC installs for.
 mypy-python-version = "3.14"
 
 [tool.pytest.ini_options]
@@ -90,7 +109,16 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 80
-target-version = "py311"
+# Not ``.python-version``. This value decides what the formatter
+# EMITS -- at py314 it rewrites multi-type ``except`` clauses into
+# the unparenthesized PEP 758 form -- so it has to name the lowest
+# interpreter any of this repo's code is run on, not the newest one
+# this machine develops against. That floor is
+# ``[tool.ha-blueprint-toolkit] shipped-python-version``; raising
+# the dev pin alone must
+# not move this, or the formatter would put syntax into the bundled
+# CLI that the add-on running it cannot parse.
+target-version = "py314"
 cache-dir = "/tmp/ruff_cache"
 extend-exclude = ["_repo_shared"]
 
@@ -115,10 +143,8 @@ extend-select = ["E", "F", "W", "I", "B", "UP", "ARG"]
 "scripts/verify_zwave_mapping.py" = ["TRY004"]
 
 [tool.mypy]
-# HACC's HA stubs use Python 3.12+ syntax (``type X[T] = ...``).
-# Bumping the analyzer to 3.14 lets it parse the stubs; the integration's
-# own code targets 3.11, and 3.11 code analyzed under a 3.14 mypy is a
-# strict superset (no false negatives).
+# The version the integration declares and runs on, which is also what
+# HACC's HA stubs need to parse (they use ``type X[T] = ...``).
 python_version = "3.14"
 strict = true
 # No ``files = [...]`` set: the canonical type check is the

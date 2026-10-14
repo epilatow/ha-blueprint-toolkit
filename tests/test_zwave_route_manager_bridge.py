@@ -21,15 +21,13 @@ import asyncio
 import sys
 from collections.abc import Coroutine
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 REPO_ROOT = Path(__file__).parent.parent
 
-T = TypeVar("T")
 
-
-def _run(coro: Coroutine[Any, Any, T]) -> T:
+def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run a coroutine to completion -- test helper."""
     return asyncio.run(coro)
 

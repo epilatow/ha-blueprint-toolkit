@@ -173,7 +173,7 @@ def _build_param(
         for k, v in states_raw.items():
             try:
                 states[int(k)] = str(v)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
     unit_raw = raw.get("unit")
     unit = unit_raw if isinstance(unit_raw, str) else None
