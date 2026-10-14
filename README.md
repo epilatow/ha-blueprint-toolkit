@@ -79,18 +79,22 @@ automations. Live in the bundled payload and run from the HA host.
   resolves (`desired`), the not-yet-converged subset (`pending`), or the
   policies / settings that matched no device (`unused`). Each row shows the
   policy's `desired` value next to the device's `dev-current` and
-  `dev-pending` values; `--cols` reshapes the table (units, the device
-  parameter identity, wake timing, and more are opt-in, with `defaults` /
-  `all` aliases). `zwavectl param-manager apply` issues those writes to the
-  devices (`--dry-run` previews, `--force` re-issues regardless of what is
-  already pending); it shares the automation's pending store, so the two never
-  re-queue a command the other already sent. Self-bootstraps a venv on first
-  run; see `zwavectl list --help` and `zwavectl param-manager desired --help`
-  for each command's column list and aliases. Host requirements: the
-  **Terminal & SSH** add-on must be installed and configured to install
-  `python3`, `py3-pip`, and `py3-websockets` -- add them to the add-on's
-  `apks` option (its Configuration tab) so they persist across add-on
-  restarts:
+  `dev-pending` values. A row has converged when `dev-current` equals
+  `dev-pending`; `desired` is the device-agnostic concept value the policy
+  set, which the resolver maps onto each device's own parameter range, so it
+  legitimately differs from the device columns on a converged row (a 1-10
+  sensitivity of 8 resolving to 6 where the range is 1-8). `--cols` reshapes
+  the table (units, the device parameter identity, wake timing, and more are
+  opt-in, with `defaults` / `all` aliases). `zwavectl param-manager apply`
+  issues those writes to the devices (`--dry-run` previews, `--force`
+  re-issues regardless of what is already pending); it shares the automation's
+  pending store, so the two never re-queue a command the other already sent.
+  Self-bootstraps a venv on first run; see `zwavectl list --help` and
+  `zwavectl param-manager desired --help` for each command's column list and
+  aliases. Host requirements: the **Terminal & SSH** add-on must be installed
+  and configured to install `python3`, `py3-pip`, and `py3-websockets` -- add
+  them to the add-on's `apks` option (its Configuration tab) so they persist
+  across add-on restarts:
 
   ```yaml
   apks:

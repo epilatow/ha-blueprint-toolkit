@@ -2617,6 +2617,13 @@ def _pm_wake_next(r: _PmRow) -> str:
 # policy value (its unit in ``units``); ``dev-current`` / ``dev-pending`` are
 # the device's live / target values (their unit in ``dev-units``). The
 # ``dev-*`` prefix marks everything read off / specific to the device.
+#
+# Convergence is ``dev-current == dev-pending``. It is NOT ``desired ==
+# dev-current``: a policy sets a device-agnostic concept and the resolver
+# maps that onto each device's own parameter range, so those two
+# legitimately differ on a converged row -- a 1-10 concept sensitivity of 8
+# resolves to 6 where the device's range is 1-8. Reading the generic column
+# against the device's live value reports a converged device as divergent.
 _PM_COLUMNS: dict[str, _PmCol] = {
     "node": _PmCol("node", lambda r: str(r.device.node_id), right=True),
     "device": _PmCol("device", lambda r: r.device.name),
