@@ -226,16 +226,14 @@ Two complementary tools enforce markdown style; both are wired up via the
 shared test bases under `_repo_shared/tests/`:
 
 - **`mdformat`** is the canonical formatter. The shared `MdformatCheckBase`
-  runs `mdformat --wrap=78 --number --check` with the `mdformat-gfm` and
-  `mdformat-tables` plugins, gated by
-  `_repo_shared/tests/test_markdown_format.py`. Owns every mechanical
+  runs `mdformat --wrap=78 --number --check` with the `mdformat-gfm` plugin,
+  gated by `_repo_shared/tests/test_markdown_format.py`. Owns every mechanical
   formatting decision: line wrap at 78 chars, ordered-list numbering,
   bullet/emphasis/strong markers, blank-line spacing, table alignment. To
   re-canonicalise a doc after editing:
 
   ```bash
-  uvx --with mdformat-gfm --with mdformat-tables \
-      mdformat --wrap=78 --number <path>
+  uvx --with mdformat-gfm mdformat --wrap=78 --number <path>
   ```
 
   A markdown file with YAML frontmatter (`skills/<name>/SKILL.md`) also needs
@@ -246,7 +244,7 @@ shared test bases under `_repo_shared/tests/`:
   the `uvx` form needs it spelled out:
 
   ```bash
-  uvx --with mdformat-gfm --with mdformat-tables --with mdformat-frontmatter \
+  uvx --with mdformat-gfm --with mdformat-frontmatter \
       mdformat --wrap=78 --number skills/<name>/SKILL.md
   ```
 
@@ -273,7 +271,7 @@ Notable rules from the linter side:
   `console` for shell sessions with prompts, `bash` / `python` / etc. for
   actual code.
 - Tables use the `aligned` style (cells space-padded so column pipes line up
-  vertically) per MD060. mdformat-tables produces this layout automatically;
+  vertically) per MD060. `mdformat-gfm` produces this layout automatically;
   markdownlint validates it.
 
 Conventions worth knowing about for source layout (mdformat enforces these as
