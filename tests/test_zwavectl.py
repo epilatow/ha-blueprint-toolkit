@@ -225,9 +225,9 @@ class TestFmtLastSeen:
         assert zc._fmt_last_seen(t.replace(tzinfo=None).isoformat()) == "5m"
 
     def test_zulu_suffix(self) -> None:
-        # Python 3.11+ parses "Z" natively; the script's old
-        # .replace("Z", "+00:00") hack was dead code, but we
-        # want to make sure the native path still works.
+        # The formatter hands the timestamp straight to
+        # ``datetime.fromisoformat``, which accepts a ``Z`` suffix, so
+        # nothing rewrites the offset first. This covers that form.
         t = datetime.now(UTC) - timedelta(hours=2)
         stamp = t.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
         assert zc._fmt_last_seen(stamp) == "2h"
