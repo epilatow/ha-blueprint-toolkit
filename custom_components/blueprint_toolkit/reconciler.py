@@ -74,6 +74,22 @@ class ReconcilePlan:
     conflicts: tuple[Conflict, ...]
 
 
+def _is_apple_double(path: Path) -> bool:
+    """True for a macOS AppleDouble companion file.
+
+    macOS writes the extended attributes of ``<name>`` into a
+    sibling ``._<name>`` when the destination cannot carry them
+    itself, which includes a ``tar`` stream read by any
+    non-Apple ``tar``. Such a file keeps the real one's
+    extension, so ``._foo.yaml`` matches a ``*.yaml`` scan while
+    holding an AppleDouble blob rather than YAML. Home
+    Assistant's own blueprint scan is ``glob("**/*.yaml")``,
+    which does match a leading dot, so an installed companion
+    reaches it and fails to parse.
+    """
+    return path.name.startswith("._")
+
+
 def _destination_mapping(
     bundled_root: Path,
     config_root: Path,
@@ -84,6 +100,11 @@ def _destination_mapping(
     Destinations outside ``config_root`` are valid -- the
     optional ``cli_symlink_dir`` supports an out-of-tree
     install location for the shell CLI.
+
+    AppleDouble companions are skipped wherever a source is
+    discovered by extension: the bundle is assembled by whatever
+    copied it here, so this cannot assume the payload holds only
+    files the repository tracks.
     """
     mapping: dict[Path, Path] = {}
 
@@ -91,6 +112,8 @@ def _destination_mapping(
     src_dir = bundled_root / "blueprints"
     if src_dir.is_dir():
         for src in sorted(src_dir.rglob("*.yaml")):
+            if _is_apple_double(src):
+                continue
             rel = src.relative_to(src_dir)
             mapping[config_root / "blueprints" / rel] = src
 
@@ -116,6 +139,8 @@ def _destination_mapping(
         src_dir = bundled_root / "bin"
         if src_dir.is_dir():
             for src in sorted(src_dir.glob("*.py")):
+                if _is_apple_double(src):
+                    continue
                 mapping[cli_symlink_dir / src.stem] = src
 
     return mapping

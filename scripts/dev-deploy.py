@@ -42,6 +42,7 @@ import argparse
 import datetime as _dt
 import io
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -198,6 +199,23 @@ def _build_remote_layout(
     }
 
 
+def tar_env() -> dict[str, str]:
+    """The environment the shipping ``tar`` runs under.
+
+    macOS ``tar`` serialises a file's extended attributes into an
+    extra ``._<name>`` AppleDouble member, and a checkout here
+    carries at least ``com.apple.provenance`` on every file. Apple's
+    own ``tar`` merges those members back on read, so the archive
+    looks clean locally while the host's ``tar`` extracts them as
+    real files -- a ``._<blueprint>.yaml`` beside each blueprint,
+    keeping the extension that the reconciler and Home Assistant's
+    own blueprint glob both match. ``COPYFILE_DISABLE`` is the
+    documented opt-out, and is inert where ``tar`` never had the
+    behaviour.
+    """
+    return {**os.environ, "COPYFILE_DISABLE": "1"}
+
+
 def _ship_integration(
     host: str,
     root: Path,
@@ -225,7 +243,9 @@ def _ship_integration(
         f"mkdir -p {shlex.quote(parent)} && "
         f"cd {shlex.quote(target_integration_dir)} && tar -xf -"
     )
-    with subprocess.Popen(tar_cmd, stdout=subprocess.PIPE) as tar_proc:
+    with subprocess.Popen(
+        tar_cmd, stdout=subprocess.PIPE, env=tar_env()
+    ) as tar_proc:
         result = subprocess.run(
             ["ssh", host, remote],
             stdin=tar_proc.stdout,

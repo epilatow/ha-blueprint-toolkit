@@ -760,6 +760,41 @@ debugging.
 Flags: `--ha-config <path>` (default `/config`), `--cli-symlink-dir <path>`
 (omit to skip CLI), `--dry-run`.
 
+It cannot filter by what git tracks: it runs on the HA host, against a payload
+already copied there, with no repository to consult. Selecting tracked content
+is `dev-deploy.py`'s job and it does that with `git ls-files`. What reaches
+the host is therefore whatever the copy produced, so the reconciler screens
+the payload by name as well -- see "macOS sidecars in a shipped payload"
+below.
+
+### macOS sidecars in a shipped payload
+
+`dev-deploy.py` ships through `tar`, and macOS `tar` writes a file's extended
+attributes into an extra `._<name>` AppleDouble member. Every file in a
+checkout on macOS carries at least `com.apple.provenance`, so this applies to
+the whole payload. Two properties make it easy to miss:
+
+- Apple's `tar` merges those members back into attributes when reading, so
+  `tar -tf` shows a clean archive locally. The host's `tar` has no such
+  behavior and writes them out as ordinary files.
+- A sidecar keeps the real file's extension. `._device_watchdog.yaml` matches
+  a `*.yaml` scan, and Home Assistant's blueprint scan is `glob("**/*.yaml")`,
+  which matches a leading dot -- so an installed sidecar reaches HA, which
+  tries to parse an AppleDouble blob as a blueprint.
+
+Two guards, because they fail differently. `dev-deploy.py` sets
+`COPYFILE_DISABLE=1` for the shipping `tar`, which keeps sidecars out of the
+archive at the source; `tests/test_dev_deploy.py` reads the stream with
+`tarfile` rather than `tar` so the check sees what the host would. And
+`reconciler.py` skips `._*` wherever it discovers a source by extension, which
+covers a payload that arrived by some other route and sweeps sidecars a
+previous deploy already installed.
+
+Neither guard depends on one never being committed. `.gitignore` here is a
+shared template managed by `repo-shared`, so an ignore rule for `._*` belongs
+upstream in that template rather than as a local divergence; the reconciler
+screens the payload either way.
+
 ### Reading state from a deployed instance
 
 Each blueprint-backed automation writes a diagnostic state entity on every

@@ -150,6 +150,67 @@ class TestFreshInstall:
 
 
 # ---------------------------------------------------------------
+# AppleDouble sidecars in the payload
+# ---------------------------------------------------------------
+
+
+class TestAppleDoubleSidecars:
+    """A payload copied by macOS can carry ``._<name>`` companions.
+
+    They keep the real file's extension, so they match the same
+    scans, and Home Assistant's blueprint glob matches a leading
+    dot -- an installed one reaches HA and fails to parse. The
+    bundle's contents depend on whatever copied it to the host,
+    so the reconciler cannot assume only tracked files are
+    present.
+    """
+
+    def test_blueprint_sidecar_is_not_installed(self, tmp_path: Path) -> None:
+        bundled = _make_bundled(tmp_path / "repo")
+        blueprints = bundled / "blueprints" / "automation" / "blueprint_toolkit"
+        (blueprints / "._demo.yaml").write_bytes(
+            b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X\x00\x00"
+        )
+        config = tmp_path / "config"
+        config.mkdir()
+
+        result = plan(bundled_root=bundled, config_root=config)
+
+        assert not [
+            a for a in result.actions if a.destination.name.startswith("._")
+        ]
+        assert not [
+            c for c in result.conflicts if c.destination.name.startswith("._")
+        ]
+        # The real blueprint beside it still installs.
+        assert (
+            _kind_for(
+                result,
+                config / "blueprints/automation/blueprint_toolkit/demo.yaml",
+            )
+            is ActionKind.INSTALL
+        )
+
+    def test_cli_sidecar_is_not_installed(self, tmp_path: Path) -> None:
+        bundled = _make_bundled(tmp_path / "repo")
+        (bundled / "bin" / "._demo_cli.py").write_bytes(b"\x00\x05\x16\x07")
+        config = tmp_path / "config"
+        config.mkdir()
+        cli_dir = tmp_path / "root"
+        cli_dir.mkdir()
+
+        result = plan(
+            bundled_root=bundled,
+            config_root=config,
+            cli_symlink_dir=cli_dir,
+        )
+
+        # The sidecar's stem would install as ``._demo_cli``.
+        assert _action_for(result, cli_dir / "._demo_cli") is None
+        assert _action_for(result, cli_dir / "demo_cli") is not None
+
+
+# ---------------------------------------------------------------
 # Reinstall / rerun path
 # ---------------------------------------------------------------
 
