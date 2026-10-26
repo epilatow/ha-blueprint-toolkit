@@ -82,7 +82,7 @@ wrap = 78
 # gone unused, never to pair it with ``unused-ignore`` -- see
 # DEVELOPMENT.md "Analysis-dep pinning and stub suppressions".
 mypy-extra-deps = [
-    "pytest-homeassistant-custom-component==0.13.373",
+    "pytest-homeassistant-custom-component==0.13.375",
     "zwave-js-server-python==0.73.1",
     "types-PyYAML",
 ]
