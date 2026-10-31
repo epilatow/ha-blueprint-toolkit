@@ -15,7 +15,7 @@
 """Unit tests for ``sensor_threshold_entity_controller.handler``.
 
 Covers the parts that don't require booting HA: mutator
-callbacks, ``_ensure_timer`` arming, ``_async_kick_for_recovery``
+callbacks, ``_ensure_timer`` arming, restart-recovery kick
 + periodic-callback payload shape (``trigger_id`` AND
 ``trigger_entity`` must be flat top-level variables, no
 ``context=`` propagation), schema-level validation of the

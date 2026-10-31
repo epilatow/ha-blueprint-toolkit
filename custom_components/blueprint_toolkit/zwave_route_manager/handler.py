@@ -2,13 +2,12 @@
 """HA wiring for zwave_route_manager.
 
 ZRM-specific shape on top of the standard three-layer
-dispatch (see ``DEVELOPMENT.md`` for the universal
+dispatch (see ``AUTOMATIONS.md`` for the universal
 pattern):
 
 - Periodic reconcile timer per instance via
-  ``helpers.schedule_periodic_with_jitter`` (replaces the
-  ``time_pattern`` blueprint trigger; entry-scoped so an
-  unload mid-tick cancels the in-flight reconcile).
+  ``helpers.schedule_periodic_with_jitter`` (entry-scoped,
+  so an unload mid-tick cancels the in-flight reconcile).
 - Async bridge calls (no thread offloading; ``socketio`` is
   already async).
 - File-mtime change detection for the YAML config so the

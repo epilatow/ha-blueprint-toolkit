@@ -16,7 +16,7 @@
 
 Covers the parts that don't require booting HA: mutator
 callbacks, ``_ensure_timer`` re-arm sequencing,
-``_async_kick_for_recovery`` payload shape, periodic-
+restart-recovery kick payload shape, periodic-
 callback context-propagation regression tests, argparse
 field validation (``enabled_checks`` cross-validation,
 multi-line regex helper delegation, schema-level int

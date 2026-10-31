@@ -789,8 +789,7 @@ async def register_blueprint_handler(
     # if set: every per-port kick is just an
     # ``automation.trigger`` with a flat-variables payload, so
     # the spec carries the payload and the dispatcher builds
-    # the action. Per-handler ``_async_kick_for_recovery``
-    # wrappers have all been deleted.
+    # the action.
     kick: Callable[[HomeAssistant, str], Awaitable[None]] | None
     if spec.kick_variables is not None:
         kick_variables = spec.kick_variables

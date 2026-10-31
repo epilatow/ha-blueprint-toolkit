@@ -9,11 +9,11 @@ body HA imports OK). Callers don't need to track which
 file owns each symbol.
 
 Add a new helper to whichever file matches its
-HA-dependency profile and re-export from this shim --
-``TestHelpersShimReExportsEveryPublicSymbol`` (in
-``tests/test_helpers_lifecycle.py``) catches drift if a
-new public symbol lands in a flavour file but the shim
-re-export is forgotten.
+HA-dependency profile; ``AUTOMATIONS.md`` "Shared helpers"
+says when it also belongs in that file's ``__all__`` and
+here. ``TestHelpersShimReExportsEveryPublicSymbol`` (in
+``tests/test_helpers_lifecycle.py``) keeps this shim's
+``__all__`` equal to the union of the flavour files'.
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@
 
 Covers the parts that don't require booting HA: mutator
 callbacks, ``_ensure_timer`` re-arm sequencing,
-``_async_kick_for_recovery`` payload shape, periodic-
+restart-recovery kick payload shape, periodic-
 callback context-propagation regression tests, and the
 blueprint <-> schema drift check. The argparse + service
 layers are exercised end-to-end on a real HA host.

@@ -2,11 +2,10 @@
 """HA wiring for device_watchdog.
 
 DW-specific shape on top of the standard three-layer
-dispatch (see ``DEVELOPMENT.md`` for the universal
+dispatch (see ``AUTOMATIONS.md`` for the universal
 pattern):
 
-- Periodic scan via integration-owned scheduling. The
-  blueprint's ``time_pattern`` minute trigger is gone;
+- Periodic scan via integration-owned scheduling.
   ``helpers.schedule_periodic_with_jitter`` arms a
   per-instance offset so multiple instances of this
   blueprint don't hammer the registries simultaneously

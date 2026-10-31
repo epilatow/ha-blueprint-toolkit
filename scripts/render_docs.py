@@ -10,11 +10,10 @@ Walks every ``*.md`` under
 ``custom_components/blueprint_toolkit/bundled/docs/`` and
 writes a corresponding ``<stem>.html`` into
 ``custom_components/blueprint_toolkit/bundled/www/blueprint_toolkit/docs/``.
-HACS ships the ``bundled/`` subtree; when the integration's
-reconciler installs it, the HTML directory lands under
-``/config/www/blueprint_toolkit/docs/`` and becomes
-reachable at ``/local/blueprint_toolkit/docs/<stem>.html``
--- the URL the blueprint descriptions link to.
+HACS ships the ``bundled/`` subtree, and the integration's
+own static route serves that directory at
+``/local/blueprint_toolkit/docs/<stem>.html`` -- the URL
+the blueprint descriptions link to.
 
 Usage
 -----

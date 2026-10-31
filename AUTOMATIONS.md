@@ -154,10 +154,11 @@ profile: `helpers_logic.py` (pure -- no HA imports of any kind, including
 argument; HA imports only under `TYPE_CHECKING`), and `helpers_lifecycle.py`
 (lifecycle / setup -- function-body HA imports OK; module-scope HA imports
 must be `TYPE_CHECKING`). Add a new helper to the file matching its profile.
-List it in that file's `__all__` and re-export it from `helpers.py` only when
-an automation consumes it; framework-internal and test-only symbols are
-imported directly from the flavour file. `tests/test_helpers_lifecycle.py`
-enforces the import rules and the shim contract.
+Only when an automation consumes it, add it to both that file's `__all__` and
+`helpers.py`; framework-internal and test-only symbols stay out of both and
+are imported directly from the flavour file. `tests/test_helpers_lifecycle.py`
+enforces the import rules and that the shim's `__all__` is the union of the
+flavour files'.
 
 Schema + validation:
 

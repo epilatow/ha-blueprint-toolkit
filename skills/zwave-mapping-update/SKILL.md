@@ -478,8 +478,8 @@ worktree branch the operator reviews using standard git tooling
 ```bash
 REPO=$(git rev-parse --show-toplevel)
 TS=$(date +%Y%m%d-%H%M%S)
-WT=$REPO/.wt/zwave-mapping-update-$TS
 BRANCH=zwave-mapping-update/$TS
+WT=$REPO/.wt/$BRANCH
 ZPM=custom_components/blueprint_toolkit/zwave_parameter_manager
 
 git worktree add -b "$BRANCH" "$WT"
@@ -719,11 +719,6 @@ reject, they delete the worktree (`git worktree remove "$WT"`) and the branch.
 
 ## Operational notes
 
-- The skill lands its proposal as a commit on a fresh review worktree branch
-  (step 9), reviewed by an independent agent (step 10) before the operator
-  sees it -- not as a `tmp/` file. The operator reviews that commit
-  (`npx difit <sha>`, `git diff main -- mapping.json`) and cherry-picks or
-  merges on accept, or deletes the worktree on reject.
 - The first run after the catalog gains a concept will be the largest (a fresh
   classification pass over the whole DB for that concept). Subsequent weekly
   runs should be near-idle.

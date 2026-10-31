@@ -2,7 +2,7 @@
 """HA wiring for sensor_threshold_entity_controller.
 
 STEC-specific shape on top of the standard three-layer
-dispatch (see ``DEVELOPMENT.md`` for the universal
+dispatch (see ``AUTOMATIONS.md`` for the universal
 pattern):
 
 - Three input event types: SENSOR (sensor entity state

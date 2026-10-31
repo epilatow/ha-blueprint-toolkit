@@ -19,7 +19,7 @@ the ``_on_reload`` / ``_on_entity_remove`` /
 ``_on_entity_rename`` / ``_on_teardown`` mutator
 callbacks fed into the BlueprintHandlerSpec,
 ``_ensure_timer``'s schedule + re-arm sequencing,
-``_async_kick_for_recovery``'s synthetic-manual
+the restart-recovery kick's synthetic-manual
 ``automation.trigger`` shape, and the schema vs blueprint
 drift check. The argparse + service layers are exercised
 end-to-end on a real HA host.

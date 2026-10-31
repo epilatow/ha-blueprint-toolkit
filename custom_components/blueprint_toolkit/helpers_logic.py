@@ -1439,10 +1439,7 @@ class BlueprintHandlerSpec:
             walks every automation using ``blueprint_path``
             and fires ``automation.trigger`` against each
             with this flat top-level ``variables`` payload.
-            Per-handler ``_async_kick_for_recovery``
-            wrappers used to live in each port; the spec
-            now carries just the payload and the
-            ``register_blueprint_handler`` dispatcher
+            The ``register_blueprint_handler`` dispatcher
             builds the call via
             ``kick_via_automation_trigger``.
         on_reload: When set, ``EVENT_AUTOMATION_RELOADED``
