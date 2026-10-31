@@ -180,33 +180,6 @@ creation. Renaming the entity later doesn't update the entity ID, leaving
 (for example) <code>automation.foo</code> still running after you renamed its alias to
 &quot;Bar&quot;.</li>
 </ul>
-<h3>How drift is detected</h3>
-<p>The watchdog uses Home Assistant's entity and device registries to compare
-current values against expected defaults:</p>
-<ul>
-<li><strong>Device entity ID drift</strong>: compares each device- attached entity's current
-ID against the value returned by <code>async_regenerate_entity_id</code>, which
-computes the ID that HA would assign today based on the current device name
-and entity name.</li>
-<li><strong>Device entity name drift</strong>: checks whether <code>entry.name</code> (a name override)
-differs from <code>entry.original_name</code> (the integration-provided default). A
-name override exists only when someone (or HA's migration logic) has
-explicitly set a custom name.</li>
-<li><strong>Redundant prefix</strong>: for entities with <code>has_entity_name=True</code>, HA
-automatically prepends the device name to the entity name. A name override
-that starts with the device name is redundant.</li>
-<li><strong>Deviceless entity ID drift</strong>: for registry entries whose <code>device_id</code> is
-null and whose domain is a user-named one (automation, script, scene, group,
-schedule, timer, counter, input helpers, sensor/binary_sensor/switch/light),
-compares <code>slugify(entry.name or entry.original_name)</code> to the entity ID's
-object part. Also walks the state list for entities in those domains that
-don't have a registry entry (YAML-defined without <code>unique_id:</code>) as a safety
-net -- those are caught only when the user has set an explicit <code>name:</code> whose
-slug differs from the entity ID. HA's collision-suffix convention (<code>_2</code>,
-<code>_3</code>, ...) is accepted when at least one peer with the un-suffixed (or
-lower-<code>_N</code>) object ID exists; otherwise the suffix is classified as stale
-and reported in a dedicated section with a &quot;rename to&quot; suggestion.</li>
-</ul>
 <h3>Two-cycle fix sequence</h3>
 <p>When a device has both name overrides and non-default entity IDs, the fix must
 happen in two steps:</p>
@@ -268,8 +241,8 @@ flagged entities share a single source (e.g. five rows all tagged
 <code>-  integration rachio</code>) and can be suppressed together via <strong>Exclude
 integrations</strong>. State-only entities (YAML blocks without <code>unique_id:</code>) have no
 owning integration, so they show a nudge to add one instead.</p>
-<p><strong>Stale collision suffixes</strong> -- entities whose ID ends in <code>_N</code> (N &gt;= 2) but no
-un-suffixed or lower-<code>_N</code> peer exists:</p>
+<p><strong>Stale collision suffixes</strong> -- entities whose ID ends in <code>_N</code> (N &gt;= 2) with
+no un-suffixed peer. In a chain of suffixes, only the highest is flagged:</p>
 <pre><code class="language-text">- `automation.front_porch_light_2` -&gt; rename to `automation.front_porch_light`
   [Front Porch Light](/config/automation/edit/1234567890)
 </code></pre>
@@ -336,18 +309,12 @@ skip all battery entities).</li>
 <li><strong>Device name exclude regex</strong>: skip entire devices by name.</li>
 </ul>
 <h3>Unmatched include / exclude directives</h3>
-<p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
-include / exclude entry is checked against the live truth set after each scan.
-Anything that doesn't bind -- a typo'd integration name like <code>zwavejs</code> instead
-of <code>zwave_js</code>, an <code>Exclude entities</code> entry for an entity that no longer
-exists, or a regex line in any of the <strong>Device name</strong> / <strong>Entity ID</strong> /
-<strong>Entity name</strong> exclude fields that catches no current row -- shows up in a
-single &quot;Unmatched include / exclude directives&quot; notification with one bullet
-per offending entry, the field it came from, and a short reason. Fix the typo
-or remove the stale entry and the notification clears on the next scan. The
-notification is informational, not a config error. Disable the toggle to skip
-the check; any prior unmatched-directives notification dismisses on the next
-scan.</p>
+<p>With <strong>Validate include / exclude directives</strong> on (default), any include /
+exclude entry that matches nothing in the live scan -- a typo'd integration
+like <code>zwavejs</code> instead of <code>zwave_js</code>, an <strong>Exclude entities</strong> entry for an
+entity that no longer exists, or a regex line that catches no current row --
+appears in a single informational notification. It clears on the next scan
+once the entry is fixed or removed, or when you turn the toggle off.</p>
 <h3>Repairs</h3>
 <p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each drift
 finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
@@ -383,15 +350,11 @@ the built-in <code>script</code> integration linked to the script-list dashboard
 in a notification with it off (script YAML-key drift has no notification
 form). Unmatched include / exclude directives surface as a notification
 regardless of the toggle.</p>
-<p>The repair issue auto-clears once the underlying drift is resolved (next scan
-sees the entity at its default ID / name and the dispatcher's sweep removes
-the stale issue).</p>
-<p><strong>Cap.</strong> Repairs are not bulk-dismissable in HA's UI, so the <strong>Max repairs</strong>
-input limits per-run issue count (default 5; 0 = unlimited). When the cap is
-exceeded, a single cap-summary persistent notification surfaces telling the
-user how many findings were suppressed; raise the cap or fix the visible
-issues to surface more. The summary uses a regular notification (not a repair)
-so it can be dismissed in bulk from the notifications panel.</p>
+<p>The repair issue clears on the next scan once the drift is resolved.</p>
+<p><strong>Cap.</strong> Repairs can't be dismissed in bulk in HA's UI, so <strong>Max repairs</strong>
+limits the per-run issue count (default 5; 0 = unlimited). Findings over the
+cap are counted in a single summary notification; raise the cap or fix the
+visible issues to surface more.</p>
 <p>Disable <strong>Create repairs</strong> to keep notification-only behavior on this
 instance.</p>
 <h2>Developer notes</h2>

@@ -6,6 +6,31 @@ Entity IDs drift when device names change after entity
 creation.  Name overrides become stale when integrations
 change their naming conventions and HA auto-preserves
 old names.
+
+Detection
+---------
+
+Each check compares registry state against the value HA
+would use today:
+
+- Device entity ID drift: the entity's ID against what
+  ``async_regenerate_entity_id`` returns for the current
+  device and entity names. The handler makes that call.
+- Device entity name drift: ``entry.name``, a name
+  override set by a user or HA's migration logic, against
+  ``entry.original_name``, the integration's default.
+- Redundant prefix: HA prepends the device name for
+  ``has_entity_name=True`` entities, so an override that
+  starts with it is redundant.
+- Deviceless entity ID drift: for registry entries with no
+  ``device_id`` in ``DEVICELESS_DOMAINS``, the slug of
+  ``entry.name or entry.original_name`` against the entity
+  ID's object part. The state list is also walked for
+  entities with no registry entry (YAML without
+  ``unique_id:``), which are caught only when an explicit
+  ``name:`` slugs to something else. HA's collision suffix
+  (``_2``, ``_3``, ...) is classified by
+  ``_matches_with_collision_suffix``.
 """
 
 import re

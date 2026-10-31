@@ -307,9 +307,9 @@ at or above it.
 
 An add-on image below the floor does not refuse politely: the CLI dies on a
 `SyntaxError` before any statement in `zwavectl.py` runs, so the CLI cannot
-guard against it. The README states the add-on requirement where the `apks`
-list is configured, because that is where a user can act on it, and it is the
-whole of the warning.
+guard against it. `docs/zwavectl.md` states the add-on requirement where the
+`apks` list is configured, because that is where a user can act on it, and it
+is the whole of the warning.
 
 ### Manifest version bump rule
 

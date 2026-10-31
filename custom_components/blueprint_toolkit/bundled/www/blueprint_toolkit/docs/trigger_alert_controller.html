@@ -226,14 +226,8 @@ immediately. Then, while anyone is home, the siren plays the &quot;Leak detected
 tone every 30 seconds until every sensor is <code>off</code>.</p>
 <h2>Developer notes</h2>
 <h3>Standalone blueprint</h3>
-<p>This blueprint is <strong>standalone</strong> -- the marker comment
-<code># blueprint-kind: standalone</code> on the first line records that. Its <code>actions:</code>
-block is plain Home Assistant YAML and does not dispatch to a
-<code>blueprint_toolkit.&lt;service&gt;</code> handler, so there is no handler/logic
-subpackage, no <code>_SCHEMA</code>, and no schema-drift test. It still ships through the
-same bundled blueprints directory and is installed by the reconciler exactly
-like the handler-backed blueprints. See <code>AUTOMATIONS.md</code> for the
-standalone-blueprint category contract.</p>
+<p>This blueprint is <strong>standalone</strong>: its <code>actions:</code> block is plain Home Assistant
+YAML with no <code>blueprint_toolkit.&lt;service&gt;</code> handler behind it.</p>
 <h3>Behavior details</h3>
 <ul>
 <li><strong>Mode <code>single</code>.</strong> A second sensor tripping while the repeat loop is running

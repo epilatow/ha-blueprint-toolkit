@@ -71,17 +71,12 @@ devices recover.
 
 ### Unmatched include / exclude directives
 
-When **Validate include / exclude directives** is enabled (default), every
-include / exclude entry is checked against the live truth set after each scan.
-Anything that doesn't bind -- a typo'd integration name like `zwavejs` instead
-of `zwave_js`, a regex line in **Device name exclude regex** or **Entity ID
-exclude regex** that catches no current device or entity -- shows up in a
-single "Unmatched include / exclude directives" notification with one bullet
-per offending entry, the field it came from, and a short reason. Fix the typo
-or remove the stale entry and the notification clears on the next scan. The
-notification is informational, not a config error. Disable the toggle to skip
-the check; any prior unmatched-directives notification dismisses on the next
-scan.
+With **Validate include / exclude directives** on (default), any include /
+exclude entry that matches nothing in the live scan -- a typo'd integration
+like `zwavejs` instead of `zwave_js`, or a regex line that catches no current
+device or entity -- appears in a single informational notification. It clears
+on the next scan once the entry is fixed or removed, or when you turn the
+toggle off.
 
 ### Repairs
 
@@ -96,15 +91,12 @@ Other finding categories (unavailable / stale devices) keep using
 notifications regardless of the toggle -- those don't have a deterministic
 single-click fix.
 
-The repair issue auto-clears once the entity is re-enabled (next scan no
-longer flags it and the dispatcher's sweep removes the stale issue).
+The repair issue clears on the next scan once the entity is re-enabled.
 
-**Cap.** Repairs are not bulk-dismissable in HA's UI, so the **Max repairs**
-input limits per-run issue count (default 5; 0 = unlimited). When the cap is
-exceeded, a single cap-summary persistent notification surfaces telling the
-user how many findings were suppressed; raise the cap or fix the visible
-issues to surface more. The summary uses a regular notification (not a repair)
-so it can be dismissed in bulk from the notifications panel.
+**Cap.** Repairs can't be dismissed in bulk in HA's UI, so **Max repairs**
+limits the per-run issue count (default 5; 0 = unlimited). Findings over the
+cap are counted in a single summary notification; raise the cap or fix the
+visible issues to surface more.
 
 Disable **Create repairs** to keep notification-only behavior on this
 instance.

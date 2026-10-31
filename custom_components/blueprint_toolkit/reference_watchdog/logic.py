@@ -2310,6 +2310,22 @@ def _discover_yaml_sources(
 # Pool routing is still per-platform so that consumer-
 # side mentions in e.g. automations.yaml can't mark a
 # utility_meter orphan as "defined".
+#
+# Membership is exact-string, not substring: the YAML key
+# ``garage_central_heater_energy_daily`` does not define the
+# shorter object_id ``central_heater_energy_daily``, so an
+# orphan left behind by a rename stays flagged.
+#
+# This holds because every HA platform that stores
+# definitions in YAML or ``.storage`` lays the identifier
+# down as a mapping key or an identifier-field value:
+# ``utility_meter`` uses its top-level dict key, ``input_*``,
+# ``counter``, ``timer``, and ``person`` helpers store
+# ``"id": "<value>"``, ``template`` writes ``unique_id``
+# verbatim, and ``automations.yaml`` uses ``id:``. A
+# platform that uses any other key false-positives, as does
+# a scene or group whose object_id is only derived by
+# slugifying ``name:``.
 
 
 # UI-helper integrations that register entities with
@@ -2317,7 +2333,8 @@ def _discover_yaml_sources(
 # ``.storage/<helper>`` JSON files rather than in
 # ``core.config_entries``. Every file in this set that
 # exists on the host is loaded into the definer pool.
-# Missing files are silently skipped.
+# Missing files are silently skipped. A helper absent from
+# this set false-positives for its whole platform.
 _STORAGE_HELPER_DEFINER_FILES: frozenset[str] = frozenset(
     [
         "input_boolean",

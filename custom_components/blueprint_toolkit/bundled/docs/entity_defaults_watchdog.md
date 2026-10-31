@@ -93,34 +93,6 @@ These can drift from their expected values over time:
   (for example) `automation.foo` still running after you renamed its alias to
   "Bar".
 
-### How drift is detected
-
-The watchdog uses Home Assistant's entity and device registries to compare
-current values against expected defaults:
-
-- **Device entity ID drift**: compares each device- attached entity's current
-  ID against the value returned by `async_regenerate_entity_id`, which
-  computes the ID that HA would assign today based on the current device name
-  and entity name.
-- **Device entity name drift**: checks whether `entry.name` (a name override)
-  differs from `entry.original_name` (the integration-provided default). A
-  name override exists only when someone (or HA's migration logic) has
-  explicitly set a custom name.
-- **Redundant prefix**: for entities with `has_entity_name=True`, HA
-  automatically prepends the device name to the entity name. A name override
-  that starts with the device name is redundant.
-- **Deviceless entity ID drift**: for registry entries whose `device_id` is
-  null and whose domain is a user-named one (automation, script, scene, group,
-  schedule, timer, counter, input helpers, sensor/binary_sensor/switch/light),
-  compares `slugify(entry.name or entry.original_name)` to the entity ID's
-  object part. Also walks the state list for entities in those domains that
-  don't have a registry entry (YAML-defined without `unique_id:`) as a safety
-  net -- those are caught only when the user has set an explicit `name:` whose
-  slug differs from the entity ID. HA's collision-suffix convention (`_2`,
-  `_3`, ...) is accepted when at least one peer with the un-suffixed (or
-  lower-`_N`) object ID exists; otherwise the suffix is classified as stale
-  and reported in a dedicated section with a "rename to" suggestion.
-
 ### Two-cycle fix sequence
 
 When a device has both name overrides and non-default entity IDs, the fix must
@@ -202,8 +174,8 @@ flagged entities share a single source (e.g. five rows all tagged
 integrations**. State-only entities (YAML blocks without `unique_id:`) have no
 owning integration, so they show a nudge to add one instead.
 
-**Stale collision suffixes** -- entities whose ID ends in `_N` (N >= 2) but no
-un-suffixed or lower-`_N` peer exists:
+**Stale collision suffixes** -- entities whose ID ends in `_N` (N >= 2) with
+no un-suffixed peer. In a chain of suffixes, only the highest is flagged:
 
 ```text
 - `automation.front_porch_light_2` -> rename to `automation.front_porch_light`
@@ -285,18 +257,12 @@ intentionally customized names or IDs:
 
 ### Unmatched include / exclude directives
 
-When **Validate include / exclude directives** is enabled (default), every
-include / exclude entry is checked against the live truth set after each scan.
-Anything that doesn't bind -- a typo'd integration name like `zwavejs` instead
-of `zwave_js`, an `Exclude entities` entry for an entity that no longer
-exists, or a regex line in any of the **Device name** / **Entity ID** /
-**Entity name** exclude fields that catches no current row -- shows up in a
-single "Unmatched include / exclude directives" notification with one bullet
-per offending entry, the field it came from, and a short reason. Fix the typo
-or remove the stale entry and the notification clears on the next scan. The
-notification is informational, not a config error. Disable the toggle to skip
-the check; any prior unmatched-directives notification dismisses on the next
-scan.
+With **Validate include / exclude directives** on (default), any include /
+exclude entry that matches nothing in the live scan -- a typo'd integration
+like `zwavejs` instead of `zwave_js`, an **Exclude entities** entry for an
+entity that no longer exists, or a regex line that catches no current row --
+appears in a single informational notification. It clears on the next scan
+once the entry is fixed or removed, or when you turn the toggle off.
 
 ### Repairs
 
@@ -336,16 +302,12 @@ in a notification with it off (script YAML-key drift has no notification
 form). Unmatched include / exclude directives surface as a notification
 regardless of the toggle.
 
-The repair issue auto-clears once the underlying drift is resolved (next scan
-sees the entity at its default ID / name and the dispatcher's sweep removes
-the stale issue).
+The repair issue clears on the next scan once the drift is resolved.
 
-**Cap.** Repairs are not bulk-dismissable in HA's UI, so the **Max repairs**
-input limits per-run issue count (default 5; 0 = unlimited). When the cap is
-exceeded, a single cap-summary persistent notification surfaces telling the
-user how many findings were suppressed; raise the cap or fix the visible
-issues to surface more. The summary uses a regular notification (not a repair)
-so it can be dismissed in bulk from the notifications panel.
+**Cap.** Repairs can't be dismissed in bulk in HA's UI, so **Max repairs**
+limits the per-run issue count (default 5; 0 = unlimited). Findings over the
+cap are counted in a single summary notification; raise the cap or fix the
+visible issues to surface more.
 
 Disable **Create repairs** to keep notification-only behavior on this
 instance.

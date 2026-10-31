@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zwavectl</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  max-width: 760px;
+  margin: 2em auto;
+  padding: 0 1em;
+  line-height: 1.55;
+  color: #222;
+}
+h1, h2, h3, h4 { line-height: 1.25; }
+h1 { border-bottom: 1px solid #ddd; padding-bottom: .2em; }
+h2 { border-bottom: 1px solid #eee; padding-bottom: .15em; }
+code {
+  background: #f2f2f2;
+  padding: .1em .3em;
+  border-radius: 3px;
+  font-size: .92em;
+}
+pre {
+  background: #f6f6f6;
+  padding: .8em 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: .9em; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td {
+  border: 1px solid #ccc;
+  padding: .4em .7em;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #f2f2f2; }
+blockquote {
+  border-left: 3px solid #ccc;
+  margin: 1em 0;
+  padding: .2em 1em;
+  color: #555;
+}
+a { color: #0366d6; }
+</style>
+</head>
+<body>
+<h1>zwavectl</h1>
+<h2>Summary</h2>
+<p>Z-Wave CLI for the HA host. <code>zwavectl list</code> shows the mesh as a per-node
+table, and <code>zwavectl param-manager</code> plans and applies the Z-Wave Parameter
+Manager policy file from the command line. It ships with the integration and
+self-bootstraps a venv on first run.</p>
+<h2>Requirements</h2>
+<ul>
+<li>
+<p>The <strong>Terminal &amp; SSH</strong> add-on, configured to install <code>python3</code>, <code>py3-pip</code>,
+and <code>py3-websockets</code>. Add them to the add-on's <code>apks</code> option (its
+Configuration tab) so they persist across add-on restarts:</p>
+<pre><code class="language-yaml">apks:
+  - python3
+  - py3-pip
+  - py3-websockets
+</code></pre>
+</li>
+<li>
+<p>That <code>python3</code> must be 3.14 or newer, which the add-on's Alpine base
+provides from Alpine 3.24 on. zwavectl runs on the add-on's interpreter
+rather than Home Assistant's, so keep the add-on updated alongside Home
+Assistant. On an older image the CLI does not start: it exits with a
+<code>SyntaxError</code> naming one of its own source lines, which is the symptom of
+too old a <code>python3</code> rather than a broken install. Check <code>python3 --version</code>
+in the add-on's terminal before looking anywhere else.</p>
+</li>
+<li>
+<p>An HA token: enable the integration's <strong>Provision a CLI access token</strong>
+option (see below) or pass <code>--api-key-file &lt;path&gt;</code>.</p>
+</li>
+</ul>
+<h2>Usage</h2>
+<p>Both options live in the integration's <strong>Configure</strong> dialog.</p>
+<p><strong>CLI symlink directory</strong> symlinks the bundled <code>zwavectl.py</code> into a directory
+on your shell's <code>$PATH</code>, as <code>zwavectl</code> without the extension. The path must be
+writable by the Home Assistant process. On Home Assistant OS and Supervised
+installs, the integration runs in its own container -- only paths under shared
+mounts (<code>/config</code>, <code>/share</code>, <code>/media</code>, <code>/backup</code>, <code>/ssl</code>, <code>/addons</code>,
+<code>/addon_configs</code>) are visible from the SSH add-on; e.g. <code>/config</code> is a safe
+default. On Home Assistant Container or Core (no Supervisor), any path the HA
+process can write to works. Leave blank to skip.</p>
+<p><strong>Provision a CLI access token</strong> mints a long-lived HA token for <code>zwavectl</code>
+and writes it to <code>/config/blueprint_toolkit/cli_token</code>, revoking and deleting
+it when you turn the option off. It is full-access and lands in HA backups, so
+it is off by default.</p>
+<p><code>zwavectl list --help</code> and <code>zwavectl param-manager desired --help</code> give each
+command's column list and aliases.</p>
+<h2>Usage notes</h2>
+<h3><code>zwavectl list</code></h3>
+<p>A tabular per-node view of the mesh: protocol (Mesh/LR), signal-strength
+quality, configured priority routes, and opt-in stat columns (RX/TX counts,
+drop counts, drop rates, RTT, battery, status, neighbors, firmware, etc.).
+Historical columns pull from HA's recorder; current state comes from
+zwave-js-ui.</p>
+<h3><code>zwavectl param-manager</code></h3>
+<p><code>zwavectl param-manager {desired|pending|unused}</code> plans the live fleet against
+the Z-Wave Parameter Manager policy file (the same one the blueprint uses;
+override with <code>--config</code>) and prints the writes a policy resolves (<code>desired</code>),
+the not-yet-converged subset (<code>pending</code>), or the policies / settings that
+matched no device (<code>unused</code>). <code>--cols</code> reshapes the table (units, the device
+parameter identity, wake timing, and more are opt-in, with <code>defaults</code> / <code>all</code>
+aliases).</p>
+<p>Each row shows the policy's <code>desired</code> value next to the device's <code>dev-current</code>
+and <code>dev-pending</code> values. A row has converged when <code>dev-current</code> equals
+<code>dev-pending</code>. <code>desired</code> is the device-agnostic concept value the policy set,
+which the resolver maps onto each device's own parameter range, so it
+legitimately differs from the device columns on a converged row (a 1-10
+sensitivity of 8 resolving to 6 where the range is 1-8).</p>
+<p><code>zwavectl param-manager apply</code> issues those writes to the devices (<code>--dry-run</code>
+previews, <code>--force</code> re-issues regardless of what is already pending). It
+shares the automation's pending store, so the two never re-queue a command the
+other already sent.</p>
+</body>
+</html>

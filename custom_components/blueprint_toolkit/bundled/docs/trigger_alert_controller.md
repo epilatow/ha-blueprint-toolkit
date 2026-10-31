@@ -138,14 +138,8 @@ tone every 30 seconds until every sensor is `off`.
 
 ### Standalone blueprint
 
-This blueprint is **standalone** -- the marker comment
-`# blueprint-kind: standalone` on the first line records that. Its `actions:`
-block is plain Home Assistant YAML and does not dispatch to a
-`blueprint_toolkit.<service>` handler, so there is no handler/logic
-subpackage, no `_SCHEMA`, and no schema-drift test. It still ships through the
-same bundled blueprints directory and is installed by the reconciler exactly
-like the handler-backed blueprints. See `AUTOMATIONS.md` for the
-standalone-blueprint category contract.
+This blueprint is **standalone**: its `actions:` block is plain Home Assistant
+YAML with no `blueprint_toolkit.<service>` handler behind it.
 
 ### Behavior details
 

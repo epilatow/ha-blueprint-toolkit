@@ -156,17 +156,12 @@ it, the device's integration(s), and a link to the device -- so you can click
 straight through to the source. Notifications are automatically dismissed when
 devices recover.</p>
 <h3>Unmatched include / exclude directives</h3>
-<p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
-include / exclude entry is checked against the live truth set after each scan.
-Anything that doesn't bind -- a typo'd integration name like <code>zwavejs</code> instead
-of <code>zwave_js</code>, a regex line in <strong>Device name exclude regex</strong> or <strong>Entity ID
-exclude regex</strong> that catches no current device or entity -- shows up in a
-single &quot;Unmatched include / exclude directives&quot; notification with one bullet
-per offending entry, the field it came from, and a short reason. Fix the typo
-or remove the stale entry and the notification clears on the next scan. The
-notification is informational, not a config error. Disable the toggle to skip
-the check; any prior unmatched-directives notification dismisses on the next
-scan.</p>
+<p>With <strong>Validate include / exclude directives</strong> on (default), any include /
+exclude entry that matches nothing in the live scan -- a typo'd integration
+like <code>zwavejs</code> instead of <code>zwave_js</code>, or a regex line that catches no current
+device or entity -- appears in a single informational notification. It clears
+on the next scan once the entry is fixed or removed, or when you turn the
+toggle off.</p>
 <h3>Repairs</h3>
 <p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each
 disabled-recommended-diagnostic-entity finding surfaces as an HA Repair with a
@@ -177,14 +172,11 @@ device's integration(s), and a link to the device.</p>
 <p>Other finding categories (unavailable / stale devices) keep using
 notifications regardless of the toggle -- those don't have a deterministic
 single-click fix.</p>
-<p>The repair issue auto-clears once the entity is re-enabled (next scan no
-longer flags it and the dispatcher's sweep removes the stale issue).</p>
-<p><strong>Cap.</strong> Repairs are not bulk-dismissable in HA's UI, so the <strong>Max repairs</strong>
-input limits per-run issue count (default 5; 0 = unlimited). When the cap is
-exceeded, a single cap-summary persistent notification surfaces telling the
-user how many findings were suppressed; raise the cap or fix the visible
-issues to surface more. The summary uses a regular notification (not a repair)
-so it can be dismissed in bulk from the notifications panel.</p>
+<p>The repair issue clears on the next scan once the entity is re-enabled.</p>
+<p><strong>Cap.</strong> Repairs can't be dismissed in bulk in HA's UI, so <strong>Max repairs</strong>
+limits the per-run issue count (default 5; 0 = unlimited). Findings over the
+cap are counted in a single summary notification; raise the cap or fix the
+visible issues to surface more.</p>
 <p>Disable <strong>Create repairs</strong> to keep notification-only behavior on this
 instance.</p>
 <h2>Developer notes</h2>

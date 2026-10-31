@@ -155,7 +155,7 @@ add-on the same bodies show the filename as a plain <code>code-spanned</code> pa
 </tr>
 <tr>
 <td>Validate include / exclude directives</td>
-<td>When enabled (default), each include / exclude directive is checked against the live truth set after every scan. Typo'd integration names, removed entities, stale path globs, and regex lines that catch nothing surface in a single per-instance &quot;Unmatched include / exclude directives&quot; notification that clears automatically when the typo / stale entry is fixed. Disable to skip the check; any prior unmatched-directives notification dismisses on the next scan.</td>
+<td>Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See <strong>Unmatched include / exclude directives</strong> below.</td>
 </tr>
 <tr>
 <td>Debug logging</td>
@@ -420,87 +420,26 @@ still-valid bound tracker from the unused-* checks) and this
 broken-references role are separate: a valid binding rescues, a dangling one
 is flagged.</p>
 <h3>File editor add-on links</h3>
-<p>Every <code>Source: &lt;path&gt;</code> line in a RW notification body renders the same way:
-plain <code>`&lt;path&gt;`</code> text by default, or a markdown link to the configurator
-when the <strong>File editor</strong> add-on (slug <code>core_configurator</code>) is detected as
-installed. The single render path means broken-references owner bodies, the
-unused-deviceless rollup bullets, and any future RW notification carrying a
-file path all behave identically without per-call-site decisions.</p>
-<p>Two carve-outs always render plain (no link), even when the add-on is present:</p>
-<ul>
-<li><code>.storage/&lt;x&gt;</code> paths in broken-references bodies -- HA-managed JSON files
-that HA's own docs warn against hand-editing.</li>
-<li>Non-file labels in rollups (config-entry titles like <code>My Kitchen Helper</code>,
-the generic <code>(YAML-defined; file not auto-detected)</code> fallback). These aren't
-file paths and have no useful link target.</li>
-</ul>
-<p>Detection is automatic -- there's no blueprint toggle to flip. RW probes the
-supervisor on every run for the add-on's per-installation ingress URL
-(<code>/api/hassio_ingress/&lt;uuid&gt;/</code>); install or uninstall events reflect on the
-next scan without an HA restart. On HA Container / Core (no Supervisor) the
-probe returns the empty string and filenames stay plain.</p>
-<p>The link points at the direct ingress URL rather than the
-<code>/core_configurator/</code> panel URL because HA's panel route consumes query
-strings on its way through the frontend router. The configurator's <code>loadfile</code>
-parameter only fires when the URL reaches the add-on's HTTP server intact.</p>
-<p>The add-on doesn't support line-number deep-linking, so the link opens the
-file at the top; the user still scrolls / searches to the relevant block.</p>
+<p>Every <code>Source: &lt;path&gt;</code> line in a notification body is plain text by default,
+or a link that opens the file when the <strong>File editor</strong> add-on (slug
+<code>core_configurator</code>) is installed. Detection is automatic on every scan, with
+no toggle or restart. On HA Container / Core, paths stay plain.</p>
+<p><code>.storage/&lt;x&gt;</code> paths, which HA's docs warn against hand-editing, and non-file
+labels (config-entry titles, the <code>(YAML-defined; file not auto-detected)</code>
+fallback) always stay plain. The add-on can't deep-link to a line, so the link
+opens the file at the top.</p>
 <h3>Unmatched include / exclude directives</h3>
-<p>When <strong>Validate include / exclude directives</strong> is enabled (default), every
-exclusion entry is checked against the live truth set after the scan
-completes. Anything that doesn't bind -- a typo'd integration name like
-<code>zwavejs</code> instead of <code>zwave_js</code>, a <code>sensor.removed_thing</code> you forgot to clean
-up after deleting the entity, a regex line that catches nothing -- shows up in
-a single &quot;Unmatched include / exclude directives&quot; notification with one bullet
-per offending entry, the field it came from, and a short reason. Fix the typo
-or remove the stale entry and the notification clears on the next scan. The
-notification is informational, not a config error, so it sits alongside the
-per-source findings in the notification panel rather than blocking the scan.
-Disabling the toggle skips the check and dismisses any prior
-unmatched-directives notification on the next scan.</p>
+<p>With <strong>Validate include / exclude directives</strong> on (default), any exclusion
+entry that matches nothing in the live scan -- a typo'd integration like
+<code>zwavejs</code> instead of <code>zwave_js</code>, a <code>sensor.removed_thing</code> left behind after
+deleting the entity, or a regex line that catches nothing -- appears in a
+single informational notification. It clears on the next scan once the entry
+is fixed or removed, or when you turn the toggle off.</p>
 <h2>Developer notes</h2>
-<h3>Detection mechanisms</h3>
-<p>Three complementary mechanisms run in parallel over every parsed source tree.
-The module-level docstring in
-<code>custom_components/blueprint_toolkit/reference_watchdog/logic.py</code> documents
-the strategy in detail; the summary below is for quickly sanity-checking the
-stat attributes.</p>
-<ol>
-<li><strong>Structural walk.</strong> Dict keys in <code>_ENTITY_KEYS</code> (<code>entity</code>, <code>entity_id</code>,
-<code>entities</code>, <code>source</code>, <code>target_entity</code>, <code>device_trackers</code>, ...) emit entity
-references directly (<code>device_trackers</code> is how person config binds its
-trackers, so a person pointing at a deleted <code>device_tracker</code> surfaces as a
-broken reference). Dict keys in <code>_DEVICE_KEYS</code> emit device references,
-validated against a 32-char-lowercase-hex regex to filter non-HA device
-identifiers (mobile-app UDIDs, DLNA UPnP UUIDs, <code>/dev/</code> serial paths).</li>
-<li><strong>Jinja AST extraction.</strong> Any string leaf containing <code>{{</code> or <code>{%</code> is parsed
-as a Jinja template. Constant string literals (<code>states('sensor.foo')</code>) and
-attribute chains (<code>states.sensor.foo</code>) are extracted and validated.
-Non-constant expressions (<code>states('sensor.' ~ name)</code>) are intentionally
-skipped.</li>
-<li><strong>String sniff.</strong> String leaves that aren't under a known <code>_ENTITY_KEYS</code>
-position are checked against the entity-id regex with a domain filter.
-Catches blueprint inputs where the parent key name is custom
-(<code>controlled_entities</code>) and bare values under <code>service:</code> / <code>action:</code> /
-<code>service_template:</code> -- a typo'd <code>service: script.does_not_exist</code> surfaces
-as a broken-entity reference, while real registered service names are
-dropped by the truth set below.</li>
-</ol>
-<h3>Service-name negative truth set</h3>
-<p>HA service names and entity IDs share the same <code>domain.name</code> shape --
-<code>light.turn_on</code> is a service, <code>light.kitchen</code> is an entity. The string sniff
-can't distinguish them by syntax alone.</p>
-<p>The wrapper pulls HA's service registry (<code>hass.services.async_services()</code>)
-into <code>TruthSet.service_names</code>. When a sniff- or Jinja-emitted entity-kind
-reference matches a registered service name, the finding is dropped before it
-becomes a notification (tracked as <code>refs_service_skipped</code> for coverage
-reporting). The filter is gated on origin: structural emissions at known
-entity-key positions (<code>entity_id: light.turn_on</code>) are NOT suppressed, since
-those slots carry the contract that the value is meant to be an entity ID, so
-a service-name collision there is a real configuration typo worth surfacing.
-Without this backstop, every blueprint input that puts a service name under a
-custom key (e.g. <code>controlled_service: notify.mobile_app_*</code>) would surface as a
-broken-entity false positive.</p>
+<p><code>custom_components/blueprint_toolkit/reference_watchdog/logic.py</code> documents
+how detection works: its module docstring covers the three mechanisms behind
+the <code>refs_*</code> counters and the service-name truth set, and source-orphan
+detection is documented beside its code.</p>
 <h3>Entity attributes</h3>
 <p>After each evaluation, attributes are written to
 <code>blueprint_toolkit.rw_&lt;slug&gt;_state</code>. Search for <code>blueprint_toolkit.rw_*</code> in
@@ -619,107 +558,6 @@ broken-entity false positive.</p>
 <li><code>refs_total = refs_structural + refs_jinja + refs_sniff</code> (sniff- and
 Jinja-origin service-skipped hits are not counted)</li>
 </ul>
-<h3>Source-orphan detection</h3>
-<p>The detector runs after the main reference scan and reuses the parsed YAML
-tree already produced during discovery from <code>configuration.yaml</code>. An entity is
-classified as a source orphan when:</p>
-<ol>
-<li>Its registry entry has <code>config_entry_id = null</code>.</li>
-<li>Its <code>platform</code> is not in the runtime-excluded set (<code>pyscript</code>).</li>
-<li>Neither its object_id (portion after the dot) nor its unique_id appears as
-a <strong>lowercased string</strong> in the platform-appropriate <strong>definer pool</strong>.</li>
-</ol>
-<p>The definer pool is platform-scoped so that consumer- side mentions can't hide
-orphans:</p>
-<table>
-<thead>
-<tr>
-<th>Platform</th>
-<th>Pool</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>automation</code></td>
-<td><code>automations.yaml</code> + <code>.storage/automation</code></td>
-</tr>
-<tr>
-<td><code>script</code></td>
-<td><code>scripts.yaml</code> + <code>.storage/script</code></td>
-</tr>
-<tr>
-<td><code>template</code></td>
-<td><code>template.yaml</code> + generic YAML</td>
-</tr>
-<tr>
-<td>Everything else</td>
-<td>Generic YAML + matching <code>.storage/&lt;helper&gt;</code> file</td>
-</tr>
-</tbody>
-</table>
-<p>Where &quot;generic YAML&quot; is every YAML file reachable from <code>configuration.yaml</code>
-via <code>!include</code> <em>except</em> <code>customize.yaml</code>, <code>automations.yaml</code>, <code>scripts.yaml</code>,
-and <code>template.yaml</code> (which have dedicated pools above). <code>customize.yaml</code> is
-never a definer -- it's an overlay, and treating it as a definer would mask
-orphans that are still being customized.</p>
-<p>The <code>.storage/&lt;helper&gt;</code> file set is a closed list of known UI-helper storage
-files. Adding a new HA-core helper that uses a <code>.storage/&lt;name&gt;</code> file means
-adding its filename to <code>_STORAGE_HELPER_DEFINER_FILES</code> in
-<code>custom_components/blueprint_toolkit/reference_watchdog/logic.py</code>. A missing
-entry produces systematic false positives for that platform; an extra entry
-that doesn't exist on a given host is a no-op.</p>
-<p>Each pool is populated by walking the <strong>parsed</strong> YAML or JSON tree of every
-contributing file and harvesting:</p>
-<ul>
-<li>every mapping <strong>key</strong> (strings only, lowercased)</li>
-<li>every <strong>value</strong> whose key is in <code>_DEFINER_ID_KEYS</code> (<code>id</code>, <code>unique_id</code>,
-<code>object_id</code>)</li>
-</ul>
-<p>Walking the parsed tree -- instead of tokenizing raw text -- is deliberate.
-Comments are already stripped by the YAML parser, so a stale <code># old id:</code>
-comment in an unrelated file cannot contribute to the pool. Free-text fields
-like <code>description:</code>, <code>alias:</code>, or <code>friendly_name:</code> are also ignored, because
-their keys are not in <code>_DEFINER_ID_KEYS</code>. That stops a lingering &quot;old name&quot;
-reference in an automation <code>description</code> from falsely marking the dead entity
-as defined.</p>
-<p>Membership is exact-string, not substring. The YAML key
-<code>garage_central_heater_energy_daily</code> is harvested as a single string; looking
-up the shorter object_id <code>central_heater_energy_daily</code> returns no hit, so the
-orphan (left over from a rename) is correctly flagged.</p>
-<p>Identifier values are also kept verbatim, so non-slug unique_ids (e.g.
-MAC-style <code>aa:bb:cc:dd:ee:ff</code> stored as <code>&quot;id&quot;: &quot;aa:bb:cc:dd:ee:ff&quot;</code> in
-<code>.storage/person</code>) are matched directly without being split into tokens.</p>
-<p>This works reliably because every HA platform that stores definitions in YAML
-or <code>.storage</code> lays the identifier down as either a mapping key or an
-identifier-field value:</p>
-<ul>
-<li><code>utility_meter</code> YAML uses the top-level dict key as the object_id (and as a
-prefix of the unique_id -- e.g. object_id <code>central_heater_energy_daily</code>,
-unique_id <code>central_heater_energy_daily_single_tariff</code>). The YAML key is
-harvested.</li>
-<li><code>input_*</code>, <code>counter</code>, <code>timer</code>, <code>person</code> UI helpers store <code>&quot;id&quot;: &quot;&lt;value&gt;&quot;</code>
-in their <code>.storage/&lt;helper&gt;</code> file, and that value equals the registry
-unique_id.</li>
-<li><code>template</code> entities have their <code>unique_id</code> written verbatim in YAML, and the
-<code>name:</code> slug equals the object_id (and the YAML dict key structure includes
-the object_id for legacy-style templates).</li>
-<li><code>automation</code> entries in <code>automations.yaml</code> have <code>id: &lt;value&gt;</code> matching the
-registry unique_id.</li>
-</ul>
-<p>There is no toggle to disable source-orphan detection globally. Silence noisy
-entries via <strong>Exclude entities</strong> (exact match) or <strong>Exclude entity regex</strong>
-(pattern); both inputs apply symmetrically to broken references and source
-orphans.</p>
-<p><strong>Known limitations:</strong></p>
-<ul>
-<li>Object_ids derived by slugifying a scene/group <code>name:</code> (not written verbatim
-in the YAML) are not harvested. A <code>scene:</code> block without an explicit <code>id:</code>
-will appear as a false positive. Fix by giving the scene an explicit <code>id:</code>
-(recommended), or by adding the entity to <strong>Exclude entities</strong>.</li>
-<li>An integration that lays its definer identifier down under a key other than
-<code>id</code>, <code>unique_id</code>, or <code>object_id</code> will false-positive. None of the core HA
-integrations do this today, but custom integrations might.</li>
-</ul>
 <h3>Debug logging</h3>
 <p>Enable the <strong>Debug logging</strong> toggle in the blueprint. Debug output appears in
 <strong>Settings &gt; System &gt; Logs</strong>, logged at WARNING level (HA's default for custom
@@ -769,6 +607,12 @@ the unified store HA writes for every assistant. Per-assistant cloud configs
 consulted. An entity exposed only via a per-assistant config that bypasses
 the unified store won't be rescued from the unused-* checks via voice
 exposure -- add it to <strong>Exclude entities</strong> if needed.</li>
+<li><strong>Some source-orphan false positives.</strong> Object_ids derived by slugifying a
+scene or group <code>name:</code> aren't harvested, so a <code>scene:</code> block without an
+explicit <code>id:</code> appears as an orphan. Give it an <code>id:</code> (recommended) or add
+it to <strong>Exclude entities</strong>. A custom integration that stores its identifier
+under a key other than <code>id</code>, <code>unique_id</code>, or <code>object_id</code> false-positives the
+same way.</li>
 </ul>
 <h3>Follow-ups</h3>
 <p>Features worth adding in a later pass:</p>
