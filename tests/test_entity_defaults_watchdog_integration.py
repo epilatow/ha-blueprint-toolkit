@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 # Make custom_components/ importable as a top-level package;
 # the uv-script env doesn't add the repo root to sys.path
@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from conftest import (
     RecoveryEventsIntegrationBase,
+    WatchdogFindingLifecycleBase,
 )
 
 if TYPE_CHECKING:
@@ -539,6 +540,58 @@ class TestUnmatchedDirectives:
     notification surface added by the
     ``validate_includes_excludes`` toggle.
     """
+
+    async def test_excluding_state_only_entity_is_not_unmatched(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """An exclude that clears a state-only finding did match
+        something, though the entity has no registry row.
+        """
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "input_text.legacy_object_id",
+            "value",
+            {"friendly_name": "Brand New Name"},
+        )
+
+        def _repairs() -> list[str]:
+            return [
+                i.issue_id
+                for i in ir.async_get(hass).issues.values()
+                if i.domain == DOMAIN and "__repair_" in i.issue_id
+            ]
+
+        for overrides, expected_repairs in (
+            ({}, 1),
+            ({"exclude_entities": ["input_text.legacy_object_id"]}, 0),
+            ({"exclude_entity_id_regex": "legacy_object_id"}, 0),
+            ({"exclude_entity_name_regex": "Brand New Name"}, 0),
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    instance_id="automation.edw_state_only",
+                    drift_checks=["entity-id"],
+                    create_repairs=True,
+                    **overrides,
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+            assert len(_repairs()) == expected_repairs, overrides
+            assert not [
+                notification_id
+                for notification_id in _async_get_or_create_notifications(hass)
+                if "unmatched_directives" in notification_id
+            ], overrides
 
     async def test_typoed_integration_fires_notification(
         self,
@@ -1077,6 +1130,50 @@ class TestVisibleAliasedScan:
         assert after is not None
         assert after.hidden_by is er.RegistryEntryHider.INTEGRATION
 
+    async def test_excluding_source_integration_clears_repair(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Excluding the source entity's integration clears the
+        repair on the next scan.
+        """
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.den",
+            wrapper_entity_id="den",
+            wrapper_target_domain="fan",
+            source_friendly_name="Den Fan",
+            source_hidden_by=None,
+        )
+
+        for exclude_integrations, expected in (
+            (None, 1),
+            (["fake_source_integration"], 0),
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    instance_id="automation.edw_va_excluded",
+                    drift_checks=["visible-aliased-entity"],
+                    create_repairs=True,
+                    exclude_integrations=exclude_integrations,
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+            repair_issues = [
+                i
+                for i in ir.async_get(hass).issues.values()
+                if i.domain == DOMAIN
+                and "__repair_fix_edw_visible_aliased_entity__" in i.issue_id
+            ]
+            assert len(repair_issues) == expected
+
     async def test_create_repairs_false_emits_aggregate_no_issues(
         self,
         hass: HomeAssistant,
@@ -1488,6 +1585,44 @@ class TestScriptYamlKeyScan:
         assert "[script](/config/script/dashboard)" in attribution
         assert "/config/devices/device/" not in attribution
 
+    async def test_excluding_script_integration_clears_repair(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """Excluding the ``script`` integration clears the repair
+        on the next scan, as it does for any other integration.
+        """
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        self._plant_script(
+            hass,
+            unique_id="bath_fan",
+            suggested_object_id="bathroom",
+        )
+
+        for exclude_integrations, expected in ((None, 1), (["script"], 0)):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    instance_id="automation.edw_script_excluded",
+                    drift_checks=["script-yaml-key"],
+                    create_repairs=True,
+                    exclude_integrations=exclude_integrations,
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+            repair_issues = [
+                i
+                for i in ir.async_get(hass).issues.values()
+                if i.domain == DOMAIN
+                and "__repair_fix_edw_script_yaml_key__" in i.issue_id
+            ]
+            assert len(repair_issues) == expected
+
     async def test_create_repairs_false_no_issue_no_notification(
         self,
         hass: HomeAssistant,
@@ -1893,6 +2028,61 @@ class TestFixServiceDeviceDrift:
             blocking=True,
         )
         await hass.async_block_till_done()
+
+
+class TestFindingLifecycle(WatchdogFindingLifecycleBase):
+    service = SERVICE
+    setup_integration = staticmethod(_setup_integration)
+    exclusions: ClassVar[dict[str, dict[str, Any]]] = {
+        "integration": {"exclude_integrations": ["fake_integration"]},
+        "device": {"exclude_device_name_regex": "Lifecycle Device"},
+        "entity": {"exclude_entities": ["sensor.lifecycle_drift_0"]},
+        "entity id": {"exclude_entity_id_regex": "lifecycle_drift"},
+        "entity name": {"exclude_entity_name_regex": "Lifecycle Temp"},
+    }
+
+    def payload(self, **overrides: Any) -> dict[str, Any]:
+        return _valid_payload(drift_checks=["device-entity-id"], **overrides)
+
+    def seed_finding(self, hass: HomeAssistant, index: int = 0) -> None:
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        fake_entry = _mock_config_entry(
+            domain="fake_integration",
+            title="fake_integration",
+        )
+        fake_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_integration", f"lifecycle-{index}")},
+            name=f"Lifecycle Device {index}",
+        )
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id=f"lifecycle-{index}",
+            device_id=device.id,
+            config_entry=fake_entry,
+            original_name="Lifecycle Temp",
+        )
+        ent_reg.async_update_entity(
+            entry.entity_id,
+            new_entity_id=f"sensor.lifecycle_drift_{index}",
+        )
+
+    def fix_finding(self, hass: HomeAssistant, index: int = 0) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(hass)
+        entity_id = f"sensor.lifecycle_drift_{index}"
+        entry = ent_reg.async_get(entity_id)
+        assert entry is not None
+        ent_reg.async_update_entity(
+            entity_id,
+            new_entity_id=ent_reg.async_regenerate_entity_id(entry),
+        )
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

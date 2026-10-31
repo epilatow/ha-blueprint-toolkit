@@ -332,6 +332,14 @@ async def _async_service_layer(
     notif_prefix = notification_prefix(_SERVICE, instance_id)
     tag = f"[{_SERVICE_TAG}: {automation_friendly_name(hass, instance_id)}]"
 
+    # Resolve target integrations + assemble inputs on the
+    # event loop -- the registries we walk are loop-only.
+    all_integrations = all_integration_ids(hass)
+    target_integrations = resolve_target_integrations(
+        all_integrations,
+        include_integrations,
+        exclude_integrations,
+    )
     config = logic.Config(
         drift_checks=drift_checks,
         exclude_device_name_regex=exclude_device_name_regex,
@@ -341,15 +349,7 @@ async def _async_service_layer(
         create_repairs=create_repairs,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
-    )
-
-    # Resolve target integrations + assemble inputs on the
-    # event loop -- the registries we walk are loop-only.
-    all_integrations = all_integration_ids(hass)
-    target_integrations = resolve_target_integrations(
-        all_integrations,
-        include_integrations,
-        exclude_integrations,
+        target_integrations=frozenset(target_integrations),
     )
     devices = _build_device_inputs(
         hass,
@@ -384,27 +384,32 @@ async def _async_service_layer(
     # would surface "matches nothing" warnings whenever the
     # integration filter already pruned the entities the
     # regex would have caught -- a confusing leak of
-    # internal layer ordering.
+    # internal layer ordering. The deviceless inputs join them
+    # because the excludes filter those too: a state-only
+    # entity has no registry row, and a default friendly name
+    # lives in no registry field.
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
-    all_registered_entity_ids = frozenset(ent_reg.entities)
+    all_entity_ids = frozenset(ent_reg.entities) | {
+        e.entity_id for e in deviceless_entities
+    }
     device_name_candidates: frozenset[str] = frozenset(
         name for d in dev_reg.devices if (name := d.name_by_user or d.name)
     )
-    entity_id_candidates = all_registered_entity_ids
+    entity_id_candidates = all_entity_ids
     entity_name_candidates: frozenset[str] = frozenset(
         v
         for e in ent_reg.entities.values()
         for v in (e.name, e.original_name)
         if v
-    )
+    ) | {e.effective_name for e in deviceless_entities}
 
     directive_inputs = logic.DirectiveInputs(
         enabled=validate_includes_excludes,
         include_integrations=include_integrations,
         exclude_integrations=exclude_integrations,
         exclude_entities=exclude_entities,
-        all_registered_entity_ids=all_registered_entity_ids,
+        all_entity_ids=all_entity_ids,
         exclude_device_name_regex_lines=exclude_device_name_regex_lines,
         exclude_entity_id_regex_lines=exclude_entity_id_regex_lines,
         exclude_entity_name_regex_lines=exclude_entity_name_regex_lines,
@@ -743,8 +748,8 @@ def _build_deviceless_inputs(
 # cleared on the source, both rows become visible
 # everywhere. This builder discovers the candidate set
 # (switch_as_x entries whose source is currently visible)
-# and hands it to the logic layer for per-entity exclusion
-# + finding emission.
+# and hands it to the logic layer for exclusion + finding
+# emission.
 
 
 _SWITCH_AS_X_DOMAIN = "switch_as_x"
@@ -851,6 +856,7 @@ def _extract_visible_aliased_candidates(
                 source_config_entry_id=source.config_entry_id,
                 source_device_name=device_name,
                 source_device_integrations=device_integrations,
+                source_platform=source.platform,
             ),
         )
     return candidates

@@ -169,6 +169,7 @@ class _IssueSeverity:
 class _StubIssue:
     domain: str
     issue_id: str
+    dismissed_version: str | None = None
 
 
 @dataclass
@@ -205,9 +206,11 @@ def _ir_async_create_issue(
             "data": data or {},
         },
     )
-    _ISSUE_REGISTRY.issues[(domain, issue_id)] = _StubIssue(
-        domain=domain,
-        issue_id=issue_id,
+    # ``setdefault``: re-creating an issue keeps its
+    # ``dismissed_version``, as HA's ``async_get_or_create`` does.
+    _ISSUE_REGISTRY.issues.setdefault(
+        (domain, issue_id),
+        _StubIssue(domain=domain, issue_id=issue_id),
     )
 
 
@@ -220,6 +223,16 @@ def _ir_async_delete_issue(
     _ISSUE_REGISTRY.issues.pop((domain, issue_id), None)
 
 
+def _ir_async_ignore_issue(
+    _hass: Any,
+    domain: str,
+    issue_id: str,
+    ignore: bool,
+) -> None:
+    issue = _ISSUE_REGISTRY.issues[(domain, issue_id)]
+    issue.dismissed_version = "2026.10.1" if ignore else None
+
+
 def _ir_async_get(_hass: Any) -> _StubIssueRegistry:
     return _ISSUE_REGISTRY
 
@@ -229,6 +242,7 @@ _ha_helpers_ir.IssueSeverity = _IssueSeverity  # type: ignore[attr-defined]
 _ha_helpers_ir.async_create_issue = _ir_async_create_issue  # type: ignore[attr-defined]
 _ha_helpers_ir.async_delete_issue = _ir_async_delete_issue  # type: ignore[attr-defined]
 _ha_helpers_ir.async_get = _ir_async_get  # type: ignore[attr-defined]
+_ha_helpers_ir.async_ignore_issue = _ir_async_ignore_issue  # type: ignore[attr-defined]
 
 sys.modules["homeassistant"] = _ha
 sys.modules["homeassistant.components"] = _ha_components
@@ -3052,6 +3066,24 @@ class TestProcessRepairsWithSweep:
         )
         deleted_ids = {iid for _, iid in _DELETE_ISSUE_CALLS}
         assert "blueprint_toolkit_x__a__repair_e_old" in deleted_ids
+
+    @pytest.mark.asyncio
+    async def test_published_repair_clears_ignored_flag(self) -> None:
+        hass = self._hass()
+        issue_id = "blueprint_toolkit_x__a__repair_e1"
+        _ISSUE_REGISTRY.issues[(DOMAIN, issue_id)] = _StubIssue(
+            domain=DOMAIN,
+            issue_id=issue_id,
+            dismissed_version="2026.10.1",
+        )
+        await helpers.process_repairs_with_sweep(
+            hass,  # type: ignore[arg-type]
+            [self._repair(issue_id)],
+            sweep_prefix="blueprint_toolkit_x__a__",
+            create_repairs=True,
+        )
+        issue = _ISSUE_REGISTRY.issues[(DOMAIN, issue_id)]
+        assert issue.dismissed_version is None
 
     @pytest.mark.asyncio
     async def test_issue_data_is_json_primitive_only(self) -> None:

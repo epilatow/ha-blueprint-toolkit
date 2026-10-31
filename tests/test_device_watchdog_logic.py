@@ -984,6 +984,22 @@ class TestEvaluateDiagnostics:
         assert "- `sensor.test` (Last seen)" in results[0].message
         assert "Front Door Lock" in results[0].title
 
+    def test_exclude_regexes_apply_to_the_notification_surface(
+        self,
+    ) -> None:
+        device = self._diag_device(
+            device_name="Front Door Lock",
+            registry_entries=[
+                _reg_entry(original_name="Last seen", disabled=True),
+            ],
+        )
+        for overrides in (
+            {"exclude_device_name_regex": "Front Door"},
+            {"exclude_entity_id_regex": "sensor.test"},
+        ):
+            results, _ = evaluate_diagnostics(_config(**overrides), [device])
+            assert results == [], overrides
+
     def test_zwave_js_signal_strength_end_to_end(
         self,
     ) -> None:
@@ -1195,6 +1211,40 @@ class TestEvaluateDiagnosticsRepairs:
         spec = results[0]
         assert isinstance(spec.repair_callback, FixService)
         assert spec.active is True
+
+    def test_device_name_regex_skips_device(self) -> None:
+        results, repairs = evaluate_diagnostics(
+            _config(
+                create_repairs=True,
+                exclude_device_name_regex="Front Door",
+            ),
+            [self._device_two_disabled()],
+        )
+        assert results == []
+        assert repairs == {}
+
+    def test_entity_id_regex_drops_matching_entity(self) -> None:
+        results, repairs = evaluate_diagnostics(
+            _config(
+                create_repairs=True,
+                exclude_entity_id_regex="last_seen",
+            ),
+            [self._device_two_disabled()],
+        )
+        assert len(results) == 1
+        [payload] = repairs.values()
+        assert payload.entity_ids == ("sensor.signal_strength",)
+
+    def test_entity_id_regex_covering_all_entities_skips_device(self) -> None:
+        results, repairs = evaluate_diagnostics(
+            _config(
+                create_repairs=True,
+                exclude_entity_id_regex="last_seen|signal_strength",
+            ),
+            [self._device_two_disabled()],
+        )
+        assert results == []
+        assert repairs == {}
 
     def test_repair_spec_id_and_callback_match(self) -> None:
         cfg = _config(create_repairs=True)

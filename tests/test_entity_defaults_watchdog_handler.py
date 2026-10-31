@@ -609,6 +609,7 @@ class _FakeRegistryEntry:
         name: str | None = None,
         original_name: str | None = None,
         device_id: str | None = None,
+        platform: str = "",
     ) -> None:
         self.entity_id = entity_id
         self.config_entry_id = config_entry_id
@@ -618,6 +619,7 @@ class _FakeRegistryEntry:
         self.name = name
         self.original_name = original_name
         self.device_id = device_id
+        self.platform = platform
 
 
 class _FakeEntityRegistry:
@@ -695,6 +697,7 @@ class TestExtractVisibleAliasedCandidates:
                 hidden_by=None,
                 disabled_by=None,
                 original_name="Foo",
+                platform="lutron_caseta",
             ),
         )
         self._registry.add(
@@ -724,6 +727,7 @@ class TestExtractVisibleAliasedCandidates:
         assert c.source_hidden_by is None
         assert c.source_disabled_by is None
         assert c.source_friendly_name == "Foo"
+        assert c.source_platform == "lutron_caseta"
 
     def test_wrapper_missing_yields_no_wrapper_ids(self) -> None:
         # Source registered, well-formed options, but no

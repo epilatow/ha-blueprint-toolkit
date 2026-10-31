@@ -567,6 +567,12 @@ as one-click Fix issues instead of as persistent notifications.
   per-instance cap-summary **notification**, not a repair issue
   (`{prefix}cap_summary`), which is always dispatched so it auto-dismisses
   when the next run is back under cap.
+- **A finding stays until it is fixed or excluded.** A watchdog's exclude
+  inputs are the only supported way to suppress a finding, so every check
+  honors every exclude input that applies to it, and the next scan clears what
+  an exclude newly covers. HA's Ignore and notification dismissal are not
+  suppression: an ignored repair or dismissed notification comes back on the
+  next scan.
 - **Fix services.** Each repairable finding kind backs a service registered
   from each handler's `async_register_fix_services` via
   `helpers.register_fix_service(hass, service_name, handler)`, which owns the
@@ -721,6 +727,11 @@ minimum:
   `last_run`, `runtime`) + per-handler extras.
 - `EVENT_AUTOMATION_RELOADED` triggers a fresh discovery scan.
 - `EVENT_HOMEASSISTANT_STARTED` recovery log fires on setup.
+
+A handler that emits repairs also subclasses `WatchdogFindingLifecycleBase`
+from `tests/conftest.py`, which gates "a finding stays until it is fixed or
+excluded" (see "Repairs") on both surfaces against HA's real registries. List
+every `exclude_*` input the handler offers in its `exclusions`.
 
 ### Code quality
 

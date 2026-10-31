@@ -111,7 +111,7 @@ device name + ID drift)</li>
 </tr>
 <tr>
 <td>Include integrations</td>
-<td>Integration IDs to check. Empty means all integrations. Applies to device-backed entities and to registry-backed deviceless entries (e.g. <code>template</code>, <code>rachio</code>). State-only entities have no platform to filter on.</td>
+<td>Integration IDs to check. Empty means all integrations. Applies to device-backed entities, registry-backed deviceless entries (e.g. <code>template</code>, <code>rachio</code>), visible-aliased sources, and scripts. State-only entities have no platform to filter on.</td>
 </tr>
 <tr>
 <td>Exclude integrations</td>
@@ -299,14 +299,19 @@ converge on <code>&lt;slug&gt;</code>.</p>
 <code>service: script.&lt;old_key&gt;</code> becomes a stale reference. The Reference Watchdog
 flags those so you can update the callers -- that hand-off is intentional.</p>
 <h3>Exclusion configuration</h3>
-<p>Use exclusion settings to suppress drift notifications for entities with
-intentionally customized names or IDs:</p>
+<p>Use exclusion settings to suppress drift findings for entities with
+intentionally customized names or IDs. An excluded finding's repair or
+notification clears on the next scan:</p>
 <ul>
 <li><strong>Exclude entities</strong>: pick specific entity IDs from a list.</li>
 <li><strong>Entity ID exclude regex</strong>: match entity IDs by pattern (e.g., <code>battery</code> to
 skip all battery entities).</li>
 <li><strong>Entity name exclude regex</strong>: match entity names by pattern.</li>
 <li><strong>Device name exclude regex</strong>: skip entire devices by name.</li>
+<li><strong>Include / Exclude integrations</strong>: keep or skip everything an integration
+owns. A visible-aliased finding belongs to its source entity's integration,
+and a script YAML-key finding to the <code>script</code> integration, so an include
+list without <code>script</code> drops script YAML-key findings.</li>
 </ul>
 <h3>Unmatched include / exclude directives</h3>
 <p>With <strong>Validate include / exclude directives</strong> on (default), any include /
@@ -350,11 +355,16 @@ the built-in <code>script</code> integration linked to the script-list dashboard
 in a notification with it off (script YAML-key drift has no notification
 form). Unmatched include / exclude directives surface as a notification
 regardless of the toggle.</p>
-<p>The repair issue clears on the next scan once the drift is resolved.</p>
+<p><strong>Clearing a finding.</strong> A repair or notification stays until its finding is
+fixed or excluded. Once the entity is back at its default ID / name, or an
+exclude input covers the finding (see <strong>Exclusion configuration</strong> above), the
+next scan removes it. HA's <strong>Ignore</strong> on a repair and dismissing a
+notification don't clear the finding, so either one comes back on the next
+scan.</p>
 <p><strong>Cap.</strong> Repairs can't be dismissed in bulk in HA's UI, so <strong>Max repairs</strong>
 limits the per-run issue count (default 5; 0 = unlimited). Findings over the
-cap are counted in a single summary notification; raise the cap or fix the
-visible issues to surface more.</p>
+cap are counted in a single summary notification; raise the cap, or fix or
+exclude the visible issues, to surface more.</p>
 <p>Disable <strong>Create repairs</strong> to keep notification-only behavior on this
 instance.</p>
 <h2>Developer notes</h2>

@@ -398,6 +398,210 @@ class RecoveryEventsIntegrationBase:
         )
 
 
+class WatchdogFindingLifecycleBase:
+    """A watchdog finding stays surfaced until fixed or excluded.
+
+    Subclass per watchdog integration test file::
+
+        class TestFindingLifecycle(WatchdogFindingLifecycleBase):
+            service = SERVICE
+            setup_integration = staticmethod(_setup_integration)
+            exclusions = {"device": {"exclude_device_name_regex": "x"}}
+
+            def payload(self, **overrides): ...
+            def seed_finding(self, hass, index=0): ...
+            def fix_finding(self, hass, index=0): ...
+
+    Inherited tests drive the real service against HA's real
+    issue registry and notification store, once per surface:
+    fixing or excluding a finding clears it on the next scan, and
+    ignoring its repair or dismissing its notification does not.
+    """
+
+    service: str = ""  # subclass override (e.g. "device_watchdog")
+    # Subclass override: ``staticmethod(_setup_integration)``.
+    setup_integration: Any = None
+    # Scan-payload overrides that each exclude the seeded finding,
+    # keyed by a label for the failure message. Every ``exclude_*``
+    # input the watchdog offers belongs here.
+    exclusions: ClassVar[dict[str, dict[str, Any]]] = {}
+
+    _DOMAIN = "blueprint_toolkit"
+    _INSTANCE_ID = "automation.finding_lifecycle"
+
+    def payload(self, **overrides: Any) -> dict[str, Any]:
+        """Return a service payload that checks the seeded finding."""
+        raise NotImplementedError
+
+    def seed_finding(self, hass: Any, index: int = 0) -> None:
+        """Plant one repairable finding, distinct per ``index``."""
+        raise NotImplementedError
+
+    def fix_finding(self, hass: Any, index: int = 0) -> None:
+        """Resolve the finding ``seed_finding`` planted."""
+        raise NotImplementedError
+
+    async def _scan(self, hass: Any, **overrides: Any) -> None:
+        await hass.services.async_call(
+            self._DOMAIN,
+            self.service,
+            self.payload(
+                instance_id=self._INSTANCE_ID,
+                validate_includes_excludes=False,
+                **overrides,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    def _repairs(self, hass: Any) -> dict[str, Any]:
+        from homeassistant.helpers import issue_registry as ir
+
+        return {
+            issue.issue_id: issue
+            for issue in ir.async_get(hass).issues.values()
+            if issue.domain == self._DOMAIN and "__repair_" in issue.issue_id
+        }
+
+    def _notifications(self, hass: Any) -> dict[str, Any]:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        prefix = f"{self._DOMAIN}_{self.service}__{self._INSTANCE_ID}__"
+        return {
+            notification_id: notification
+            for notification_id, notification in (
+                _async_get_or_create_notifications(hass).items()
+            )
+            if notification_id.startswith(prefix)
+        }
+
+    async def test_ignored_repair_returns_on_next_scan(
+        self,
+        hass: Any,
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        await self._scan(hass, create_repairs=True)
+        [issue_id] = self._repairs(hass)
+        created = self._repairs(hass)[issue_id].created
+
+        ir.async_ignore_issue(hass, self._DOMAIN, issue_id, True)
+        await self._scan(hass, create_repairs=True)
+
+        issue = self._repairs(hass)[issue_id]
+        assert issue.dismissed_version is None
+        assert issue.created == created
+
+    async def test_ignored_repair_stays_visible_at_the_cap(
+        self,
+        hass: Any,
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        await self.setup_integration(hass)
+        self.seed_finding(hass, 0)
+        self.seed_finding(hass, 1)
+        await self._scan(hass, create_repairs=True, max_repairs=1)
+        [issue_id] = self._repairs(hass)
+
+        ir.async_ignore_issue(hass, self._DOMAIN, issue_id, True)
+        await self._scan(hass, create_repairs=True, max_repairs=1)
+
+        visible = [
+            issue.issue_id
+            for issue in self._repairs(hass).values()
+            if issue.dismissed_version is None
+        ]
+        assert visible == [issue_id]
+        titles = [n["title"] for n in self._notifications(hass).values()]
+        assert any("1 additional repairable" in title for title in titles)
+
+    async def test_fixed_repair_clears_on_next_scan(
+        self,
+        hass: Any,
+    ) -> None:
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        await self._scan(hass, create_repairs=True)
+        assert len(self._repairs(hass)) == 1
+
+        self.fix_finding(hass)
+        await self._scan(hass, create_repairs=True)
+
+        assert self._repairs(hass) == {}
+
+    async def test_excluded_repair_clears_on_next_scan(
+        self,
+        hass: Any,
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        for label, exclusion in self.exclusions.items():
+            for ignored in (False, True):
+                await self._scan(hass, create_repairs=True)
+                [issue_id] = self._repairs(hass)
+                if ignored:
+                    ir.async_ignore_issue(hass, self._DOMAIN, issue_id, True)
+
+                await self._scan(hass, create_repairs=True, **exclusion)
+
+                assert self._repairs(hass) == {}, (label, ignored)
+
+    async def test_dismissed_notification_returns_on_next_scan(
+        self,
+        hass: Any,
+    ) -> None:
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        await self._scan(hass)
+        [notification_id] = self._notifications(hass)
+
+        await hass.services.async_call(
+            "persistent_notification",
+            "dismiss",
+            {"notification_id": notification_id},
+            blocking=True,
+        )
+        assert self._notifications(hass) == {}
+        await self._scan(hass)
+
+        assert list(self._notifications(hass)) == [notification_id]
+
+    async def test_fixed_notification_clears_on_next_scan(
+        self,
+        hass: Any,
+    ) -> None:
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        await self._scan(hass)
+        assert len(self._notifications(hass)) == 1
+
+        self.fix_finding(hass)
+        await self._scan(hass)
+
+        assert self._notifications(hass) == {}
+
+    async def test_excluded_notification_clears_on_next_scan(
+        self,
+        hass: Any,
+    ) -> None:
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        for label, exclusion in self.exclusions.items():
+            await self._scan(hass)
+            assert len(self._notifications(hass)) == 1, label
+
+            await self._scan(hass, **exclusion)
+
+            assert self._notifications(hass) == {}, label
+
+
 class HandlerArgparseGuardsBase:
     """Generic argparse guard tests for every handler.
 

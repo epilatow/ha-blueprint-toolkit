@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 # Make custom_components/ importable as a top-level package;
 # the uv-script env doesn't add the repo root to sys.path
@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from conftest import (
     RecoveryEventsIntegrationBase,
+    WatchdogFindingLifecycleBase,
 )
 
 if TYPE_CHECKING:
@@ -790,6 +791,167 @@ class TestFixServiceDisabledDiagnostics:
             blocking=True,
         )
         await hass.async_block_till_done()
+
+
+class TestDisabledDiagnosticsDirectives:
+    """The entity-id regex validator measures what the scan filters.
+
+    The disabled-diagnostics check reads sensors whatever
+    ``monitored_entity_domains`` holds, so a regex matching only
+    one of its findings still matched something -- and nothing
+    else outside the monitored domains counts.
+    """
+
+    async def _regex_reported_unmatched(
+        self,
+        hass: HomeAssistant,
+        **overrides: Any,
+    ) -> bool:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.dw_directives",
+                **overrides,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        return any(
+            "unmatched_directives" in notification_id
+            and "exclude_entity_id_regex" in notification["message"]
+            for notification_id, notification in (
+                _async_get_or_create_notifications(hass).items()
+            )
+        )
+
+    async def test_regex_on_disabled_diagnostic_is_matched(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        TestFindingLifecycle().seed_finding(hass)
+
+        assert not await self._regex_reported_unmatched(
+            hass,
+            monitored_entity_domains=["light"],
+            enabled_checks=["disabled-diagnostics"],
+            exclude_entity_id_regex="last_seen",
+        )
+
+    async def test_regex_ignores_integration_filter_ordering(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        TestFindingLifecycle().seed_finding(hass)
+
+        assert not await self._regex_reported_unmatched(
+            hass,
+            monitored_entity_domains=["light"],
+            enabled_checks=["disabled-diagnostics"],
+            exclude_integrations=["zwave_js"],
+            exclude_entity_id_regex="last_seen",
+        )
+
+    async def test_regex_on_diagnostic_is_unmatched_with_check_off(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        TestFindingLifecycle().seed_finding(hass)
+
+        assert await self._regex_reported_unmatched(
+            hass,
+            monitored_entity_domains=["light"],
+            enabled_checks=["unavailable-entities"],
+            exclude_entity_id_regex="last_seen",
+        )
+
+    async def test_regex_on_unmonitored_entity_stays_unmatched(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        zwave_entry = _mock_config_entry(domain="zwave_js", title="zwave_js")
+        zwave_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=zwave_entry.entry_id,
+            identifiers={("zwave_js", "directive-lamp")},
+            name="Directive Lamp",
+        )
+        er.async_get(hass).async_get_or_create(
+            domain="light",
+            platform="zwave_js",
+            unique_id="directive-lamp",
+            suggested_object_id="directive_lamp",
+            device_id=device.id,
+            config_entry=zwave_entry,
+            original_name="Lamp",
+        )
+
+        assert await self._regex_reported_unmatched(
+            hass,
+            monitored_entity_domains=["sensor"],
+            enabled_checks=["disabled-diagnostics"],
+            exclude_entity_id_regex="directive_lamp",
+        )
+
+
+class TestFindingLifecycle(WatchdogFindingLifecycleBase):
+    service = SERVICE
+    setup_integration = staticmethod(_setup_integration)
+    exclusions: ClassVar[dict[str, dict[str, Any]]] = {
+        "integration": {"exclude_integrations": ["zwave_js"]},
+        "device": {"exclude_device_name_regex": "Lifecycle Lock"},
+        "entity id": {"exclude_entity_id_regex": "last_seen"},
+    }
+
+    def payload(self, **overrides: Any) -> dict[str, Any]:
+        return _valid_payload(
+            enabled_checks=["disabled-diagnostics"],
+            **overrides,
+        )
+
+    def seed_finding(self, hass: HomeAssistant, index: int = 0) -> None:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        zwave_entry = _mock_config_entry(domain="zwave_js", title="zwave_js")
+        zwave_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=zwave_entry.entry_id,
+            identifiers={("zwave_js", f"lifecycle-{index}")},
+            name=f"Lifecycle Lock {index}",
+        )
+        er.async_get(hass).async_get_or_create(
+            domain="sensor",
+            platform="zwave_js",
+            unique_id=f"lifecycle-last-seen-{index}",
+            suggested_object_id=f"lifecycle_{index}_last_seen",
+            device_id=device.id,
+            config_entry=zwave_entry,
+            original_name="Last seen",
+            entity_category=EntityCategory.DIAGNOSTIC,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+
+    def fix_finding(self, hass: HomeAssistant, index: int = 0) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        er.async_get(hass).async_update_entity(
+            f"sensor.lifecycle_{index}_last_seen",
+            disabled_by=None,
+        )
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

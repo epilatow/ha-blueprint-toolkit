@@ -1264,7 +1264,7 @@ class TestValidateEdwDirectives:
         entity_id_candidates: frozenset[str] = frozenset(),
         device_name_candidates: frozenset[str] = frozenset(),
         entity_name_candidates: frozenset[str] = frozenset(),
-        all_registered_entity_ids: frozenset[str] = frozenset(),
+        all_entity_ids: frozenset[str] = frozenset(),
         exclude_entities: list[str] | None = None,
         include_integrations: list[str] | None = None,
         exclude_integrations: list[str] | None = None,
@@ -1274,7 +1274,7 @@ class TestValidateEdwDirectives:
             include_integrations=include_integrations or [],
             exclude_integrations=exclude_integrations or [],
             exclude_entities=exclude_entities or [],
-            all_registered_entity_ids=all_registered_entity_ids,
+            all_entity_ids=all_entity_ids,
             exclude_device_name_regex_lines=helpers.validate_and_join_regex_patterns(
                 device_name_regex,
                 "exclude_device_name_regex",
@@ -1364,14 +1364,14 @@ class TestValidateEdwDirectives:
             out
         )
 
-    def test_exclude_entities_uses_all_registered_entity_ids(self) -> None:
+    def test_exclude_entities_uses_all_entity_ids(self) -> None:
         # ``exclude_entities`` measures against the full
         # registry-id set so users can suppress entities
         # outside the include/exclude_integration scope
         # without false-flag.
         di = self._di(
             exclude_entities=["sensor.out_of_scope_but_real"],
-            all_registered_entity_ids=frozenset(
+            all_entity_ids=frozenset(
                 {"sensor.out_of_scope_but_real", "sensor.something_else"}
             ),
         )
@@ -1509,6 +1509,38 @@ class TestVisibleAliasedEvaluate:
         finding = result.findings[0]
         assert finding.source_device_id is None
         assert finding.source_config_entry_id == "cfg_input"
+
+    def test_device_name_regex_excludes_source(self) -> None:
+        cfg = _config(exclude_device_name_regex="Kitchen")
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [_vcandidate(source_device_name="Kitchen Fan")],
+        )
+        assert result.findings == []
+        assert result.entries_excluded == 1
+
+    def test_deviceless_source_ignores_device_name_regex(self) -> None:
+        cfg = _config(exclude_device_name_regex="Kitchen")
+        result = _evaluate_visible_aliased_entities(
+            cfg,
+            [_vcandidate(source_device_name=None)],
+        )
+        assert len(result.findings) == 1
+
+    def test_source_integration_outside_targets_excluded(self) -> None:
+        cfg = _config(target_integrations=frozenset({"zwave_js"}))
+        candidate = _vcandidate()
+        candidate.source_platform = "lutron_caseta"
+        result = _evaluate_visible_aliased_entities(cfg, [candidate])
+        assert result.findings == []
+        assert result.entries_excluded == 1
+
+    def test_source_integration_in_targets_flagged(self) -> None:
+        cfg = _config(target_integrations=frozenset({"lutron_caseta"}))
+        candidate = _vcandidate()
+        candidate.source_platform = "lutron_caseta"
+        result = _evaluate_visible_aliased_entities(cfg, [candidate])
+        assert len(result.findings) == 1
 
     def test_entry_disabled_skipped(self) -> None:
         cfg = _config()
@@ -2473,6 +2505,22 @@ class TestEvaluateScriptYamlKeyDrift:
             [_script_info(entity_id="script.bathroom", unique_id="bath_fan")],
         )
         assert findings == []
+
+    def test_script_integration_outside_targets_skipped(self) -> None:
+        cfg = _config(target_integrations=frozenset({"zwave_js"}))
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bathroom", unique_id="bath_fan")],
+        )
+        assert findings == []
+
+    def test_script_integration_in_targets_flagged(self) -> None:
+        cfg = _config(target_integrations=frozenset({"script"}))
+        findings = _evaluate_script_yaml_key_drift(
+            cfg,
+            [_script_info(entity_id="script.bathroom", unique_id="bath_fan")],
+        )
+        assert len(findings) == 1
 
 
 class TestBuildScriptYamlKeyRepairSpecs:

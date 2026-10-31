@@ -353,7 +353,10 @@ async def _async_service_layer(
     # Candidate sets for the regex validators. Built from
     # the FULL device + entity registries (no integration
     # filter applied), with the entity-id set narrowed to
-    # ``monitored_entity_domains`` only. The integration
+    # ``monitored_entity_domains`` plus, when the
+    # disabled-diagnostics check runs, every disabled
+    # recommended diagnostic: it reads those in any domain
+    # and the entity-id regex filters them. The integration
     # filter and the regex filter are independent layers
     # from the user's perspective; measuring against the
     # post-integration set would surface "regex matches
@@ -376,6 +379,16 @@ async def _async_service_layer(
         entity_id_candidates = frozenset(
             e.entity_id for e in ent_reg.entities.values()
         )
+    if logic.CHECK_DISABLED_DIAGNOSTICS in enabled_checks:
+        entity_id_candidates |= {
+            e.entity_id
+            for e in ent_reg.entities.values()
+            if e.device_id is not None
+            and e.disabled_by is not None
+            and e.entity_category == "diagnostic"
+            and e.original_name
+            in logic.RECOMMENDED_DIAGNOSTICS.get(e.platform, [])
+        }
 
     directive_inputs = logic.DirectiveInputs(
         enabled=validate_includes_excludes,

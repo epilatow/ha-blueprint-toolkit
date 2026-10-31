@@ -308,11 +308,17 @@ def evaluate_diagnostics(
     Devices with no disabled diagnostics emit nothing; the
     dispatcher's prefix sweep removes any prior-run artifact
     for them. Skips devices with no integrations in
-    RECOMMENDED_DIAGNOSTICS.
+    RECOMMENDED_DIAGNOSTICS, and devices or entities the
+    exclude regexes cover.
     """
     results: list[helpers.PersistentNotification] = []
     repairs: dict[str, DisabledDiagnosticsRepair] = {}
     for device in devices:
+        if helpers.matches_pattern(
+            device.de.name,
+            config.exclude_device_name_regex,
+        ):
+            continue
         integrations = sorted(
             device.de.integration_entities.keys(),
         )
@@ -327,6 +333,14 @@ def evaluate_diagnostics(
                 integration,
                 device.registry_entries,
             )
+        disabled = [
+            d
+            for d in disabled
+            if not helpers.matches_pattern(
+                d.entity_id,
+                config.exclude_entity_id_regex,
+            )
+        ]
         if not disabled:
             continue
         # Shared affected-entity list -- identical text on both
@@ -658,7 +672,10 @@ class DirectiveInputs:
     ``entity_id_candidates`` from the FULL device + entity
     registries (NOT filtered by include / exclude
     integrations), with ``entity_id_candidates`` narrowed to
-    ``monitored_entity_domains`` only. Reason: the
+    ``monitored_entity_domains`` plus, when the
+    disabled-diagnostics check runs, every disabled
+    recommended diagnostic, which it reads in any domain.
+    Reason: the
     integration filter and the regex filter are independent
     layers from the user's perspective, but the actual
     exclusion code applies them in a fixed order

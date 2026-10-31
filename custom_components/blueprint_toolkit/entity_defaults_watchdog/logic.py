@@ -87,6 +87,9 @@ CHECK_ALL: frozenset[str] = frozenset(
     },
 )
 
+# The integration a script YAML-key finding belongs to.
+_SCRIPT_INTEGRATION = "script"
+
 # Domains eligible for the deviceless entity_id drift
 # check. Limited to user-named domains whose entity_ids
 # are derived from a user-supplied name (and therefore
@@ -146,6 +149,10 @@ class Config:
     # carries no real instance binding; the dispatcher
     # silently skips the header in that case.
     instance_id: str | None = None
+    # Integrations the include / exclude inputs leave in scope;
+    # ``None`` means all of them. Read by the checks whose inputs
+    # the handler doesn't already filter by integration.
+    target_integrations: frozenset[str] | None = None
 
 
 @dataclass
@@ -438,6 +445,9 @@ class VisibleAliasedCandidate:
     # deviceless (template / helper) sources.
     source_device_name: str | None = None
     source_device_integrations: tuple[str, ...] = ()
+    # The source entity's integration, which a finding belongs to
+    # for the include / exclude integration inputs.
+    source_platform: str = ""
 
 
 @dataclass
@@ -482,8 +492,8 @@ class VisibleAliasedResult:
     ``entries_kept`` is the count of candidates that passed
     the defensive rules and survived user exclusion (equals
     ``len(findings)``); ``entries_excluded`` is the count
-    filtered out by ``exclude_entities`` /
-    ``exclude_entity_id_regex`` / ``exclude_entity_name_regex``;
+    filtered out by the integration, device-name, and
+    per-entity excludes;
     ``defensive_skipped`` is the count dropped by the defensive
     rules (entry disabled, malformed options, source missing,
     wrapper count, source disabled / hidden). The three plus
@@ -735,6 +745,14 @@ def _is_excluded(
         return True
     return bool(
         helpers.matches_pattern(friendly_name, config.exclude_entity_name_regex)
+    )
+
+
+def _integration_in_scope(config: Config, integration: str) -> bool:
+    """True if the include / exclude integrations keep ``integration``."""
+    return (
+        config.target_integrations is None
+        or integration in config.target_integrations
     )
 
 
@@ -1345,12 +1363,13 @@ def _evaluate_visible_aliased_entities(
     Each candidate is one switch_as_x config entry the handler
     extracted without deciding anything. This applies the
     defensive rules (via ``_is_visible_aliased_candidate``) plus
-    per-entity user exclusions, so a clean visible source with a
-    single wrapper becomes a finding, a user-excluded one is
-    counted as excluded, and everything else is a defensive
-    skip. The ``exclude_entities`` / ``exclude_entity_id_regex``
-    / ``exclude_entity_name_regex`` config fields are shared
-    with the device-attached + deviceless paths.
+    user exclusions, so a clean visible source with a single
+    wrapper becomes a finding, a user-excluded one is counted as
+    excluded, and everything else is a defensive skip. The
+    excludes apply to the source entity:
+    ``target_integrations`` for the integration inputs, plus the
+    device-name and per-entity config fields shared with the
+    device-attached + deviceless paths.
     """
     findings: list[VisibleAliasedEntityFinding] = []
     excluded = 0
@@ -1365,7 +1384,14 @@ def _evaluate_visible_aliased_entities(
         # passes the guard above.
         assert c.source_entity_id is not None
         assert c.target_domain is not None
-        if _is_excluded(config, c.source_entity_id, c.source_friendly_name):
+        if (
+            not _integration_in_scope(config, c.source_platform)
+            or helpers.matches_pattern(
+                c.source_device_name or "",
+                config.exclude_device_name_regex,
+            )
+            or _is_excluded(config, c.source_entity_id, c.source_friendly_name)
+        ):
             excluded += 1
             continue
         findings.append(
@@ -1414,10 +1440,13 @@ def _evaluate_script_yaml_key_drift(
     in the UI, which slugifies the alias into the block key --
     registers ``unique_id == K`` and service ``script.K``;
     renaming the entity id to ``script.<slug>`` (slug != K)
-    leaves two names for one script. Per-entity exclusions
-    apply via the shared ``_is_excluded``. An entry with no
+    leaves two names for one script. The integration excludes
+    apply to the ``script`` integration, and per-entity
+    exclusions via the shared ``_is_excluded``. An entry with no
     ``unique_id`` is skipped (nothing to compare or rename).
     """
+    if not _integration_in_scope(config, _SCRIPT_INTEGRATION):
+        return []
     findings: list[ScriptYamlKeyDriftFinding] = []
     for info in script_infos:
         if not info.unique_id:
@@ -1498,27 +1527,30 @@ class DirectiveInputs:
     actual exclusion code -- a user with both layers
     configured shouldn't see "regex matches nothing" warnings
     when the integration filter already pruned the entities
-    the regex would have caught.
+    the regex would have caught. The entity sets also carry
+    the deviceless inputs, which the excludes filter too.
 
-    - ``all_registered_entity_ids``: every entity ID the
-      registry knows about (used for ``exclude_entities``).
+    - ``all_entity_ids``: every entity ID the registry knows
+      about, plus state-only deviceless entities (used for
+      ``exclude_entities``).
     - ``device_name_candidates``: every device's
       ``name_by_user or name`` the device registry knows
       about.
-    - ``entity_id_candidates``: every entity ID in the
-      registry.
+    - ``entity_id_candidates``: the same set as
+      ``all_entity_ids``.
     - ``entity_name_candidates``: the union of ``name`` and
       ``original_name`` across every entity-registry entry
       (NOT ``name_by_user``, which is device-registry only;
       the entity registry's user-set name lives in
-      ``name``).
+      ``name``), plus each deviceless entity's effective
+      name.
     """
 
     enabled: bool
     include_integrations: list[str]
     exclude_integrations: list[str]
     exclude_entities: list[str]
-    all_registered_entity_ids: frozenset[str]
+    all_entity_ids: frozenset[str]
     exclude_device_name_regex_lines: list[helpers.JoinedRegexLine]
     exclude_entity_id_regex_lines: list[helpers.JoinedRegexLine]
     exclude_entity_name_regex_lines: list[helpers.JoinedRegexLine]
@@ -1871,7 +1903,7 @@ def _build_script_yaml_key_repair_specs(
                 # script is owned by the built-in ``script``
                 # integration, which the attribution header
                 # links to the script-list dashboard.
-                integrations=("script",),
+                integrations=(_SCRIPT_INTEGRATION,),
                 repair_callback=helpers.FixService(
                     service_name=FixServices.SCRIPT_YAML_KEY_DRIFT.value,
                     notification_id=nid,
@@ -1935,7 +1967,7 @@ def _validate_edw_directives(
         helpers.validate_directives_item(
             field="exclude_entities",
             directives=inputs.exclude_entities,
-            candidates=inputs.all_registered_entity_ids,
+            candidates=inputs.all_entity_ids,
             reason="no entity matches",
         ),
     )
@@ -1968,7 +2000,7 @@ _DISABLED_DIRECTIVES = DirectiveInputs(
     include_integrations=[],
     exclude_integrations=[],
     exclude_entities=[],
-    all_registered_entity_ids=frozenset(),
+    all_entity_ids=frozenset(),
     exclude_device_name_regex_lines=[],
     exclude_entity_id_regex_lines=[],
     exclude_entity_name_regex_lines=[],

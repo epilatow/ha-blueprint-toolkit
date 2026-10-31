@@ -489,6 +489,11 @@ async def process_repairs_with_sweep(
     artifact (notification or issue) under ``sweep_prefix`` not in
     the current batch is removed from its respective backend.
 
+    A repair stays until its finding is fixed or excluded, so
+    publishing one clears HA's ignored flag: an ignored repair
+    comes back on the next scan, and no cap slot goes to an issue
+    the Repairs panel hides.
+
     ``repair_cap`` of 0 disables the cap. Above zero, the first N
     repair specs surface as issues; the rest are summarised by a
     single cap-summary notification under the per-instance
@@ -549,9 +554,9 @@ async def process_repairs_with_sweep(
                     ),
                     message=(
                         f"The per-run repair cap is `{repair_cap}`. "
-                        "Raise the `max_repairs` blueprint input or "
-                        "fix the visible repairs first to surface "
-                        "more."
+                        "Raise the `max_repairs` blueprint input, or "
+                        "fix or exclude the visible repairs, to "
+                        "surface more."
                     ),
                     instance_id=cap_instance_id,
                 ),
@@ -606,6 +611,11 @@ async def _dispatch_repairs_with_sweep(
     unconditionally; the notification-side dispatcher in
     ``process_persistent_notifications`` carries its own
     skip-when-identical guard for that reason.
+
+    The ignored flag survives that re-issuance, so each issue is
+    un-ignored right after. ``async_ignore`` returns early the
+    same way when the flag already matches, so only an issue the
+    user ignored since the last scan makes this an update.
     """
     from homeassistant.helpers import (
         issue_registry as ir,
@@ -645,6 +655,7 @@ async def _dispatch_repairs_with_sweep(
                 {"notification_id": fix.notification_id},
             ),
         )
+        ir.async_ignore_issue(hass, DOMAIN, spec.notification_id, False)
 
     registry = ir.async_get(hass)
     for issue in list(registry.issues.values()):

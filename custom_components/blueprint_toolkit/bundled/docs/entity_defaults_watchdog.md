@@ -56,7 +56,7 @@ None.
 | Parameter                             | Description                                                                                                                                                                                                                                                      |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), `visible-aliased-entity`, `script-yaml-key`, or any combination. Empty means all.                                                                                       |
-| Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities and to registry-backed deviceless entries (e.g. `template`, `rachio`). State-only entities have no platform to filter on.                                              |
+| Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities, registry-backed deviceless entries (e.g. `template`, `rachio`), visible-aliased sources, and scripts. State-only entities have no platform to filter on.              |
 | Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations.                                                                                                                                                                                    |
 | Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                                                                           |
 | Exclude entities                      | Specific entities to exclude from all checks.                                                                                                                                                                                                                    |
@@ -246,14 +246,19 @@ flags those so you can update the callers -- that hand-off is intentional.
 
 ### Exclusion configuration
 
-Use exclusion settings to suppress drift notifications for entities with
-intentionally customized names or IDs:
+Use exclusion settings to suppress drift findings for entities with
+intentionally customized names or IDs. An excluded finding's repair or
+notification clears on the next scan:
 
 - **Exclude entities**: pick specific entity IDs from a list.
 - **Entity ID exclude regex**: match entity IDs by pattern (e.g., `battery` to
   skip all battery entities).
 - **Entity name exclude regex**: match entity names by pattern.
 - **Device name exclude regex**: skip entire devices by name.
+- **Include / Exclude integrations**: keep or skip everything an integration
+  owns. A visible-aliased finding belongs to its source entity's integration,
+  and a script YAML-key finding to the `script` integration, so an include
+  list without `script` drops script YAML-key findings.
 
 ### Unmatched include / exclude directives
 
@@ -302,12 +307,17 @@ in a notification with it off (script YAML-key drift has no notification
 form). Unmatched include / exclude directives surface as a notification
 regardless of the toggle.
 
-The repair issue clears on the next scan once the drift is resolved.
+**Clearing a finding.** A repair or notification stays until its finding is
+fixed or excluded. Once the entity is back at its default ID / name, or an
+exclude input covers the finding (see **Exclusion configuration** above), the
+next scan removes it. HA's **Ignore** on a repair and dismissing a
+notification don't clear the finding, so either one comes back on the next
+scan.
 
 **Cap.** Repairs can't be dismissed in bulk in HA's UI, so **Max repairs**
 limits the per-run issue count (default 5; 0 = unlimited). Findings over the
-cap are counted in a single summary notification; raise the cap or fix the
-visible issues to surface more.
+cap are counted in a single summary notification; raise the cap, or fix or
+exclude the visible issues, to surface more.
 
 Disable **Create repairs** to keep notification-only behavior on this
 instance.

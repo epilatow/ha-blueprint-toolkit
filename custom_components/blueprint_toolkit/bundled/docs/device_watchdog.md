@@ -91,12 +91,17 @@ Other finding categories (unavailable / stale devices) keep using
 notifications regardless of the toggle -- those don't have a deterministic
 single-click fix.
 
-The repair issue clears on the next scan once the entity is re-enabled.
+**Clearing a finding.** A repair or notification stays until its finding is
+fixed or excluded. Once the device recovers or the entity is re-enabled, or
+**Exclude integrations**, **Device name exclude regex**, or **Entity ID
+exclude regex** covers the finding, the next scan removes it. HA's **Ignore**
+on a repair and dismissing a notification don't clear the finding, so either
+one comes back on the next scan.
 
 **Cap.** Repairs can't be dismissed in bulk in HA's UI, so **Max repairs**
 limits the per-run issue count (default 5; 0 = unlimited). Findings over the
-cap are counted in a single summary notification; raise the cap or fix the
-visible issues to surface more.
+cap are counted in a single summary notification; raise the cap, or fix or
+exclude the visible issues, to surface more.
 
 Disable **Create repairs** to keep notification-only behavior on this
 instance.
