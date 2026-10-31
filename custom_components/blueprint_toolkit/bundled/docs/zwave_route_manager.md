@@ -59,7 +59,7 @@ Home Assistant **Z-Wave JS** addon (`core_zwave_js`), which bundles
 | Pending timeout (hours)      | Time before raising a notification on a node whose route hasn't been reflected                                                             |
 | Default route speed          | `auto`, `100k`, `40k`, or `9600` (used when neither repeater nor client specifies one)                                                     |
 | Max notifications            | Cap on per-run issue notifications. Default 10. 0 = unlimited                                                                              |
-| Debug logging                | Per-reconcile log.warning line under `[ZRM: ...]`                                                                                          |
+| Debug logging                | Per-reconcile WARNING log line under `[ZRM: ...]`                                                                                          |
 
 ## Usage notes
 
@@ -390,7 +390,7 @@ reproduced a clean trigger.
 The two-part fix (shipped):
 
 1. **Skip LR nodes in the per-node route refresh**
-   (`zwave_js_ui_bridge.get_nodes_with_fresh_routes` and the mirror in the
+   (`ZwaveJsUiClient.get_nodes_with_fresh_routes` and the mirror in the
    bundled `zwavectl.py`). LR is a direct-star topology with no mesh, no
    priority routes, and no SUC return routes, so the queries are meaningless
    regardless of any firmware issue. If LR priority-route calls were part of
@@ -467,8 +467,8 @@ for any USB device in an unknown state; requires hardware access.
 - `defaults:` top-level YAML block. Reserved by having `routes:` as the only
   recognised top-level key.
 
-- Migration from the socket.io bridge to zwave-js-server-python once
-  zwave-js-server PR 1417 merges and schema 47 ships.
+- Migration from the socket.io bridge to `zwave-js-server-python` once that
+  client wraps the priority-route commands.
 
 - **Auto-reset of a wedged controller**. When the circuit breaker trips
   repeatedly (e.g. N opens within M hours), we would like a software-only
@@ -520,6 +520,6 @@ for any USB device in an unknown state; requires hardware access.
     priority-route calls were the trigger, but if they were, our code no
     longer issues them); (b) the recovery recipe has exactly one successful
     data point so far, which isn't enough to trust it for unattended
-    operation. Revisit once either the wedge recurs despite Fix B (so we know
-    the recipe is worth automating) or we gather more data points confirming
-    the recipe is reliable.
+    operation. Revisit once either the wedge recurs despite the LR filter (so
+    we know the recipe is worth automating) or we gather more data points
+    confirming the recipe is reliable.

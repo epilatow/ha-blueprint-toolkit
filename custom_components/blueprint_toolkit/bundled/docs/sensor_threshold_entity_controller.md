@@ -26,6 +26,12 @@ The controlled entities are driven on and off together as a single unit.
   "Call service" steps) on every action, with the pre-built message exposed as
   a `{{ message }}` variable inside the chain.
 
+## Requirements
+
+- One or more numeric `sensor` entities.
+- One or more `switch`, `fan`, `light`, or `input_boolean` entities to
+  control.
+
 ## Usage
 
 1. Go to **Settings > Automations & Scenes > Blueprints**.
@@ -50,14 +56,14 @@ controlled entities.
 
 ### Optional
 
-| Parameter               | Default                     | Description                                                                                                                                 |
-| ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Sampling Window**     | 300s                        | Rolling window (in seconds) for min/max calculation.                                                                                        |
-| **Disable Window**      | 10s                         | Time window for double-off detection. Two manual switch-off operations within this window disable the sensor override. Set to 0 to disable. |
-| **Auto-Off Timeout**    | 30m                         | Minutes before auto-off after manual switch activation. Set to 0 to disable.                                                                |
-| **Notification Action** | *(empty)*                   | Action(s) to run on a notification (e.g. `notify.mobile_app_*`, a notify group, a script call). Receives the message via `{{ message }}`    |
-| **Notification Prefix** | `'STEC: '`                  | Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.                      |
-| **Notification Suffix** | `' at YYYY-MM-DD HH:mm:ss'` | Text appended to notifications. Supports timestamp tokens (see below). Quotes show the leading space in the default.                        |
+| Parameter                      | Default                     | Description                                                                                                                                 |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sampling Window (seconds)**  | 300s                        | Rolling window (in seconds) for min/max calculation.                                                                                        |
+| **Disable Window (seconds)**   | 10s                         | Time window for double-off detection. Two manual switch-off operations within this window disable the sensor override. Set to 0 to disable. |
+| **Auto-Off Timeout (minutes)** | 30m                         | Minutes before auto-off after manual switch activation. Set to 0 to disable.                                                                |
+| **Notification Action**        | *(empty)*                   | Action(s) to run on a notification (e.g. `notify.mobile_app_*`, a notify group, a script call). Receives the message via `{{ message }}`    |
+| **Notification Prefix**        | `'STEC: '`                  | Text prepended to notifications. Supports timestamp tokens (see below). Quotes show the trailing space in the default.                      |
+| **Notification Suffix**        | `' at YYYY-MM-DD HH:mm:ss'` | Text appended to notifications. Supports timestamp tokens (see below). Quotes show the leading space in the default.                        |
 
 ### Timestamp Tokens
 
@@ -129,8 +135,8 @@ To view:
 ### Debug logging (opt-in)
 
 The blueprint includes a **Debug Logging** toggle (default: off). When
-enabled, the service emits a `log.warning` message with full decision context
-on every invocation.
+enabled, the service logs a WARNING message with full decision context on
+every invocation.
 
 To enable:
 
@@ -153,20 +159,6 @@ Example output for an automation named "Main Bath Fan Controller":
   "Auto-off after 1 minute(s)"
 ```
 
-Uses `log.warning` (not `log.info`) because HA's default log level for custom
+It logs at WARNING rather than INFO because HA's default log level for custom
 components is WARNING. Toggling the flag produces immediate output without
 editing `configuration.yaml`.
-
-### Logger configuration (optional)
-
-For more verbose handler output without the debug flag, add the following to
-`configuration.yaml`:
-
-```yaml
-logger:
-  default: warning
-  logs:
-    custom_components.blueprint_toolkit.sensor_threshold_entity_controller: info
-```
-
-This enables `log.info` level messages from the STEC handler.

@@ -360,10 +360,11 @@ _UNUSED_DEVICELESS_SKIP_DOMAINS: frozenset[str] = frozenset(
 
 
 # Best-guess "where would the user edit this" file map for
-# YAML-defined deviceless entities (rendered in the per-domain
-# rollup). When an entity has ``config_entry_id is None`` we fall
-# back to this map keyed by the entity-registry platform; misses
-# render as "(YAML-defined; file not auto-detected)".
+# YAML-defined deviceless entities (rendered in the
+# per-integration rollup). When an entity has
+# ``config_entry_id is None`` we fall back to this map keyed by
+# the entity-registry platform; misses render as
+# "(YAML-defined; file not auto-detected)".
 _PLATFORM_TO_YAML_FILE: dict[str, str] = {
     "automation": "automations.yaml",
     "script": "scripts.yaml",

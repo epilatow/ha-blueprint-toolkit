@@ -73,6 +73,12 @@ already ON, starts the auto-off timer.</li>
 &quot;Call service&quot; steps) on every action, with the pre-built message exposed as
 a <code>{{ message }}</code> variable inside the chain.</li>
 </ul>
+<h2>Requirements</h2>
+<ul>
+<li>One or more numeric <code>sensor</code> entities.</li>
+<li>One or more <code>switch</code>, <code>fan</code>, <code>light</code>, or <code>input_boolean</code> entities to
+control.</li>
+</ul>
 <h2>Usage</h2>
 <ol>
 <li>Go to <strong>Settings &gt; Automations &amp; Scenes &gt; Blueprints</strong>.</li>
@@ -122,17 +128,17 @@ controlled entities.</p>
 </thead>
 <tbody>
 <tr>
-<td><strong>Sampling Window</strong></td>
+<td><strong>Sampling Window (seconds)</strong></td>
 <td>300s</td>
 <td>Rolling window (in seconds) for min/max calculation.</td>
 </tr>
 <tr>
-<td><strong>Disable Window</strong></td>
+<td><strong>Disable Window (seconds)</strong></td>
 <td>10s</td>
 <td>Time window for double-off detection. Two manual switch-off operations within this window disable the sensor override. Set to 0 to disable.</td>
 </tr>
 <tr>
-<td><strong>Auto-Off Timeout</strong></td>
+<td><strong>Auto-Off Timeout (minutes)</strong></td>
 <td>30m</td>
 <td>Minutes before auto-off after manual switch activation. Set to 0 to disable.</td>
 </tr>
@@ -249,8 +255,8 @@ entity.</li>
 </ol>
 <h3>Debug logging (opt-in)</h3>
 <p>The blueprint includes a <strong>Debug Logging</strong> toggle (default: off). When
-enabled, the service emits a <code>log.warning</code> message with full decision context
-on every invocation.</p>
+enabled, the service logs a WARNING message with full decision context on
+every invocation.</p>
 <p>To enable:</p>
 <ol>
 <li>Go to <strong>Settings &gt; Automations &amp; Scenes</strong>.</li>
@@ -269,17 +275,8 @@ on every invocation.</p>
   baseline=None auto_off=2026-02-21T15:19:00 samples=5 -&gt; TURN_OFF
   &quot;Auto-off after 1 minute(s)&quot;
 </code></pre>
-<p>Uses <code>log.warning</code> (not <code>log.info</code>) because HA's default log level for custom
+<p>It logs at WARNING rather than INFO because HA's default log level for custom
 components is WARNING. Toggling the flag produces immediate output without
 editing <code>configuration.yaml</code>.</p>
-<h3>Logger configuration (optional)</h3>
-<p>For more verbose handler output without the debug flag, add the following to
-<code>configuration.yaml</code>:</p>
-<pre><code class="language-yaml">logger:
-  default: warning
-  logs:
-    custom_components.blueprint_toolkit.sensor_threshold_entity_controller: info
-</code></pre>
-<p>This enables <code>log.info</code> level messages from the STEC handler.</p>
 </body>
 </html>

@@ -184,8 +184,8 @@ blueprint:
     debug_logging:
       name: Debug logging
       description: >
-        Enable debug logging. When enabled, emits a
-        log.warning line with stats on every evaluation.
+        Enable debug logging. When enabled, logs a
+        WARNING line with stats on every evaluation.
         Check Settings > System > Logs to view output.
       default: false
       selector:

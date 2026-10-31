@@ -39,6 +39,10 @@ resolved.
   device name + ID drift)
 - Optional debug logging
 
+## Requirements
+
+None.
+
 ## Usage
 
 1. Install the automation (see main README)
@@ -268,15 +272,6 @@ After the rename, any automation or script still calling the old
 `service: script.<old_key>` becomes a stale reference. The Reference Watchdog
 flags those so you can update the callers -- that hand-off is intentional.
 
-### Notification panel ordering
-
-The order of notifications in the HA notification panel may change between
-evaluation runs. This is because each run re-creates all active notifications
-(to update content if drift changed), which updates their timestamps. Since
-all creates happen within milliseconds, the panel's display order is
-effectively random. The same devices are shown -- only the panel ordering
-varies.
-
 ### Exclusion configuration
 
 Use exclusion settings to suppress drift notifications for entities with
@@ -336,10 +331,10 @@ findings (deviceless entity-ID drift, script YAML-key drift) carry the owning
 integration but no device line -- the script YAML-key fix, for instance, shows
 the built-in `script` integration linked to the script-list dashboard.
 
-Other drift categories (unmatched include / exclude directives, etc.) continue
-to surface as notifications regardless of the toggle. The per-device summary
-notification keeps its grouped body so users who want the full list still get
-it; the per-entity repair issues run alongside.
+Each fixable finding surfaces in one place: as a Repair with the toggle on, or
+in a notification with it off (script YAML-key drift has no notification
+form). Unmatched include / exclude directives surface as a notification
+regardless of the toggle.
 
 The repair issue auto-clears once the underlying drift is resolved (next scan
 sees the entity at its default ID / name and the dispatcher's sweep removes
@@ -366,6 +361,7 @@ Tools > States to find it.
 
 - `last_run`: ISO timestamp of last evaluation
 - `runtime`: Evaluation time in seconds
+- `last_trigger`: `periodic` for a scheduled scan, otherwise `manual`
 - `integrations`: Total integrations discovered
 - `devices`: Total devices discovered
 - `entities`: Total entities discovered for included devices
@@ -396,8 +392,8 @@ Tools > States to find it.
 ### Debug logging
 
 Enable the **Debug Logging** toggle in the blueprint. Debug output appears in
-**Settings > System > Logs**. Uses `log.warning` level (HA's default for
-custom components).
+**Settings > System > Logs**, logged at WARNING level (HA's default for custom
+components).
 
 Example output for an automation named "Entity Defaults Watchdog":
 

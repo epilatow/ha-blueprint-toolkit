@@ -191,9 +191,10 @@ config-file parse error and a "Z-Wave JS unavailable" state each have theirs.
 ### Diagnostic state entity
 
 `blueprint_toolkit.zpm_<slug>_state` carries, per reconcile: `last_run`,
-`runtime`, `last_trigger`, `last_config_mtime`, `devices`, `writes_planned`,
-`writes_issued`, `pending`, `converged`, `pending_params`, `plan_warnings`,
-`plan_errors`, `unused`, and a human-readable `pending_writes` list.
+`runtime`, `last_trigger`, `last_reconcile`, `last_config_mtime`, `devices`,
+`writes_planned`, `writes_issued`, `pending`, `converged`, `pending_params`,
+`plan_warnings`, `plan_errors`, `unused`, and a human-readable
+`pending_writes` list.
 
 ### Debug log format
 

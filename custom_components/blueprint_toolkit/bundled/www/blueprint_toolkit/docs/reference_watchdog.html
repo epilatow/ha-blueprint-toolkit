@@ -85,7 +85,7 @@ referenced -- with a per-device persistent notification listing the device's
 enabled entities for grep-and-confirm</li>
 <li>Optional detection of <strong>unused deviceless entities</strong> -- entity-registry rows
 with no device binding (utility meters, scripts, helpers) that aren't
-referenced anywhere -- as a per-entity-domain rollup notification</li>
+referenced anywhere -- as a per-integration rollup notification</li>
 <li>Unified entity exclusion list that applies to both sides (source owner and
 target value)</li>
 <li>Source integration exclusion for bulk-silencing of specific config-entry
@@ -134,12 +134,12 @@ add-on the same bodies show the filename as a plain <code>code-spanned</code> pa
 <td>Subset of <code>broken-references</code>, <code>source-orphans</code>, <code>unused-devices</code>, <code>unused-deviceless-entities</code>. Default set is <code>broken-references</code> + <code>source-orphans</code>. The two <code>unused-*</code> checks are noisier prune-cleanup signals and require explicit opt-in. An empty selection means &quot;all checks&quot; (DW-style empty-means-all).</td>
 </tr>
 <tr>
-<td>Exclude devices by name (regex)</td>
+<td>Exclude devices by name (regex, multi-line)</td>
 <td>Multi-line regex patterns matched against device names. A matching device is excluded from the unused-devices check (broken-references and source-orphans are unaffected).</td>
 </tr>
 <tr>
-<td>Exclude voice exposure</td>
-<td>When enabled, the <code>homeassistant.exposed_entities</code> storage scan is skipped from the reference set. By default an entity exposed to a voice assistant counts as &quot;referenced&quot; for the unused-* checks; toggle this off if you want voice-only entities surfaced in the unused-* findings.</td>
+<td>Exclude voice-assistant exposure from the reference set</td>
+<td>When enabled, the <code>homeassistant.exposed_entities</code> storage scan is skipped from the reference set. By default an entity exposed to a voice assistant counts as &quot;referenced&quot; for the unused-* checks; enable this if you want voice-only entities surfaced in the unused-* findings.</td>
 </tr>
 <tr>
 <td>Check disabled entities</td>
@@ -185,7 +185,7 @@ add-on the same bodies show the filename as a plain <code>code-spanned</code> pa
 </tr>
 <tr>
 <td>A family of entity IDs matching a pattern</td>
-<td>Entity ID exclude regex</td>
+<td>Exclude entity regex</td>
 </tr>
 </tbody>
 </table>
@@ -243,9 +243,9 @@ text), fix the reference, then reload the integration or restart HA.</p>
 <p>Some legacy YAML integrations -- notably older versions of <code>plant</code> -- don't
 register their entities in the entity registry at all, so adding the
 integration name to <strong>Exclude integrations</strong> can miss findings whose owners
-end up with <code>integration=None</code>. The fallback is <strong>Entity ID exclude regex</strong>
-(e.g. <code>^sensor\.plant_sensor_</code>) which silences findings by ref value rather
-than by source.</p>
+end up with <code>integration=None</code>. The fallback is <strong>Exclude entity regex</strong> (e.g.
+<code>^sensor\.plant_sensor_</code>) which silences findings by ref value rather than by
+source.</p>
 <h3>Source orphans</h3>
 <p>A <em>source orphan</em> is a registry entry whose backing YAML block (or UI-helper
 storage record) has been removed or renamed, leaving the registry entry
@@ -351,8 +351,8 @@ partially-excluded device's body lists only the entities the user hasn't
 already silenced.</p>
 <p>To silence false positives:</p>
 <ul>
-<li><strong>Exclude devices by name (regex)</strong> -- per-line regex matched against the
-effective device name (case-insensitive).</li>
+<li><strong>Exclude devices by name (regex, multi-line)</strong> -- per-line regex matched
+against the effective device name (case-insensitive).</li>
 <li><strong>Exclude integrations</strong> -- silences both unused-devices AND unused-
 deviceless-entities for that integration.</li>
 <li><strong>Exclude entities</strong> / <strong>Exclude entity regex</strong> -- per-entity silencing also
@@ -407,8 +407,8 @@ platform.</li>
 UI (<code>homeassistant.exposed_entities</code> storage with at least one
 <code>should_expose: true</code> entry) counts as &quot;referenced&quot; for the unused-* checks
 -- otherwise every voice-only entity would surface as unused.</p>
-<p>Toggle <strong>Exclude voice exposure</strong> to disable that scan. With the toggle off,
-voice-only entities flip to flagged. The other extended sources
+<p>Enable <strong>Exclude voice-assistant exposure from the reference set</strong> to drop
+that scan, so voice-only entities get flagged. The other extended sources
 (<code>.storage/energy</code>, <code>.storage/person</code>) always run -- they're authoritative
 config the user controls directly.</p>
 <p><code>.storage/person</code> plays a second, independent role: it is also scanned as a
@@ -419,12 +419,6 @@ its <code>Integrations:</code> link). The extended-reference-set role above (res
 still-valid bound tracker from the unused-* checks) and this
 broken-references role are separate: a valid binding rescues, a dangling one
 is flagged.</p>
-<h3>Notification panel ordering</h3>
-<p>The order of notifications in the HA notification panel may change between
-evaluation runs. Each run re-creates active notifications (to update content
-if findings changed), which updates their timestamps. Since all creates happen
-within milliseconds, the panel's display order is effectively random. The same
-owners are shown -- only the panel ordering varies.</p>
 <h3>File editor add-on links</h3>
 <p>Every <code>Source: &lt;path&gt;</code> line in a RW notification body renders the same way:
 plain <code>`&lt;path&gt;`</code> text by default, or a markdown link to the configurator
@@ -528,6 +522,10 @@ broken-entity false positive.</p>
 <td>Wall-clock seconds the evaluation took</td>
 </tr>
 <tr>
+<td><code>last_trigger</code></td>
+<td><code>periodic</code> for a scheduled scan, otherwise <code>manual</code></td>
+</tr>
+<tr>
 <td><code>paths_walked</code></td>
 <td>Number of source files the scanner walked this run</td>
 </tr>
@@ -609,7 +607,7 @@ broken-entity false positive.</p>
 </tr>
 <tr>
 <td><code>unused_deviceless_count</code></td>
-<td>Deviceless entities flagged by the unused-deviceless-entities check this run, summed across all domains</td>
+<td>Deviceless entities flagged by the unused-deviceless-entities check this run, summed across all integrations</td>
 </tr>
 </tbody>
 </table>
@@ -724,8 +722,8 @@ integrations do this today, but custom integrations might.</li>
 </ul>
 <h3>Debug logging</h3>
 <p>Enable the <strong>Debug logging</strong> toggle in the blueprint. Debug output appears in
-<strong>Settings &gt; System &gt; Logs</strong>. Uses <code>log.warning</code> level (HA's default for
-custom components).</p>
+<strong>Settings &gt; System &gt; Logs</strong>, logged at WARNING level (HA's default for custom
+components).</p>
 <p>Example output for an automation named &quot;Reference Watchdog&quot;:</p>
 <pre><code class="language-text">[RW: Reference Watchdog] owners=338 with_issues=43
   findings=85 refs=819 (struct=641 jinja=59 sniff=119
@@ -739,7 +737,7 @@ as source orphans. The <code>unused_devices</code> / <code>unused_devices_exclud
 used by DW and EDW: 12 devices entered the candidate pool, 3 were silenced by
 <code>exclude_integrations</code> or <code>exclude_device_name_regex</code>, and 2 of the surviving
 9 were flagged as actually unused. <code>unused_deviceless=4</code> is the total number
-of deviceless entities flagged across the per-domain rollups.</p>
+of deviceless entities flagged across the per-integration rollups.</p>
 <h3>Known limitations</h3>
 <p>Documented gaps that won't be fixed in v1 without a design change:</p>
 <ul>
@@ -780,9 +778,6 @@ exposure -- add it to <strong>Exclude entities</strong> if needed.</li>
 respective registries.</li>
 <li><strong>Per-view dashboard attribution.</strong> Drill down inside lovelace configs to
 attribute findings to the specific view rather than the whole dashboard.</li>
-<li><strong>File Editor integration URLs.</strong> If the File Editor addon URL pattern can
-be constructed deterministically, generate clickable &quot;open in editor&quot; links
-for YAML-only owners.</li>
 </ul>
 </body>
 </html>

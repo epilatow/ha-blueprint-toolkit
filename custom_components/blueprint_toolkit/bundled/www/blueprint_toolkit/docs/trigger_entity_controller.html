@@ -74,6 +74,10 @@ auto-off events; the action chain receives the pre-built body as a
 are missing or renamed</li>
 <li>Optional debug logging</li>
 </ul>
+<h2>Requirements</h2>
+<p>None, unless <strong>Trigger Period</strong> or <strong>Trigger Disabling Period</strong> is set to
+anything other than <code>always</code>. Those settings need the <code>sun.sun</code> entity from
+the Sun integration.</p>
 <h2>Usage</h2>
 <ol>
 <li>Install the automation (see main README)</li>
@@ -93,7 +97,7 @@ are missing or renamed</li>
 </thead>
 <tbody>
 <tr>
-<td>Controlled entities</td>
+<td>Controlled Entities</td>
 <td>Entities to turn on and off</td>
 </tr>
 </tbody>
@@ -108,51 +112,51 @@ are missing or renamed</li>
 </thead>
 <tbody>
 <tr>
-<td>Auto-off delay</td>
+<td>Auto-Off Delay (minutes)</td>
 <td>Minutes after triggers clear to turn off. Resets on new trigger.</td>
 </tr>
 <tr>
-<td>Auto-off disabling entities</td>
+<td>Auto-Off Disabling Entities</td>
 <td>When any is &quot;on&quot;, suppresses auto-off for full manual control</td>
 </tr>
 <tr>
-<td>Trigger entities</td>
+<td>Trigger Entities</td>
 <td>Binary sensors that trigger activation</td>
 </tr>
 <tr>
-<td>Trigger period</td>
+<td>Trigger Period</td>
 <td>When triggers activate: always, night-time, day-time</td>
 </tr>
 <tr>
-<td>Trigger forces on</td>
+<td>Trigger Forces On</td>
 <td>Re-enable if turned off while trigger active</td>
 </tr>
 <tr>
-<td>Trigger disabling entities</td>
+<td>Trigger Disabling Entities</td>
 <td>When any is &quot;on&quot;, suppresses triggers</td>
 </tr>
 <tr>
-<td>Trigger disabling period</td>
+<td>Trigger Disabling Period</td>
 <td>When disabling entities are checked</td>
 </tr>
 <tr>
-<td>Notification action</td>
+<td>Notification Action</td>
 <td>Action(s) to run on a notification (e.g. <code>notify.mobile_app_*</code>, a notify group, a script call). Receives the message via <code>{{ message }}</code></td>
 </tr>
 <tr>
-<td>Notification prefix</td>
+<td>Notification Prefix</td>
 <td>Prepended to messages (supports timestamp tokens)</td>
 </tr>
 <tr>
-<td>Notification suffix</td>
+<td>Notification Suffix</td>
 <td>Appended to messages (supports timestamp tokens)</td>
 </tr>
 <tr>
-<td>Notification events</td>
+<td>Notification Events</td>
 <td>Which actions notify: triggered-on, forced-on, auto-off</td>
 </tr>
 <tr>
-<td>Debug logging</td>
+<td>Debug Logging</td>
 <td>Log debug info to HA logs</td>
 </tr>
 </tbody>
@@ -163,12 +167,12 @@ are missing or renamed</li>
 <p>A hallway light that always turns on with motion, except at night when the
 bedroom is occupied:</p>
 <ul>
-<li><strong>Controlled entities</strong>: <code>light.hallway</code></li>
-<li><strong>Auto-off delay</strong>: 2 minutes</li>
-<li><strong>Trigger entities</strong>: <code>binary_sensor.hallway_motion</code></li>
-<li><strong>Trigger period</strong>: always</li>
-<li><strong>Trigger disabling entities</strong>: <code>input_boolean.bedroom_occupied</code></li>
-<li><strong>Trigger disabling period</strong>: night-time</li>
+<li><strong>Controlled Entities</strong>: <code>light.hallway</code></li>
+<li><strong>Auto-Off Delay (minutes)</strong>: 2</li>
+<li><strong>Trigger Entities</strong>: <code>binary_sensor.hallway_motion</code></li>
+<li><strong>Trigger Period</strong>: always</li>
+<li><strong>Trigger Disabling Entities</strong>: <code>input_boolean.bedroom_occupied</code></li>
+<li><strong>Trigger Disabling Period</strong>: night-time</li>
 </ul>
 <p>Result:</p>
 <ul>
@@ -182,9 +186,9 @@ occupied and resume its countdown after motion clears. Configure the motion
 sensor as an auto-off disabling entity (not a trigger entity), so it resets
 the timer without also turning the device on:</p>
 <ul>
-<li><strong>Controlled entities</strong>: <code>switch.office_fan</code></li>
-<li><strong>Auto-off delay</strong>: 10 minutes</li>
-<li><strong>Auto-off disabling entities</strong>: <code>binary_sensor.office_motion</code></li>
+<li><strong>Controlled Entities</strong>: <code>switch.office_fan</code></li>
+<li><strong>Auto-Off Delay (minutes)</strong>: 10</li>
+<li><strong>Auto-Off Disabling Entities</strong>: <code>binary_sensor.office_motion</code></li>
 <li>(No trigger entities)</li>
 </ul>
 <p>Result:</p>
@@ -222,8 +226,8 @@ DISABLING_CHANGED, or TIMER</li>
 from templates, or surface on a dashboard via the entity card.</p>
 <h3>Debug logging</h3>
 <p>Enable the <strong>Debug Logging</strong> toggle in the blueprint. Debug output appears in
-<strong>Settings &gt; System &gt; Logs</strong>. Uses <code>log.warning</code> level (HA's default for
-custom components).</p>
+<strong>Settings &gt; System &gt; Logs</strong>, logged at WARNING level (HA's default for custom
+components).</p>
 <p>Example output for an automation named &quot;Hallway Motion Light&quot;:</p>
 <pre><code class="language-text">[TEC: Hallway Motion Light] event=TRIGGER_ON action=TURN_ON
   reason='trigger activated' auto_off_at=none

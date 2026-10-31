@@ -194,8 +194,8 @@ blueprint:
     debug_logging:
       name: Debug Logging
       description: >
-        Enable debug logging. When enabled, emits a
-        log.warning message with full decision context
+        Enable debug logging. When enabled, logs a
+        WARNING message with full decision context
         on every invocation. Check Settings > System >
         Logs to view output.
       default: false

@@ -86,6 +86,8 @@ ID, visible aliased entity, script YAML-key, or any combination)</li>
 device name + ID drift)</li>
 <li>Optional debug logging</li>
 </ul>
+<h2>Requirements</h2>
+<p>None.</p>
 <h2>Usage</h2>
 <ol>
 <li>Install the automation (see main README)</li>
@@ -323,13 +325,6 @@ converge on <code>&lt;slug&gt;</code>.</p>
 <p>After the rename, any automation or script still calling the old
 <code>service: script.&lt;old_key&gt;</code> becomes a stale reference. The Reference Watchdog
 flags those so you can update the callers -- that hand-off is intentional.</p>
-<h3>Notification panel ordering</h3>
-<p>The order of notifications in the HA notification panel may change between
-evaluation runs. This is because each run re-creates all active notifications
-(to update content if drift changed), which updates their timestamps. Since
-all creates happen within milliseconds, the panel's display order is
-effectively random. The same devices are shown -- only the panel ordering
-varies.</p>
 <h3>Exclusion configuration</h3>
 <p>Use exclusion settings to suppress drift notifications for entities with
 intentionally customized names or IDs:</p>
@@ -384,10 +379,10 @@ known, and a link to the device for device-attached findings. Deviceless
 findings (deviceless entity-ID drift, script YAML-key drift) carry the owning
 integration but no device line -- the script YAML-key fix, for instance, shows
 the built-in <code>script</code> integration linked to the script-list dashboard.</p>
-<p>Other drift categories (unmatched include / exclude directives, etc.) continue
-to surface as notifications regardless of the toggle. The per-device summary
-notification keeps its grouped body so users who want the full list still get
-it; the per-entity repair issues run alongside.</p>
+<p>Each fixable finding surfaces in one place: as a Repair with the toggle on, or
+in a notification with it off (script YAML-key drift has no notification
+form). Unmatched include / exclude directives surface as a notification
+regardless of the toggle.</p>
 <p>The repair issue auto-clears once the underlying drift is resolved (next scan
 sees the entity at its default ID / name and the dispatcher's sweep removes
 the stale issue).</p>
@@ -408,6 +403,7 @@ Tools &gt; States to find it.</p>
 <ul>
 <li><code>last_run</code>: ISO timestamp of last evaluation</li>
 <li><code>runtime</code>: Evaluation time in seconds</li>
+<li><code>last_trigger</code>: <code>periodic</code> for a scheduled scan, otherwise <code>manual</code></li>
 <li><code>integrations</code>: Total integrations discovered</li>
 <li><code>devices</code>: Total devices discovered</li>
 <li><code>entities</code>: Total entities discovered for included devices</li>
@@ -437,8 +433,8 @@ surfaced something)</li>
 </ul>
 <h3>Debug logging</h3>
 <p>Enable the <strong>Debug Logging</strong> toggle in the blueprint. Debug output appears in
-<strong>Settings &gt; System &gt; Logs</strong>. Uses <code>log.warning</code> level (HA's default for
-custom components).</p>
+<strong>Settings &gt; System &gt; Logs</strong>, logged at WARNING level (HA's default for custom
+components).</p>
 <p>Example output for an automation named &quot;Entity Defaults Watchdog&quot;:</p>
 <pre><code class="language-text">[EDW: Entity Defaults Watchdog] integrations=12
   devices=45 entities=320 device_issues=2

@@ -138,7 +138,7 @@ applies routes.</li>
 </tr>
 <tr>
 <td>Debug logging</td>
-<td>Per-reconcile log.warning line under <code>[ZRM: ...]</code></td>
+<td>Per-reconcile WARNING log line under <code>[ZRM: ...]</code></td>
 </tr>
 </tbody>
 </table>
@@ -466,7 +466,7 @@ reproduced a clean trigger.</p>
 <p>The two-part fix (shipped):</p>
 <ol>
 <li><strong>Skip LR nodes in the per-node route refresh</strong>
-(<code>zwave_js_ui_bridge.get_nodes_with_fresh_routes</code> and the mirror in the
+(<code>ZwaveJsUiClient.get_nodes_with_fresh_routes</code> and the mirror in the
 bundled <code>zwavectl.py</code>). LR is a direct-star topology with no mesh, no
 priority routes, and no SUC return routes, so the queries are meaningless
 regardless of any firmware issue. If LR priority-route calls were part of
@@ -544,8 +544,8 @@ always sets both.</p>
 recognised top-level key.</p>
 </li>
 <li>
-<p>Migration from the socket.io bridge to zwave-js-server-python once
-zwave-js-server PR 1417 merges and schema 47 ships.</p>
+<p>Migration from the socket.io bridge to <code>zwave-js-server-python</code> once that
+client wraps the priority-route commands.</p>
 </li>
 <li>
 <p><strong>Auto-reset of a wedged controller</strong>. When the circuit breaker trips
@@ -597,9 +597,9 @@ code's possible contribution to the trigger (we don't know for sure LR
 priority-route calls were the trigger, but if they were, our code no
 longer issues them); (b) the recovery recipe has exactly one successful
 data point so far, which isn't enough to trust it for unattended
-operation. Revisit once either the wedge recurs despite Fix B (so we know
-the recipe is worth automating) or we gather more data points confirming
-the recipe is reliable.</li>
+operation. Revisit once either the wedge recurs despite the LR filter (so
+we know the recipe is worth automating) or we gather more data points
+confirming the recipe is reliable.</li>
 </ul>
 </li>
 </ul>

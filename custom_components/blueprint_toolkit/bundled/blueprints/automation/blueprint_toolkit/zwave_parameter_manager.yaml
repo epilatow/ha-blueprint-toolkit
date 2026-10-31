@@ -64,7 +64,7 @@ blueprint:
     debug_logging:
       name: Debug logging
       description: >
-        Emit a log.warning line per reconcile summarising
+        Log a WARNING line per reconcile summarising
         devices, writes planned / issued, pending, and
         converged. Check Settings > System > Logs to view
         output.

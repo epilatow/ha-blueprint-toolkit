@@ -39,7 +39,7 @@ to each orphan's integration-filtered entities page for deletion.
   enabled entities for grep-and-confirm
 - Optional detection of **unused deviceless entities** -- entity-registry rows
   with no device binding (utility meters, scripts, helpers) that aren't
-  referenced anywhere -- as a per-entity-domain rollup notification
+  referenced anywhere -- as a per-integration rollup notification
 - Unified entity exclusion list that applies to both sides (source owner and
   target value)
 - Source integration exclusion for bulk-silencing of specific config-entry
@@ -67,19 +67,19 @@ add-on the same bodies show the filename as a plain `code-spanned` path. See
 
 ## Configuration
 
-| Parameter                             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Exclude integrations                  | Integrations to skip. Matches the integration shown in each notification's header. Built-in adapters (`automation`, `script`, `template`, `customize`, `lovelace`, `person`) are listed as quick-picks in the blueprint UI; config-entry integration domains (e.g. `group`, `homekit`, or whatever is installed in HA) can be added as custom values. Also silences unused-devices and unused-deviceless-entities for the named integrations.                               |
-| Exclude entities                      | Entities to exclude, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                                                                                                |
-| Exclude entity regex                  | Multi-line regex, matched against entity and device reference values, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                                               |
-| Enabled checks                        | Subset of `broken-references`, `source-orphans`, `unused-devices`, `unused-deviceless-entities`. Default set is `broken-references` + `source-orphans`. The two `unused-*` checks are noisier prune-cleanup signals and require explicit opt-in. An empty selection means "all checks" (DW-style empty-means-all).                                                                                                                                                          |
-| Exclude devices by name (regex)       | Multi-line regex patterns matched against device names. A matching device is excluded from the unused-devices check (broken-references and source-orphans are unaffected).                                                                                                                                                                                                                                                                                                  |
-| Exclude voice exposure                | When enabled, the `homeassistant.exposed_entities` storage scan is skipped from the reference set. By default an entity exposed to a voice assistant counts as "referenced" for the unused-\* checks; toggle this off if you want voice-only entities surfaced in the unused-\* findings.                                                                                                                                                                                   |
-| Check disabled entities               | When enabled, references to entities that exist in the registry but are disabled are reported as "Disabled-but-existing references".                                                                                                                                                                                                                                                                                                                                        |
-| Check interval (minutes)              | Minutes between reference-integrity evaluations (default 60 -- reference scans do more file I/O than the other watchdogs).                                                                                                                                                                                                                                                                                                                                                  |
-| Max source notifications              | Notification cap. Default 10. 0 = unlimited. Applied independently to the broken-references per-owner notifications and the unused-device per-device notifications -- each check gets its own cap-summary slot when the cap is reached. The source-orphan summary and the unused-deviceless per-integration rollups are aggregate notifications bounded by HA-platform cardinality and aren't subject to this cap.                                                          |
-| Validate include / exclude directives | When enabled (default), each include / exclude directive is checked against the live truth set after every scan. Typo'd integration names, removed entities, stale path globs, and regex lines that catch nothing surface in a single per-instance "Unmatched include / exclude directives" notification that clears automatically when the typo / stale entry is fixed. Disable to skip the check; any prior unmatched-directives notification dismisses on the next scan. |
-| Debug logging                         | Log a warning-level stat line on every evaluation.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Parameter                                               | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exclude integrations                                    | Integrations to skip. Matches the integration shown in each notification's header. Built-in adapters (`automation`, `script`, `template`, `customize`, `lovelace`, `person`) are listed as quick-picks in the blueprint UI; config-entry integration domains (e.g. `group`, `homekit`, or whatever is installed in HA) can be added as custom values. Also silences unused-devices and unused-deviceless-entities for the named integrations.                               |
+| Exclude entities                                        | Entities to exclude, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                                                                                                |
+| Exclude entity regex                                    | Multi-line regex, matched against entity and device reference values, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                                               |
+| Enabled checks                                          | Subset of `broken-references`, `source-orphans`, `unused-devices`, `unused-deviceless-entities`. Default set is `broken-references` + `source-orphans`. The two `unused-*` checks are noisier prune-cleanup signals and require explicit opt-in. An empty selection means "all checks" (DW-style empty-means-all).                                                                                                                                                          |
+| Exclude devices by name (regex, multi-line)             | Multi-line regex patterns matched against device names. A matching device is excluded from the unused-devices check (broken-references and source-orphans are unaffected).                                                                                                                                                                                                                                                                                                  |
+| Exclude voice-assistant exposure from the reference set | When enabled, the `homeassistant.exposed_entities` storage scan is skipped from the reference set. By default an entity exposed to a voice assistant counts as "referenced" for the unused-\* checks; enable this if you want voice-only entities surfaced in the unused-\* findings.                                                                                                                                                                                       |
+| Check disabled entities                                 | When enabled, references to entities that exist in the registry but are disabled are reported as "Disabled-but-existing references".                                                                                                                                                                                                                                                                                                                                        |
+| Check interval (minutes)                                | Minutes between reference-integrity evaluations (default 60 -- reference scans do more file I/O than the other watchdogs).                                                                                                                                                                                                                                                                                                                                                  |
+| Max source notifications                                | Notification cap. Default 10. 0 = unlimited. Applied independently to the broken-references per-owner notifications and the unused-device per-device notifications -- each check gets its own cap-summary slot when the cap is reached. The source-orphan summary and the unused-deviceless per-integration rollups are aggregate notifications bounded by HA-platform cardinality and aren't subject to this cap.                                                          |
+| Validate include / exclude directives                   | When enabled (default), each include / exclude directive is checked against the live truth set after every scan. Typo'd integration names, removed entities, stale path globs, and regex lines that catch nothing surface in a single per-instance "Unmatched include / exclude directives" notification that clears automatically when the typo / stale entry is fixed. Disable to skip the check; any prior unmatched-directives notification dismisses on the next scan. |
+| Debug logging                                           | Log a warning-level stat line on every evaluation.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 See the blueprint UI for default values.
 
@@ -89,11 +89,11 @@ See the blueprint UI for default values.
 
 Three exclusion axes, each for a specific purpose:
 
-| Want to silence                                      | Use                     |
-| ---------------------------------------------------- | ----------------------- |
-| All config entries from an integration (e.g. `hacs`) | Exclude integrations    |
-| A specific entity ID you don't want flagged          | Exclude entities        |
-| A family of entity IDs matching a pattern            | Entity ID exclude regex |
+| Want to silence                                      | Use                  |
+| ---------------------------------------------------- | -------------------- |
+| All config entries from an integration (e.g. `hacs`) | Exclude integrations |
+| A specific entity ID you don't want flagged          | Exclude entities     |
+| A family of entity IDs matching a pattern            | Exclude entity regex |
 
 **Rule of thumb:** by integration -> integrations. By entity -> entities.
 
@@ -158,9 +158,9 @@ text), fix the reference, then reload the integration or restart HA.
 Some legacy YAML integrations -- notably older versions of `plant` -- don't
 register their entities in the entity registry at all, so adding the
 integration name to **Exclude integrations** can miss findings whose owners
-end up with `integration=None`. The fallback is **Entity ID exclude regex**
-(e.g. `^sensor\.plant_sensor_`) which silences findings by ref value rather
-than by source.
+end up with `integration=None`. The fallback is **Exclude entity regex** (e.g.
+`^sensor\.plant_sensor_`) which silences findings by ref value rather than by
+source.
 
 ### Source orphans
 
@@ -260,8 +260,8 @@ already silenced.
 
 To silence false positives:
 
-- **Exclude devices by name (regex)** -- per-line regex matched against the
-  effective device name (case-insensitive).
+- **Exclude devices by name (regex, multi-line)** -- per-line regex matched
+  against the effective device name (case-insensitive).
 - **Exclude integrations** -- silences both unused-devices AND unused-
   deviceless-entities for that integration.
 - **Exclude entities** / **Exclude entity regex** -- per-entity silencing also
@@ -321,8 +321,8 @@ UI (`homeassistant.exposed_entities` storage with at least one
 `should_expose: true` entry) counts as "referenced" for the unused-\* checks
 -- otherwise every voice-only entity would surface as unused.
 
-Toggle **Exclude voice exposure** to disable that scan. With the toggle off,
-voice-only entities flip to flagged. The other extended sources
+Enable **Exclude voice-assistant exposure from the reference set** to drop
+that scan, so voice-only entities get flagged. The other extended sources
 (`.storage/energy`, `.storage/person`) always run -- they're authoritative
 config the user controls directly.
 
@@ -334,14 +334,6 @@ its `Integrations:` link). The extended-reference-set role above (rescuing a
 still-valid bound tracker from the unused-\* checks) and this
 broken-references role are separate: a valid binding rescues, a dangling one
 is flagged.
-
-### Notification panel ordering
-
-The order of notifications in the HA notification panel may change between
-evaluation runs. Each run re-creates active notifications (to update content
-if findings changed), which updates their timestamps. Since all creates happen
-within milliseconds, the panel's display order is effectively random. The same
-owners are shown -- only the panel ordering varies.
 
 ### File editor add-on links
 
@@ -447,6 +439,7 @@ After each evaluation, attributes are written to
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `last_run`                 | ISO timestamp of the most recent successful evaluation                                                                                                                           |
 | `runtime`                  | Wall-clock seconds the evaluation took                                                                                                                                           |
+| `last_trigger`             | `periodic` for a scheduled scan, otherwise `manual`                                                                                                                              |
 | `paths_walked`             | Number of source files the scanner walked this run                                                                                                                               |
 | `owners_total`             | Total owners discovered across scanned sources (including owners with zero refs)                                                                                                 |
 | `owners_with_refs`         | Owners where at least one reference was detected                                                                                                                                 |
@@ -467,7 +460,7 @@ After each evaluation, attributes are written to
 | `unused_devices`           | Devices in the unused-devices candidate pool this run -- registry rows that passed the hardcoded skip list and have at least one enabled entity                                  |
 | `unused_devices_excluded`  | Subset of `unused_devices` that the user's `exclude_integrations` or `exclude_device_name_regex` silenced                                                                        |
 | `unused_device_count`      | Devices flagged by the unused-devices check this run (a strict subset of `unused_devices - unused_devices_excluded`, after the activity / cascade-rescue check)                  |
-| `unused_deviceless_count`  | Deviceless entities flagged by the unused-deviceless-entities check this run, summed across all domains                                                                          |
+| `unused_deviceless_count`  | Deviceless entities flagged by the unused-deviceless-entities check this run, summed across all integrations                                                                     |
 
 **Invariants:**
 
@@ -570,8 +563,8 @@ orphans.
 ### Debug logging
 
 Enable the **Debug logging** toggle in the blueprint. Debug output appears in
-**Settings > System > Logs**. Uses `log.warning` level (HA's default for
-custom components).
+**Settings > System > Logs**, logged at WARNING level (HA's default for custom
+components).
 
 Example output for an automation named "Reference Watchdog":
 
@@ -589,7 +582,7 @@ as source orphans. The `unused_devices` / `unused_devices_excluded` /
 used by DW and EDW: 12 devices entered the candidate pool, 3 were silenced by
 `exclude_integrations` or `exclude_device_name_regex`, and 2 of the surviving
 9 were flagged as actually unused. `unused_deviceless=4` is the total number
-of deviceless entities flagged across the per-domain rollups.
+of deviceless entities flagged across the per-integration rollups.
 
 ### Known limitations
 
@@ -633,6 +626,3 @@ Features worth adding in a later pass:
   respective registries.
 - **Per-view dashboard attribution.** Drill down inside lovelace configs to
   attribute findings to the specific view rather than the whole dashboard.
-- **File Editor integration URLs.** If the File Editor addon URL pattern can
-  be constructed deterministically, generate clickable "open in editor" links
-  for YAML-only owners.

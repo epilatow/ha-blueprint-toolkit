@@ -132,7 +132,7 @@ blueprint:
     debug_logging:
       name: Debug logging
       description: >
-        Emit a log.warning line per reconcile summarising
+        Log a WARNING line per reconcile summarising
         routes configured, applied, pending, and errored.
         Check Settings > System > Logs to view output.
       default: false

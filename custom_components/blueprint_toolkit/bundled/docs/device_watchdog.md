@@ -27,6 +27,10 @@ automatically when devices recover.
   the blueprint once per check)
 - Optional debug logging
 
+## Requirements
+
+None.
+
 ## Usage
 
 1. Install the automation (see main README)
@@ -43,7 +47,7 @@ automatically when devices recover.
 | Exclude integrations                  | Integration IDs to skip even if included.                                                                                                                     |
 | Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                        |
 | Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                         |
-| Entity domains to monitor             | Only check entities in these domains                                                                                                                          |
+| Monitored entity domains              | Only check entities in these domains                                                                                                                          |
 | Check interval (minutes)              | Minutes between watchdog evaluations                                                                                                                          |
 | Dead device threshold (minutes)       | Staleness threshold for state reports                                                                                                                         |
 | Enabled checks                        | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all.                                                      |
@@ -51,7 +55,7 @@ automatically when devices recover.
 | Create repairs for fixable findings   | Default on. Routes disabled-diagnostic-entity findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. See **Repairs** below. |
 | Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                           |
 | Validate include / exclude directives | Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.    |
-| Debug logging                         | Log debug info to HA logs                                                                                                                                     |
+| Debug Logging                         | Log debug info to HA logs                                                                                                                                     |
 
 See the blueprint UI for default values.
 
@@ -64,15 +68,6 @@ notification leads with an attribution header -- the automation that emitted
 it, the device's integration(s), and a link to the device -- so you can click
 straight through to the source. Notifications are automatically dismissed when
 devices recover.
-
-### Notification panel ordering
-
-The order of notifications in the HA notification panel may change between
-evaluation runs. This is because each run re-creates all active notifications
-(to update content if health changed), which updates their timestamps. Since
-all creates happen within milliseconds, the panel's display order is
-effectively random. The same devices are shown -- only the panel ordering
-varies.
 
 ### Unmatched include / exclude directives
 
@@ -92,11 +87,10 @@ scan.
 
 When **Create repairs for fixable findings** is enabled (default), each
 disabled-recommended-diagnostic-entity finding surfaces as an HA Repair with a
-one-click Fix button instead of (or alongside) the per-device summary
-notification. Submit clears `disabled_by` on the named entity so it goes back
-to monitoring. The Fix dialog leads with the same attribution header the
-notifications carry -- the automation, the device's integration(s), and a link
-to the device.
+one-click Fix button instead of a notification. Submit clears `disabled_by` on
+the named entity so it goes back to monitoring. The Fix dialog leads with the
+same attribution header the notifications carry -- the automation, the
+device's integration(s), and a link to the device.
 
 Other finding categories (unavailable / stale devices) keep using
 notifications regardless of the toggle -- those don't have a deterministic
@@ -126,6 +120,7 @@ States to find it.
 
 - `last_run`: ISO timestamp of last evaluation
 - `runtime`: Evaluation time in seconds
+- `last_trigger`: `periodic` for a scheduled scan, otherwise `manual`
 - `integrations`: Total integrations discovered
 - `devices`: Total devices discovered
 - `entities`: Total entities discovered for included devices
@@ -142,8 +137,8 @@ States to find it.
 ### Debug logging
 
 Enable the **Debug Logging** toggle in the blueprint. Debug output appears in
-**Settings > System > Logs**. Uses `log.warning` level (HA's default for
-custom components).
+**Settings > System > Logs**, logged at WARNING level (HA's default for custom
+components).
 
 Example output for an automation named "Device Watchdog":
 
