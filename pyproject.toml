@@ -119,7 +119,6 @@ line-length = 80
 # not move this, or the formatter would put syntax into the bundled
 # CLI that the add-on running it cannot parse.
 target-version = "py314"
-cache-dir = "/tmp/ruff_cache"
 extend-exclude = ["_repo_shared"]
 
 [tool.ruff.lint]
@@ -158,7 +157,7 @@ strict = true
 # ``uvx mypy`` from a checkout without those deps will not
 # resolve those imports; run ``uv run pytest _repo_shared/tests``
 # instead.
-cache_dir = "/tmp/mypy_cache"
+
 # The bundled CLI (custom_components/.../bundled/bin) and the repo scripts
 # (scripts/) are bare modules the test files import off a runtime sys.path
 # entry. Putting their dirs on mypy_path lets the resolver find them, so the

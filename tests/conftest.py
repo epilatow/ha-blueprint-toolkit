@@ -30,7 +30,7 @@ sys.dont_write_bytecode = True
 
 
 def _cleanup_all_caches() -> None:
-    """Remove temp dirs and any cache dirs in the repo."""
+    """Remove the temp pycache dir and any ``__pycache__`` in the repo."""
     # Clean up the temp pycache directory
     shutil.rmtree(_pycache_tmpdir, ignore_errors=True)
     # Clean up any __pycache__ created before
@@ -39,10 +39,6 @@ def _cleanup_all_caches() -> None:
     for pycache in _REPO_ROOT.rglob("__pycache__"):
         if pycache.is_dir():
             shutil.rmtree(pycache, ignore_errors=True)
-    # Clean up any .mypy_cache directories
-    for mypy_cache in _REPO_ROOT.rglob(".mypy_cache"):
-        if mypy_cache.is_dir():
-            shutil.rmtree(mypy_cache, ignore_errors=True)
 
 
 # Register cleanup for when Python exits

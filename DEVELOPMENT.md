@@ -160,9 +160,6 @@ The shared bases under `_repo_shared/tests/` gate `mdformat` and
 
 ## Testing
 
-Tool configuration lives in `pyproject.toml`, and tool caches are redirected
-to `/tmp/` to avoid polluting the repo.
-
 ### Running tests
 
 ```bash
