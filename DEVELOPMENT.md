@@ -1,31 +1,23 @@
 # Development Guide
 
-Process content for working on this repo: code review, doc hygiene, testing,
-deploys, releases. The companion [AUTOMATIONS.md](AUTOMATIONS.md) covers
-conventions + patterns specific to writing or modifying an automation -- read
-that when adding a new automation, modifying an existing one, or reviewing
-such a change.
+How this repo is laid out, tested, deployed, and released, layered on
+`DEVELOPMENT_SHARED.md`. The companion [AUTOMATIONS.md](AUTOMATIONS.md) covers
+conventions and patterns for automations -- read that when adding, modifying,
+or reviewing one.
 
 ## Repo layout
 
-This repo ships as a HACS-distributed custom integration. Two external
-constraints drive the top-level layout; everything below that is our own
-convention.
+This repo ships as a HACS-distributed custom integration, and two external
+constraints drive the top-level layout:
 
-Home Assistant's custom-integration loader looks for integrations at
-`/config/custom_components/<domain>/`, where `<domain>` matches the
-integration's `manifest.json` domain. That's why the repo's installable code
-lives under `custom_components/blueprint_toolkit/` -- when HACS (or a
-developer's manual install) puts that subtree at
-`/config/custom_components/blueprint_toolkit/`, HA finds it.
-
-HACS itself only downloads files from the repo that live under
-`custom_components/<name>/`; it discards everything outside that subtree at
-install time. So every file we want users to receive has to live inside
-`custom_components/blueprint_toolkit/`.
+- Home Assistant looks for custom integrations at
+  `/config/custom_components/<domain>/`, so the installable code lives under
+  `custom_components/blueprint_toolkit/`.
+- HACS only downloads files under `custom_components/<name>/`, so every file
+  users should receive has to live inside that subtree too.
 
 Integration code (`__init__.py`, `manifest.json`, `reconciler.py`,
-`installer.py`, `config_flow.py`, `repairs.py`, etc.) lives at the
+`installer.py`, `config_flow.py`, `repairs.py`, etc.) sits at the
 `custom_components/blueprint_toolkit/` level. Each per-automation handler
 lives in a subpackage (`<service>/handler.py`, `<service>/logic.py`). The
 `bundled/` subdirectory ships blueprints, docs, and CLI scripts to
@@ -33,15 +25,12 @@ user-visible `/config/...` paths via symlinks. See
 [AUTOMATIONS.md](AUTOMATIONS.md) for the full per-automation layout.
 
 The repo root keeps two committed symlinks into the bundle for path-typing
-convenience:
+convenience. They live outside HACS's download path and are never shipped:
 
 ```text
 blueprints -> custom_components/blueprint_toolkit/bundled/blueprints
 docs       -> custom_components/blueprint_toolkit/bundled/docs
 ```
-
-These are real git symlinks (mode 120000). They live outside HACS's download
-path and are never shipped to users.
 
 **POSIX filesystem required for development.** The repo uses mode-120000
 symlinks that Windows (with default git settings) checks out as text files
@@ -53,11 +42,10 @@ SVG + 256/512 PNG renders). They are only consumed by a future PR to
 `home-assistant/brands`; they do not ship inside the bundle because HA's UI
 only reads brand assets from the brands CDN.
 
-Repo-local Claude Code skills live at `skills/<name>/SKILL.md` at the repo
-root, and `.claude/skills` is a committed symlink to `../skills` so Claude
-Code finds them at the standard discovery path. To add a new skill: create the
-directory + `SKILL.md` under `skills/<name>/`; the existing symlink already
-covers it.
+Repo-local Claude Code skills live at `skills/<name>/SKILL.md`, and
+`.claude/skills` is a committed symlink to `../skills` so Claude Code finds
+them at the standard discovery path. A new skill only needs its directory +
+`SKILL.md` under `skills/<name>/`.
 
 ## File conventions
 
@@ -72,11 +60,11 @@ covers it.
   `scripts/ha_ws_fetch.py`, the bundled CLI, and
   `custom_components/blueprint_toolkit/scripts/dev-install.py`.
 
-  That shebang is load-bearing, not cosmetic. `tests/test_analysis_deps.py`
-  reads it as the marker for code that runs on an interpreter this repo does
-  not choose, and parses every file carrying it at the shipped floor (see "Two
-  interpreter floors, and neither is this machine's"). A new host-side helper
-  is covered the moment it gets the shebang.
+  That shebang is load-bearing. `tests/test_analysis_deps.py` reads it as the
+  marker for code that runs on an interpreter this repo does not choose, and
+  parses every file carrying it at the shipped floor (see "Two interpreter
+  floors, and neither is this machine's"). A new host-side helper is covered
+  the moment it gets the shebang.
 
   Two scripts carry it while still running here on the pinned interpreter, so
   the test exempts them by name. An exemption has a cost worth understanding
@@ -85,9 +73,8 @@ covers it.
   acquire syntax its `python3` cannot parse.
 
 - **Module files** (handler.py, logic.py, helpers.py, etc.) have no shebang.
-  They are imported, not executed directly. Those under `custom_components/`
-  are covered by the floor check regardless of shebang, since Home Assistant
-  imports them.
+  Those under `custom_components/` are covered by the floor check regardless,
+  since Home Assistant imports them.
 
 ### Test files
 
@@ -96,124 +83,59 @@ covers it.
 - `tests/docker/test_dev_workflow.py` is the exception: its standalone entry
   point calls `pytest.main()` directly so it can force the otherwise excluded
   `docker` marker and select the Docker test path.
-- Use pytest.
-- Use `autospec=True` for all mocks.
-
-### Comments
-
-Comments should not repeat what the code is doing. When used they should
-augment the code: provide additional context, explain the why, document
-non-obvious requirements or side effects, flag invariants the type system
-can't enforce.
-
-- Don't number steps in comments (`# 1. Parse state`). Numbering is
-  unnecessary and adding / removing steps requires renumbering.
-- Don't reference user-reported bugs ("Regression guard for the user-reported
-  bug where ..."). Describe what the code does and the constraint it enforces;
-  bug history belongs in the commit message.
-- Don't talk about deleted, replaced, or formerly-existing code. Comments
-  document the *current* code -- the version a future reader is looking at.
-  Phrases like "the per-handler `_FooBar` shim is gone", "wrappers have all
-  been deleted", "this used to live in helpers.py" make sense to whoever wrote
-  the diff but are noise (or actively misleading) to anyone reading the file
-  later. If a comment names a symbol or behavior, that thing must exist now.
-  Migration history belongs in the commit message that did the migration.
-
-### ASCII only
-
-Source files, comments, commit messages, docs, PR bodies, etc. are ASCII only.
-The only carve-out is test fixtures that simulate non-ASCII input that the
-code under test must handle. Common slips to watch for and the ASCII
-replacements:
-
-- Em / en dashes (`--` instead).
-- Curly quotes (straight `'` and `"`).
-- Ellipsis (`...` instead).
-- Unicode arrows (`->` instead).
-- Unicode bullets (`-` or `*` instead).
 
 ## Doc-sync rule
 
-**Documentation is part of the change, not a follow-up.** When code changes,
-every doc that describes that code changes in the same commit. No exceptions,
-no "I'll do the docs in a follow-up" -- doc and code commit together so
-reviewers see both at once.
+A doc that describes code changes in the same commit as that code (the shared
+"Update relevant docs" rule). The docs this repo keeps:
 
-Before committing a code change, walk through every markdown file the change
-could touch and verify it still matches reality. The pre-commit checklist:
-
-- `bundled/docs/<service>.md` -- if the automation's inputs, attributes, or
-  behavior changed, update the service doc and re-run `scripts/render_docs.py`
-  to regenerate the HTML. The drift test (`tests/test_docs_rendered.py`)
-  enforces the markdown + HTML pair.
-- `AUTOMATIONS.md` -- update when conventions, shared helpers, naming rules,
-  or per-automation file layout change.
-- `DEVELOPMENT.md` -- update when dev-process tooling changes: new test
-  conventions, new lint rules, new release script, **renamed or removed CLI
-  flags on `dev-deploy.py` / `dev-install.py` / `release.py` /
-  `hacc_upgrade.py`**, new required steps in the develop / test / commit
-  cycle.
-- `DEVELOPMENT_AGENT.md` -- update when agent-specific workflow changes
-  (review protocol, file markers, dev-deploy verification checklist, etc.).
-- `README.md` -- update when an automation is added, removed, or its one-line
-  blurb changes.
-
-Stale, invalid, and broken docs waste every reader's time -- users follow
-steps that no longer work, devs chase behaviors the code stopped doing.
-**Every code change is a potential doc change.** This repo documents not just
-CLI surfaces and behaviors but also conventions: architectural patterns,
-naming rules, schema shapes, helper APIs, test layout, lifecycle wiring,
-notification formats, and more. Before finalizing the commit message, grep the
-repo for any symbol, flag, convention, or behavior the diff touched and update
-every doc that mentions it.
+- `bundled/docs/<service>.md` -- when an automation's inputs, attributes, or
+  behavior change. Re-run `scripts/render_docs.py`; the drift test
+  (`tests/test_docs_rendered.py`) enforces the markdown + HTML pair.
+- `AUTOMATIONS.md` -- when conventions, shared helpers, naming rules, or
+  per-automation file layout change.
+- `DEVELOPMENT.md` -- when dev-process tooling changes: test conventions, lint
+  rules, required steps in the develop / test / commit cycle, or the workflow
+  of `dev-deploy.py`, `dev-install.py`, `release.py`, or `hacc_upgrade.py`.
+- `DEVELOPMENT_AGENT.md` -- when agent-specific workflow changes (file
+  markers, the dev-deploy verification checklist, etc.).
+- `README.md` -- when an automation is added, removed, or its one-line blurb
+  changes.
 
 ## Per-automation docs
 
-The per-automation user-doc structure (Summary / Features / Requirements /
-etc.) lives in `AUTOMATIONS.md`. This section covers the rendering pipeline.
+The per-automation user-doc structure lives in `AUTOMATIONS.md`. This section
+covers the rendering pipeline.
 
 ### Rendered HTML
 
-The markdown sources under `docs/` are rendered to HTML that ships alongside
-the integration so HACS users can click a "Full documentation" link from each
-blueprint directly to a local page.
+The markdown sources are rendered to HTML that ships alongside the integration
+so HACS users can click a "Full documentation" link from each blueprint
+directly to a local page.
 
 - Source: `custom_components/blueprint_toolkit/bundled/docs/*.md` (also
   reachable via the `docs/` symlink at the repo root).
 - Rendered:
   `custom_components/blueprint_toolkit/bundled/www/blueprint_toolkit/docs/*.html`.
   Committed alongside the source.
-- Renderer: `scripts/render_docs.py` (CommonMark + tables, minimal inline-CSS
-  template, `markdown-it-py` pinned for deterministic output). Idempotent --
-  it only writes files whose content changed.
+- Renderer: `scripts/render_docs.py`. After editing any `*.md`, re-run it and
+  commit the regenerated HTML in the same commit.
 
-After editing any `*.md`, **re-run the renderer and commit the regenerated
-HTML in the same commit**:
-
-```bash
-scripts/render_docs.py
-```
-
-A drift test (`tests/test_docs_rendered.py`) runs
-`scripts/render_docs.py --check` and fails if the committed HTML is out of
-date, if a markdown source is missing its HTML counterpart, or if an orphan
-HTML has no matching source. The test's failure message points at the render
-command.
+`tests/test_docs_rendered.py` fails if the committed HTML is out of date, if a
+markdown source is missing its HTML counterpart, or if an orphan HTML has no
+matching source.
 
 #### How rendered HTML reaches the user's browser
 
 The rendered HTML is **not** installed under `/config/www/`. HA's default
-`/local/` static handler:
-
-- Is only registered at HA startup if `/config/www/` already exists (our
-  integration runs after that).
-- Refuses to follow symlinks whose targets escape `/config/www/`, which is
-  exactly what an installed symlink-into-bundled would do.
+`/local/` static handler is only registered at startup if `/config/www/`
+already exists (our integration runs after that), and it refuses to follow
+symlinks whose targets escape `/config/www/`, which an installed
+symlink-into-bundled would do.
 
 Instead, the integration's `async_setup_entry` registers its own aiohttp
 static route at `/local/blueprint_toolkit/docs/` pointing directly at the
-bundled docs directory. Real files, no symlinks, no dependency on
-`/config/www/`.
+bundled docs directory.
 
 **dev-install limitation**: users on the `scripts/dev-install.py` path don't
 load the HA integration, so the static route is never registered and the
@@ -222,96 +144,24 @@ under `bundled/docs/` directly during dev work.
 
 ## Markdown style
 
-Two complementary tools enforce markdown style; both are wired up via the
-shared test bases under `_repo_shared/tests/`:
+`DEVELOPMENT_SHARED.md` owns the tooling and conventions. This repo differs in
+one way: it wraps at 78 columns rather than 79
+(`[tool.repo-shared.markdown] wrap` in `pyproject.toml`), so re-canonicalise a
+doc with:
 
-- **`mdformat`** is the canonical formatter. The shared `MdformatCheckBase`
-  runs `mdformat --wrap=78 --number --check` with the `mdformat-gfm` plugin,
-  gated by `_repo_shared/tests/test_markdown_format.py`. Owns every mechanical
-  formatting decision: line wrap at 78 chars, ordered-list numbering,
-  bullet/emphasis/strong markers, blank-line spacing, table alignment. To
-  re-canonicalise a doc after editing:
+```bash
+uvx --with mdformat-gfm --with mdformat-frontmatter \
+    mdformat --wrap=78 --number <path>
+```
 
-  ```bash
-  uvx --with mdformat-gfm mdformat --wrap=78 --number <path>
-  ```
-
-  A markdown file with YAML frontmatter (`skills/<name>/SKILL.md`) also needs
-  `--with mdformat-frontmatter` -- without the plugin, `mdformat` rewrites the
-  `---` fences as a horizontal rule and folds the frontmatter into a heading,
-  which breaks skill discovery. The project venv (which the gating test runs
-  via `python -m mdformat`) already has the plugin, so the test stays green;
-  the `uvx` form needs it spelled out:
-
-  ```bash
-  uvx --with mdformat-gfm --with mdformat-frontmatter \
-      mdformat --wrap=78 --number skills/<name>/SKILL.md
-  ```
-
-- **`markdownlint-cli2`** covers content rules `mdformat` can't see: required
-  fence languages (MD040), broken anchor links (MD051), reference-link
-  consistency (MD052/MD053), missing alt text (MD045), duplicate headings
-  (MD024), and similar. Config lives in `.markdownlint.json` (a symlink into
-  `_repo_shared/dotfiles/` -- the shared markdown infra is adopted as-is);
-  enforced by the shared `MarkdownlintCheckBase` at
-  `_repo_shared/tests/test_markdownlint.py`.
-
-The two tools agree on every formatting rule by design -- `mdformat`'s
-defaults match the formatting rules in `.markdownlint.json` (dash bullets,
-asterisk emphasis, fenced code blocks, etc.). If they ever disagree, the
-formatter wins (it's mechanical) and `.markdownlint.json` gets adjusted to
-match.
-
-Notable rules from the linter side:
-
-- Line wrap at 78 chars (MD013). Tables, headings, and code blocks are exempt;
-  reference-style links (`[label][ref]` ... `[ref]: url`) handle long URLs.
-- Numbered lists use ordered prefixes (`1./2./3./...`) per MD029.
-- Code fences require a language tag (MD040). Use `text` for plain output,
-  `console` for shell sessions with prompts, `bash` / `python` / etc. for
-  actual code.
-- Tables use the `aligned` style (cells space-padded so column pipes line up
-  vertically) per MD060. `mdformat-gfm` produces this layout automatically;
-  markdownlint validates it.
-
-Conventions worth knowing about for source layout (mdformat enforces these as
-a side effect):
-
-- Reference-style link definitions go at the bottom of the file, not
-  interleaved with the list items they're referenced from. Otherwise mdformat
-  splits the surrounding list into multiple sub-lists with mismatched bullet
-  markers.
-- Avoid lines starting with `>` followed by a non-space character (e.g.
-  `>=10`) -- a markdown parser treats those as blockquotes, and source reflow
-  can land them at line starts.
-- Don't put `#<digit>` (issue references like `#1234`) at the start of a
-  reflowed line -- they'd be interpreted as malformed ATX headings.
-
-### Prefer lists over tables
-
-In developer-facing markdown (this file, `AUTOMATIONS.md`,
-`DEVELOPMENT_AGENT.md`, `README.md`), prefer bulleted lists over markdown
-tables. Tables are unreadable in plain text: the columns wrap on narrow
-terminals, the cells run together, and the headers blend into the body. We
-read these files in `vim` / `less` / `git diff` more than in a rendered
-viewer, so the source-readability matters more than the rendered prettiness.
-
-User-facing docs under `bundled/docs/<service>.md` are exempt -- those are
-read in HTML / on GitHub more than in plain text, and tabular layout works
-well for the configuration / attribute reference sections those docs carry.
+The shared bases under `_repo_shared/tests/` gate `mdformat` and
+`markdownlint-cli2`. `.markdownlint.json` is a symlink into
+`_repo_shared/dotfiles/`; the shared markdown infra is adopted as-is.
 
 ## Testing
 
-Always add new tests when adding new functionality.
-
-All tool configuration lives in `pyproject.toml`. Tool caches are redirected
+Tool configuration lives in `pyproject.toml`, and tool caches are redirected
 to `/tmp/` to avoid polluting the repo.
-
-### No global pip installs
-
-Never run `pip install`. All dependencies are declared inline via PEP 723
-script metadata and resolved automatically by `uv`. Run tools via
-`uvx <tool> [args]`.
 
 ### Running tests
 
@@ -324,54 +174,35 @@ script metadata and resolved automatically by `uv`. Run tools via
 # Single test file
 ./tests/test_<service>_logic.py
 ./tests/test_<service>_logic.py --verbose
+
+# Shared suite only
+uv run pytest _repo_shared/tests
 ```
+
+`./tests/run_all.py` runs the shared suite at the end of its per-handler
+sweep, and a bare `uv run pytest` runs both this repo's tests and the shared
+suite.
 
 ### Docker test harness (opt-in, slow)
 
 `tests/docker/` spins up a real HA container and exercises
-`scripts/dev-install.py` and `scripts/dev-deploy.py` end-to-end. Not run by
-`tests/run_all.py`; opt in with `pytest -m docker tests/docker`. See
-`tests/docker/README.md`.
+`scripts/dev-install.py` and `scripts/dev-deploy.py` end-to-end. It is not run
+by `tests/run_all.py`; see `tests/docker/README.md`.
 
 ### pytest-homeassistant-custom-component harness
 
 `tests/test_hacc_harness.py` uses
 [`pytest-homeassistant-custom-component`](https://pypi.org/project/pytest-homeassistant-custom-component/)
-to stand up an in-process HA instance for tests that need real HA machinery.
-Pinned to a specific HA release in the file's PEP 723 dependency block; first
-run downloads HA into a uv-script env (~minute), subsequent runs are cached.
-Runs in the default suite via `tests/run_all.py`.
+(HACC) to stand up an in-process HA instance. `tests/test_integration.py` and
+the per-automation `tests/test_<service>_integration.py` files use the same
+harness to exercise the integration's async lifecycle and each handler's full
+call path. All of them run in the default suite; the first run downloads HA
+into a uv-script env (about a minute), and later runs are cached.
 
-`tests/test_integration.py` and per-automation
-`tests/test_<service>_integration.py` files use the same harness to exercise
-the integration's async lifecycle and each handler's full call path (config
-flow, service registration, argparse error paths, state-entity attributes).
-
-The HACC pin is duplicated across every PEP 723 inline-deps block (one per
-HACC test file under `tests/`) plus the
-`[tool.repo-shared.code-quality] mypy-extra-deps` fallback in
-`pyproject.toml`. The exact pin gives reproducible test runs, but it also
-means the suite won't notice if a future HA release breaks an interface we
-depend on until someone manually bumps the pin. `scripts/hacc_upgrade.py`
-plugs that gap. Run it weekly from a scheduler (see below): it rewrites every
-pin site to the latest released HACC version, moves the Z-Wave client pin that
-release requires along with it, bumps the integration version when one of
-those sites was shipped code, runs `tests/run_all.py` against the bump in a
-throwaway worktree, and with `--push` fast-forwards the default branch onto
-it. The coupled pin and the conditional version bump are covered under
-"Analysis-dep pinning and stub suppressions" below. A red suite blocks the
-bump: the worktree is kept for inspection and the exit status is non-zero,
-which is what the scheduler reports. The failing phase is a reasonable first
-look -- most phases install the pin themselves, which makes the new release
-the first thing to check there, though those blocks also resolve `pytest` and
-the stubs unpinned -- and the `repo-shared` phase does not localize at all,
-since it carries both the HA-typed mypy pass and the markdown gate. To settle
-it either way, re-run the suite in the kept worktree against the branch point;
-a failure that reproduces there is independent of the bump.
-
-The bump lands unattended on green by design. A bump that only ever opens a
-proposal is a bump nobody merges, and the pin then sits still while the HA
-surface it claims to validate against moves on.
+The HACC pin is exact, so the suite won't notice a future HA release breaking
+an interface we depend on until the pin moves. `scripts/hacc_upgrade.py` moves
+it and verifies the suite against the bump in a throwaway worktree; its module
+docstring covers the flow, and `--help` the flags and exit statuses.
 
 ```bash
 scripts/hacc_upgrade.py --dry-run    # report drift, change nothing
@@ -381,141 +212,111 @@ scripts/hacc_upgrade.py --to X.Y.Z   # target a version other than latest
 scripts/hacc_upgrade.py --base REF   # verify on REF, not the default branch
 ```
 
-`--base` exists for the case the weekly job cannot handle: a bump that only
-passes with code changes landing beside it. When a Home Assistant release
-removes an API the integration uses, the migration and the pin are a single
-unit of work -- each is red without the other -- so verifying the pin against
-a default branch that lacks the migration proves nothing. Point `--base` at
-the branch carrying it instead. Such a run verifies only; landing
-fast-forwards the default branch, which a bump built elsewhere cannot do, so
-`--base` and `--push` are refused together and the result is merged by hand.
-Combining it with `--dry-run` reports the base's drift and builds nothing.
+A red suite blocks the bump and keeps the worktree for inspection. The failing
+phase is a reasonable first look -- most phases install the pin themselves,
+which makes the new release the first thing to check there, though those
+blocks also resolve `pytest` and the stubs unpinned -- but the `repo-shared`
+phase does not localize at all, since it carries both the HA-typed mypy pass
+and the markdown gate.
 
-Two things to know about the handoff. The base is taken as a committed ref, so
-work still sitting in the checkout is not what gets verified -- commit it
-first. And the verified bump is left on a `hacc-upgrade/<version>` branch,
-which is the namespace every later run sweeps: merge it before the next run,
-or pass that branch as the next run's `--base`, which spares its ref (not its
-worktree). Only refs sitting at the base commit are spared, so a second
-pending bump elsewhere in that namespace is swept either way. A base that *is*
-the branch the next run rebuilds -- `hacc-upgrade/<the new target>` -- is
-refused rather than clobbered; merge or rename it first.
+`--base` handles a bump that only passes with code changes landing beside it.
+When a Home Assistant release removes an API the integration uses, the
+migration and the pin are each red without the other, so point `--base` at the
+branch carrying the migration. Such a run verifies only, and the result is
+merged by hand. Two things to know about the handoff:
 
-Scheduling is host-side and therefore a setup step, not something the repo
-carries: a `crony` drop-in bundle at `~/.config/crony/config/` runs the
-`--push` form weekly. Nothing in the repo can confirm that exists, so check it
-directly with `crony status ha-blueprint-toolkit.hacc-upgrade`; a job that
-reports as masked is defined but never fires. `--help` lists the exit statuses
-the scheduler keys on.
+- The base is taken as a committed ref, so commit any work still sitting in
+  the checkout first.
+- The verified bump is left on a `hacc-upgrade/<version>` branch, the
+  namespace every later run sweeps. Merge it before the next run, or pass it
+  as the next run's `--base`, which spares its ref (not its worktree). Only
+  refs at the base commit are spared, so a second pending bump in that
+  namespace is swept either way. A base that *is* the branch the next run
+  rebuilds is refused rather than clobbered; merge or rename it first.
 
-The job runs the whole suite, so the host needs everything the suite shells
-out to -- `uv` and, for the markdown gate's `markdownlint-cli2`, `npx`. A
-scheduler's environment is not a login shell and will not have picked either
-up from a shell profile: the job definition has to put them on `PATH` itself
-(sourcing `nvm.sh` for `npx`, as the repo-shared jobs do). Missing tooling
-fails the suite and blocks the bump every week, identically, with nothing
-about the failure pointing at the host rather than the pin.
+Scheduling is a host-side setup step, not something the repo carries: a
+`crony` drop-in bundle at `~/.config/crony/config/` runs the `--push` form
+weekly. Check it with `crony status ha-blueprint-toolkit.hacc-upgrade`; a job
+that reports as masked is defined but never fires.
 
-Silence from a host-side schedule is ambiguous: "no drift this week" and "the
-machine was off" look identical from the repo, and nothing in-repo detects the
-second. A pin that stops moving for a long stretch is worth checking against
-PyPI by hand.
-
-The bump is verified on whichever host the scheduler runs, not across the
-`test.yml` matrix, so one that is green there can still turn a different OS
-red. That is caught after the fact rather than before: `test.yml` runs on
-push, so the landed bump is checked on the full matrix immediately.
-
-This is the one push in the repo that is not gated on a human. The "never push
-without explicit approval" rule in `DEVELOPMENT_AGENT.md` addresses agent
-sessions, which must still ask; it does not govern a scheduled job whose
-entire purpose is to land a verified bump unattended.
+- The job runs the whole suite, so the host needs `uv` and, for the markdown
+  gate's `markdownlint-cli2`, `npx`. A scheduler's environment is not a login
+  shell, so the job definition has to put them on `PATH` itself (sourcing
+  `nvm.sh` for `npx`, as the repo-shared jobs do). Missing tooling blocks the
+  bump identically every week, with nothing pointing at the host.
+- Silence is ambiguous: "no drift this week" and "the machine was off" look
+  identical from the repo. A pin that stops moving for a long stretch is worth
+  checking against PyPI by hand.
+- The bump is verified on the scheduler's host, not across the `test.yml`
+  matrix. `test.yml` runs on push, so the landed bump gets the full matrix
+  immediately afterward.
+- This is the one push in the repo not gated on a human. The shared "never
+  push without approval" rule addresses agent sessions, which must still ask;
+  it does not govern this job.
 
 ### The interpreter is pinned too
 
-`.python-version` at the repo root pins the interpreter `uv` resolves against
--- every PEP 723 script env, the project venv the `repo-shared` phase runs
-`pytest` in, the `uvx` gate tools, and the throwaway environment
-`scripts/hacc_upgrade.py` resolves the Z-Wave client requirement in (which is
-why that call runs from the repo root rather than anywhere else). It is
-tracked, and it is load-bearing: the HACC pin fixes which Home Assistant
-surface the suite validates, but without a pinned interpreter `uv` selects the
-newest one installed, which silently changes the environment the moment a host
-gains a newer Python. Home Assistant's native dependencies publish no wheels
-for a brand-new release, so such a host builds them from source and most
-phases fail at once, with a compiler error rather than anything pointing at
-the interpreter.
+`.python-version` pins the interpreter `uv` resolves against: every PEP 723
+script env, the project venv the `repo-shared` phase runs `pytest` in, the
+`uvx` gate tools, and the throwaway environment `scripts/hacc_upgrade.py`
+resolves the Z-Wave client requirement in (which is why that call runs from
+the repo root). Without it `uv` selects the newest interpreter installed, so a
+host that gains a newer Python silently changes environment. Home Assistant's
+native dependencies publish no wheels for a brand-new release, so such a host
+builds them from source and most phases fail at once, with a compiler error
+that doesn't mention the interpreter.
 
 Cached envs hide a moved pin, because only a *fresh* resolution picks the new
-interpreter, so an existing checkout keeps passing while a new worktree, a new
-machine, or CI fails. `tests/test_analysis_deps.py` gates the pin against
-every declared `requires-python` floor and the two mypy knobs, because `uv`
-ignores a pin it cannot satisfy and resolves against the newest interpreter
-anyway, exiting zero -- a pin that drifts below a floor stops pinning without
-saying so. Raise it deliberately when the project moves to a newer Python, and
-expect the first run afterwards to rebuild every script env.
+interpreter: an existing checkout keeps passing while a new worktree, a new
+machine, or CI fails. `uv` also ignores a pin it cannot satisfy and resolves
+against the newest interpreter anyway, exiting zero, so
+`tests/test_analysis_deps.py` gates the pin against every declared
+`requires-python` floor and the two mypy knobs. Raise it deliberately when the
+project moves to a newer Python, and expect the first run afterwards to
+rebuild every script env.
 
 The pin governs this machine's analysis and test environments only. The
-host-side scripts -- `dev-install.py`, `ha_ws_fetch.py`, the bundled CLI, the
-docker harness helpers -- carry plain `python3` shebangs and never see `uv`.
+host-side scripts carry plain `python3` shebangs and never see `uv`.
 
 ### Two interpreter floors, and neither is this machine's
 
 What the code has to RUN on is a separate declaration,
-`[tool.ha-blueprint-toolkit] shipped-python-version`, and it answers to two
-interpreters that are not this one:
+`[tool.ha-blueprint-toolkit] shipped-python-version`. Its comment in
+`pyproject.toml` explains the two interpreters it answers to -- Home
+Assistant's own, which imports the integration modules, and the Terminal & SSH
+add-on's, which runs the bundled CLI and `dev-install.py` -- and carries the
+checklist for raising it.
 
-- **Home Assistant's own**, which imports the integration modules. The
-  `hacs.json` release floor constrains it -- indirectly, via that release's
-  own `Requires-Python`.
-- **the Terminal & SSH add-on's**, which runs the bundled CLI and
-  `dev-install.py`. Nothing declared in this repo can constrain it: it is
-  whatever `python3` the add-on's Alpine base packages, and the user updates
-  the add-on on their own schedule. 3.14 arrives with Alpine 3.24.
+The add-on is the binding one, and the invisible one: nothing declared here
+can constrain it. `ruff format` rewrites to its `target-version` -- at `py314`
+a parenthesized multi-type `except` becomes the PEP 758 unparenthesized form
+-- so that knob decides which syntax gets written into the bundled CLI and the
+`zwave/` + `zwave_parameter_manager/` modules it shares with the HA side. So
+`target-version` is gated against `shipped-python-version`, never against
+`.python-version`, which is free to move ahead of it.
 
-The add-on is the binding one, and the hazard is that it is also the invisible
-one. `ruff format` rewrites to its `target-version` -- at `py314` a
-parenthesized multi-type `except` becomes the PEP 758 unparenthesized form --
-so that knob decides which syntax gets written INTO the bundled CLI and the
-`zwave/` + `zwave_parameter_manager/` modules it shares with the HA side. If
-`target-version` tracked `.python-version`, moving the dev machine to a newer
-Python would quietly push syntax the add-on cannot parse into code it runs,
-with every check here still green. So `target-version` is gated against
-`shipped-python-version`, never against the pin, and `.python-version` is free
-to move ahead of it.
+`tests/test_analysis_deps.py` also parses every off-machine source -- all of
+`custom_components/` plus the plain-`python3` host helpers -- at the declared
+floor. That constrains the grammar, the half the formatter moves. Semantics
+are not covered: a newer stdlib call, or an annotation that resolves only
+under deferred evaluation, parses clean and fails later or not at all. That is
+safe only while the declared floor really is the lowest interpreter in play,
+which is why the floor is read off those two platforms rather than chosen
+here, and why it only ever rises. Every `requires-python` in the repo must sit
+at or above it.
 
-A floor nothing exercises is a claim, so `tests/test_analysis_deps.py` also
-parses every off-machine source -- all of `custom_components/` plus the
-plain-`python3` host helpers -- at the declared floor. `ast.parse`'s
-`feature_version` constrains the grammar, which is the half the formatter
-moves: a construct it emits above the floor fails to parse and the check goes
-red. Semantics are not covered -- a newer stdlib call, or an annotation that
-resolves only under deferred evaluation, parses clean on an older grammar and
-fails later or not at all. That residue is safe only while the declared floor
-really is the lowest interpreter in play, which is why the floor is read off
-those two platforms rather than chosen here, and why it only ever rises.
-
-Raising `shipped-python-version` is a compatibility decision rather than a
-convenience; the checklist lives in the comment on the key itself, next to the
-value it governs. Every `requires-python` in the repo must also sit at or
-above it -- a script declaring less is declaring support it loses the moment
-it imports a module written at the floor.
-
-The README states the add-on requirement where the `apks` list that installs
-`python3` is configured, because that is where a user can act on it. An add-on
-image below the floor does not refuse politely: the CLI dies on a
-`SyntaxError` from whichever module reached the newer grammar first, with
-nothing in the traceback naming the image. The guard cannot live in
-`zwavectl.py` -- the parse failure precedes any statement in it -- so the
-README is the whole of the warning.
+An add-on image below the floor does not refuse politely: the CLI dies on a
+`SyntaxError` before any statement in `zwavectl.py` runs, so the CLI cannot
+guard against it. The README states the add-on requirement where the `apks`
+list is configured, because that is where a user can act on it, and it is the
+whole of the warning.
 
 ### Manifest version bump rule
 
 The integration version in `custom_components/blueprint_toolkit/manifest.json`
 must increment with every commit that changes anything under
 `custom_components/`, and stay equal otherwise. `tests/test_manifest.py`
-enforces both this rule and the canonical formatting
-(`json.dumps(..., indent=2)` plus a trailing newline) in the default test run.
+enforces both this rule and the canonical formatting.
 
 Before committing any change under `custom_components/`, bump the patch:
 
@@ -523,21 +324,17 @@ Before committing any change under `custom_components/`, bump the patch:
 scripts/bump-manifest-version.py
 ```
 
-The script rewrites `manifest.json` and re-stages it. For non-patch bumps (a
-deliberate minor or major graduation), edit the manifest by hand instead --
-the test only checks that the version is strictly greater than the parent's,
-not that it's exactly +1.
+The script rewrites `manifest.json` and re-stages it. For a deliberate minor
+or major graduation, edit the manifest by hand instead -- the test only checks
+that the version is strictly greater than the parent's.
 
 ### Releasing (tag + GitHub release)
 
-HACS surfaces installable versions from GitHub Releases. Once at least one
-Release exists in the repo, HACS shows only Releases as version candidates --
-commits pushed to main between Releases are invisible to users until the next
-Release is published. (Pre-first-Release, HACS falls back to tracking the
-latest commit SHA, but that state ends as soon as the first Release lands and
-never returns.) Tagging and releasing are kept separate from `git push` so a
-manifest bump can sit on main without auto-publishing -- run
-`scripts/release.py` only when you want HACS users to see the new version:
+HACS shows only GitHub Releases as version candidates, so commits pushed to
+main are invisible to users until the next Release is published. Tagging and
+releasing are kept separate from `git push` so a manifest bump can sit on main
+without auto-publishing -- run `scripts/release.py` only when you want HACS
+users to see the new version:
 
 ```bash
 git push                       # land commits on origin
@@ -549,251 +346,149 @@ The script reads the version from HEAD's `manifest.json`, creates the local
 annotated tag `vX.Y.Z` if missing, pushes the tag, and creates the GitHub
 release via `gh` (release notes default to HEAD's commit body). Each step is
 idempotent, so re-running after a partial failure picks up where the previous
-run stopped.
-
-Refuses if HEAD isn't reachable from `origin/main` -- push commits before
-publishing the release.
-
-Non-bumping commits at HEAD (docs-only follow-ups, comment fixes, etc.) are
-detected (the version's tag already exists at an older ancestor commit) and
-the script exits cleanly without creating a duplicate release.
+run stopped. It refuses if HEAD isn't reachable from `origin/main`, and exits
+cleanly without a duplicate release when HEAD is a non-bumping commit whose
+version is already tagged.
 
 ### Code quality
 
 Lint, format, and type checks run as the parametrized
 `_repo_shared/tests/test_code_quality.py` suite, one case per discovered `.py`
-file. Ruff follows the current default rules and keeps the canonical `E`, `F`,
-`W`, `I`, `B`, `UP`, and `ARG` categories enabled through
-`[tool.ruff.lint] extend-select`. The vendored `_repo_shared` tree is excluded
-from standalone Ruff runs; its exact content is covered by the shared drift
-test.
+file. For a single file, use
+`pytest _repo_shared/tests/test_code_quality.py -k <path/to/file>`. Ruff also
+runs standalone (`uvx ruff check .`, `uvx ruff format .`); bare `uvx mypy`
+cannot resolve `homeassistant.*` without HA installed.
 
-`[tool.ruff.lint.per-file-ignores]` exempts `TRY004` for two files, each for a
-reason that holds in that file. The Z-Wave mapping parser
-(`zwave_parameter_manager/logic.py`) reports every malformed-input problem as
-`ValueError`, and `scripts/validate_zwave_mapping_proposal.py` catches exactly
-that while the logic tests assert it -- raising `TypeError` for the type
-failures alone would escape that handler and turn a bad mapping file into a
-traceback. The mapping verifier (`scripts/verify_zwave_mapping.py`) is a
-standalone operator-facing tool whose exceptions nothing catches, so it uses
-`ValueError` uniformly to match the parser it verifies.
+Ruff follows the current default rules and keeps the canonical `E`, `F`, `W`,
+`I`, `B`, `UP`, and `ARG` categories enabled through
+`[tool.ruff.lint] extend-select`. The vendored `_repo_shared` tree is
+excluded; the shared drift test covers its exact content.
 
-Prefer fixing a rule's complaint over adding an entry here, and suppress a
-one-off inline with `# noqa: <rule> - <reason>` -- as
-`scripts/zwave_db_extract.py` does at its three sites, where no uniform
-contract exists to justify exempting the file.
+Prefer fixing a rule's complaint over adding a
+`[tool.ruff.lint.per-file-ignores]` entry; the existing entries carry their
+reasons in `pyproject.toml`. Suppress a one-off inline with
+`# noqa: <rule> - <reason>`, as `scripts/zwave_db_extract.py` does.
 
 mypy `--strict` deps come from each file's PEP 723 `# /// script` block when
 present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
-`pyproject.toml` (HACC, `zwave-js-server-python` and `types-PyYAML`, at
-`mypy-python-version = "3.14"`). Per-file blocks are kept only where a file
-needs more than the fallback -- e.g. the HACC test files under `tests/` add
-`pytest` / `pytest-cov`. Other files fall through to plain `mypy --strict` in
-the project venv; `pyproject.toml`'s `[[tool.mypy.overrides]]` covers
-transitive imports a checkout may not have installed (`homeassistant.*`,
-probatio, jinja2, socketio, etc.).
+`pyproject.toml`. Per-file blocks are kept only where a file needs more than
+the fallback -- e.g. the HACC test files under `tests/` add `pytest` /
+`pytest-cov`. Other files fall through to plain `mypy --strict` in the project
+venv; `pyproject.toml`'s `[[tool.mypy.overrides]]` covers transitive imports a
+checkout may not have installed.
 
 **Nothing under `custom_components/` carries a PEP 723 block.** The
 integration modules there are imported by Home Assistant, which runs them on
 its own interpreter against the packages it installed, so a dependency pin
 written beside them describes a dev-machine analysis environment the shipped
-code never resolves. They take the fallback instead, which is why
-`zwave-js-server-python` lives there rather than in the Z-Wave modules.
+code never resolves. They take the fallback instead, and
 `tests/test_analysis_deps.py` gates the rule.
 
-The bundled CLI under `bundled/bin/` is the exception that proves the rule is
-about analysis deps specifically: it ships through the same tree but runs
+The bundled CLI under `bundled/bin/` ships through the same tree but runs
 outside Home Assistant, on a plain `python3` with a venv it bootstraps itself,
 so its `VENV_DEPS` list is a genuine runtime dependency set rather than an
 analysis one. It pins `zwave-js-server-python` to the version the fallback
 names, because the integration modules it imports are only type-checked
 against that one.
 
-`repo-shared init` injected `testpaths = ["tests", "_repo_shared/tests"]` into
-`[tool.pytest.ini_options]`, so a bare `uv run pytest` runs both this repo's
-own tests and the shared suite in one invocation.
-
 #### Analysis-dep pinning and stub suppressions
 
 The three kinds of analysis dep are pinned on different policies, and the
-differences are deliberate.
+differences are deliberate. The comment on `mypy-extra-deps` in
+`pyproject.toml` carries the reasoning.
 
-`pytest-homeassistant-custom-component` is pinned to an exact version, because
-the pin decides which Home Assistant API surface the code type-checks against
-and a floating one would move that surface mid-run. The upgrade command
-described above owns bumping it -- don't move the pin by hand -- and it lands
-a bump only when the suite passes against it, so the pin follows the newest
-release the suite passes against. `pyproject.toml` carries the reasoning; it
-is not repeated here.
+- **`pytest-homeassistant-custom-component`** is an exact pin that decides
+  which HA API surface the code type-checks against. `scripts/hacc_upgrade.py`
+  owns bumping it; don't move it by hand. The pin says what the code is
+  *validated* against, not what users run: `hacs.json` declares the supported
+  HA floor.
+- **`zwave-js-server-python`** is an exact pin whose value is derived: it has
+  to be whatever HA's `zwave_js` component requires at the pinned release, or
+  every Z-Wave phase dies in collection on a missing name that points at the
+  library rather than the pin. `hacc_upgrade.py` reads it out of the release
+  and rewrites every site in the same commit, stopping rather than guessing if
+  the sites already disagree. One site is the bundled CLI's runtime list, so
+  that rewrite changes shipped code and also bumps the integration version.
+- **Type stubs** (`types-PyYAML`) are unpinned at every site, so every run
+  resolves whatever typeshed published last. "Latest" is the only
+  configuration the checks have to satisfy, at the cost that a typeshed
+  release can turn CI red on an unrelated change.
 
-The pin says what the code is *validated* against, not what users run.
-`hacs.json` declares the supported Home Assistant floor, and that is the
-compatibility statement.
+Two rules keep the pins honest. Neither this section nor `pyproject.toml`
+names a pinned version in prose, because automation moves the literal and
+prose would not follow. And every declaration site must name the *same*
+version: `hacc_upgrade.py` only rewrites sites carrying the version it is
+replacing, so a site that has drifted to a third version is invisible to it.
+`tests/test_analysis_deps.py` gates that agreement separately.
 
-Neither this section nor `pyproject.toml` names the pinned version in prose.
-Automation moves that literal; prose restating it does not follow, and goes
-stale silently. The pin itself is the only place the version is written down.
-
-Every declaration site must name the *same* version. `scripts/hacc_upgrade.py`
-rewrites the sites carrying the version it is replacing, so one that has
-already drifted to some third version is invisible to it and would type-check
-against a different Home Assistant release indefinitely.
-`tests/test_analysis_deps.py` gates that agreement separately, which is what
-makes such drift recoverable rather than silent.
-
-`zwave-js-server-python` is a second exact pin, but its value is not a choice:
-it has to be whatever Home Assistant's own `zwave_js` component requires at
-the pinned release, because that component imports from the library and pins
-one exact version in its manifest. When the two disagree, HA's component fails
-to import against the older library and every Z-Wave phase dies in collection
-on a missing name -- a failure that names the library, not the pin that chose
-it. It is declared at more sites than the fallback alone, because the bundled
-CLI installs it at runtime too, and all of them must name the same version.
-
-Because the value is derived rather than chosen, `scripts/hacc_upgrade.py`
-reads it out of the release it is bumping to and rewrites every site in the
-same commit, so the weekly bump keeps both pins coherent without a human in
-the loop. It resolves nothing when the repo declares no such pin, and stops
-rather than guessing if the sites already disagree.
-`tests/test_analysis_deps.py` gates the agreement separately, for the case
-where the pins move by some other route.
-
-One of those sites is the bundled CLI's runtime list, which lives under
-`custom_components/`, so the tool's own rewrite changes shipped code and
-`tests/test_manifest.py` then requires the integration version to increment.
-The bump therefore runs `scripts/bump-manifest-version.py` whenever its
-rewrite touched that tree -- the version really did change for users -- and
-leaves the manifest alone otherwise, which is what that test demands in the
-other direction.
-
-Type-stub packages (`types-PyYAML`) are left unpinned. They ship nothing to
-Home Assistant and have no effect on the deployed integration -- they are
-analysis-only, resolved by mypy locally and in CI. Nothing pins them at any
-declaration site, so every run resolves whatever typeshed published last,
-which makes "latest" the only configuration the checks have to satisfy. The
-cost is that a typeshed release can turn CI red on an unrelated change; the
-repair is below, and it is cheap.
-
-That has a direct consequence for suppressions. When a stub release annotates
-something that was previously bare, the `# type: ignore[...]` guarding it
-becomes an unused ignore and `--strict` fails. **Fix that by deleting the
-suppression**, not by pairing it with `unused-ignore` so it stays valid under
-both stub generations: no configured run selects the older release, and a
-suppression that outlives the condition justifying it describes the stubs as
-they were rather than as they are.
+When a stub release annotates something previously bare, the
+`# type: ignore[...]` guarding it becomes an unused ignore and `--strict`
+fails. **Fix that by deleting the suppression**, not by pairing it with
+`unused-ignore`: no configured run selects the older release, and a
+suppression that outlives its condition describes the stubs as they were.
 
 The `[<code>,unused-ignore]` pairs under `custom_components/` are the other
-case -- those guard Home Assistant's own stubs, which arrive with the *pinned*
-HACC dep and change only when that pin is bumped. There the pairing lets a
-bump land without breaking the build, so it earns its keep.
-
-### Standalone checks
-
-```bash
-uvx ruff check .
-uvx ruff format .
-```
-
-Bare `uvx mypy` from a checkout cannot resolve `homeassistant.*` without HA
-installed; run `uv run pytest _repo_shared/tests` instead, or invoke a single
-file via `pytest _repo_shared/tests/test_code_quality.py -k <path/to/file>`.
-`./tests/run_all.py` exercises the same shared phase at the end of its
-per-handler test sweep.
+case. Those guard Home Assistant's own stubs, which arrive with the *pinned*
+HACC dep and change only when that pin is bumped, so the pairing lets a bump
+land without breaking the build.
 
 ## HA deployment testing
 
-The repo ships two scripts that move local edits onto a running HA host:
+Two scripts move local edits onto a running HA host for iterative dev work:
 `scripts/dev-deploy.py` (run from the dev machine) and
-`scripts/dev-install.py` (run on the HA host itself; invoked by
-`dev-deploy.py`). The pair is for iterative dev work against a real HA
-instance, not for end-user installs (those go through HACS).
+`scripts/dev-install.py` (run on the HA host, invoked by `dev-deploy.py`).
+End-user installs go through HACS instead. Each script's module docstring
+covers how it works, and `--help` its flags.
 
 ### `scripts/dev-deploy.py` (dev-machine side)
 
-Builds a fresh timestamped copy of the integration on the HA host under
-`<workspace>/<YYYYMMDD_HHMMSS>/blueprint_toolkit/` (default workspace:
-`/config/ha-blueprint-toolkit`), flips
-`/config/custom_components/blueprint_toolkit` to a symlink pointing at the new
-build, runs the bundled `scripts/dev-install.py` on the host to refresh the
-`/config/blueprints/` symlinks, and restarts HA via the configured restart
-command. The first run preserves the HACS-installed integration as
-`<workspace>/<vX.Y.Z>/blueprint_toolkit/`; subsequent runs leave that snapshot
-alone.
+Builds a fresh timestamped copy of the integration on the HA host, flips
+`/config/custom_components/blueprint_toolkit` to it, and restarts HA. The
+first run preserves the HACS-installed integration, and `--restore` reinstates
+it, leaving the host as if dev-deploy had never run.
 
-HA is **always restarted** after a deploy (or restore). Integration code
-changes (`custom_components/.../*.py`) require a Python-level reload that the
-config-entry reload API doesn't provide; the restart is the only reliable way.
-
-By default the working tree must be clean. Useful flags:
-
-- `--restore` -- reverse a prior deploy. Reinstates the preserved HACS
-  snapshot at `/config/custom_components/blueprint_toolkit` and removes the
-  workspace, leaving the host as if dev-deploy had never run.
-- `--allow-dirty` -- skip the clean-tree check and ship working-tree content
-  as-is (tracked files with local edits plus untracked files not matching
-  `.gitignore`). For iterative dev only.
-- `--dry-run` -- print the plan and exit without touching the host.
-- `--host <user@host>` -- ssh target. Default `root@homeassistant`.
-- `--workspace <path>` -- on-host directory for build snapshots. Default
-  `/config/ha-blueprint-toolkit`.
-- `--ha-config <path>` -- HA's config dir on the host. Default `/config`.
-- `--cli-symlink-dir <path>` -- passed to `dev-install.py`'s
-  `--cli-symlink-dir`; controls where the bundled CLI scripts get symlinked.
-  Omit to skip CLI install.
-- `--ha-restart-cmd <cmd>` -- shell command run on the host after deploy.
-  Default `ha core restart`. Override for test environments without the
-  supervisor CLI.
+HA is **always restarted** after a deploy or restore: integration code changes
+need a Python-level reload the config-entry reload API doesn't provide. The
+working tree must be clean unless you pass `--allow-dirty`, which is for
+iterative dev only.
 
 ### `scripts/dev-install.py` (HA-host side)
 
-Plain Python (no uv). Reads the checked-out repo under `--repo-dir` and
-reconciles its bundled payload into `/config/blueprints/` (and optionally
-`<cli-symlink-dir>/`) as symlinks pointing back into the bundled subtree.
-Idempotent: ownership of an existing symlink is decided by its target -- any
-symlink whose target string contains the bundled subtree marker
-(`/custom_components/blueprint_toolkit/bundled/`) is treated as ours. Stale
-symlinks from renamed or removed bundled files get swept on the next run.
-Refuses to overwrite regular files at any destination. Invoked by
-`dev-deploy.py` on every push, but can also be run directly on the host during
-debugging.
+Plain Python (no uv). Reconciles the bundled payload beside it into
+`/config/blueprints/` (and optionally `<cli-symlink-dir>/`) as symlinks
+pointing back into the bundled subtree. It is idempotent: any symlink whose
+target contains `/custom_components/blueprint_toolkit/bundled/` counts as
+ours, stale ones from renamed or removed bundled files get swept, and it
+refuses to overwrite regular files. It can also be run directly on the host
+during debugging.
 
-Flags: `--ha-config <path>` (default `/config`), `--cli-symlink-dir <path>`
-(omit to skip CLI), `--dry-run`.
-
-It cannot filter by what git tracks: it runs on the HA host, against a payload
-already copied there, with no repository to consult. Selecting tracked content
-is `dev-deploy.py`'s job and it does that with `git ls-files`. What reaches
-the host is therefore whatever the copy produced, so the reconciler screens
-the payload by name as well -- see "macOS sidecars in a shipped payload"
-below.
+It cannot filter by what git tracks: it runs against a payload already copied
+to the host, with no repository to consult. Selecting tracked content is
+`dev-deploy.py`'s job (`git ls-files`), so the reconciler screens the payload
+by name as well -- see "macOS sidecars in a shipped payload" below.
 
 ### macOS sidecars in a shipped payload
 
-`dev-deploy.py` ships through `tar`, and macOS `tar` writes a file's extended
-attributes into an extra `._<name>` AppleDouble member. Every file in a
-checkout on macOS carries at least `com.apple.provenance`, so this applies to
-the whole payload. Two properties make it easy to miss:
+macOS `tar` writes a file's extended attributes into an extra `._<name>`
+AppleDouble member, and every file in a macOS checkout carries at least
+`com.apple.provenance`. Two properties make that easy to miss:
 
-- Apple's `tar` merges those members back into attributes when reading, so
-  `tar -tf` shows a clean archive locally. The host's `tar` has no such
-  behavior and writes them out as ordinary files.
-- A sidecar keeps the real file's extension. `._device_watchdog.yaml` matches
-  a `*.yaml` scan, and Home Assistant's blueprint scan is `glob("**/*.yaml")`,
-  which matches a leading dot -- so an installed sidecar reaches HA, which
-  tries to parse an AppleDouble blob as a blueprint.
+- Apple's `tar` merges those members back when reading, so `tar -tf` shows a
+  clean archive locally, while the host's `tar` writes them out as ordinary
+  files.
+- A sidecar keeps the real file's extension, and Home Assistant's blueprint
+  scan is `glob("**/*.yaml")`, which matches a leading dot -- so HA tries to
+  parse an AppleDouble blob as a blueprint.
 
 Two guards, because they fail differently. `dev-deploy.py` sets
-`COPYFILE_DISABLE=1` for the shipping `tar`, which keeps sidecars out of the
-archive at the source; `tests/test_dev_deploy.py` reads the stream with
-`tarfile` rather than `tar` so the check sees what the host would. And
-`reconciler.py` skips `._*` wherever it discovers a source by extension, which
-covers a payload that arrived by some other route and sweeps sidecars a
-previous deploy already installed.
+`COPYFILE_DISABLE=1` for the shipping `tar`, which keeps sidecars out at the
+source; `tests/test_dev_deploy.py` reads the stream with `tarfile` so the
+check sees what the host would. And `reconciler.py` skips `._*` wherever it
+discovers a source by extension, which covers a payload that arrived by
+another route and sweeps sidecars a previous deploy already installed.
 
-Neither guard depends on one never being committed. `.gitignore` here is a
-shared template managed by `repo-shared`, so an ignore rule for `._*` belongs
-upstream in that template rather than as a local divergence; the reconciler
-screens the payload either way.
+`.gitignore` here is a shared template, so an ignore rule for `._*` belongs
+upstream in `repo-shared` rather than as a local divergence.
 
 ### Reading state from a deployed instance
 
@@ -807,44 +502,12 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 ```
 
 Persistent notifications aren't exposed as `/api/states` entities in HA
-2026.4+; fetch them via the websocket `persistent_notification/get` command
-when you need to verify notification content. `scripts/ha_ws_fetch.py` wraps
-that handshake -- a plain-`python3` (no-uv) helper meant to run on the HA host
-(see `DEVELOPMENT_AGENT.md` "Reaching the HA API").
+2026.4+; fetch them via the websocket `persistent_notification/get` command.
+`scripts/ha_ws_fetch.py` wraps that handshake -- a plain-`python3` (no-uv)
+helper meant to run on the HA host (see `DEVELOPMENT_AGENT.md` "Reaching the
+HA API").
 
 ## Commit messages
 
-- Use `- component: Summary of change.` format.
-- Include a `Co-Authored-By: <AI Model XXX>` trailer for AI-assisted commits.
-- Don't restate the manifest version bump in the commit message; the bump is
-  automatic and restating is noise.
-
-**Explain the why, not the what.** The diff already shows what changed. The
-commit message should give a future reader the context they can't derive from
-the diff: the motivating problem, the constraint or invariant the change
-satisfies, and any non-obvious tradeoffs or alternatives considered. Aim for a
-one-line subject plus one to three short paragraphs. Past three paragraphs and
-you're almost certainly over-explaining.
-
-Specifically, do NOT include:
-
-- Lists of every file or call site touched. The diff enumerates them; if the
-  scope is "every site of pattern X" just say so once. This applies to any
-  prefix variant -- `Touched:`, `Files changed:`, `Affected:`, `Sites:`, etc.
-  -- which is just the same list with a label.
-- Test inputs, fixture values, or the specific bad-shape cases a regression
-  test exercises -- the test code is the source of truth.
-- Sub-decisions that are obvious from the code (which field type was used,
-  which helper the code now calls, how a loop is structured).
-- Restatements of points already in an earlier paragraph of the same message.
-- References to symbols / tests / functions / files that the same diff
-  *removes* or replaces. A subject like "Replaces the per-handler
-  `_FooHandler.bar` with a generic base" is a trap: future readers grep for
-  the named symbol and find nothing because the same commit deleted it. State
-  the new artifact on its own terms; the diff already shows the deletion.
-- Pointers to ephemeral agent-facing scratch -- "The followup notes ...", "the
-  tmp/<slug>-... scope", "as discussed in the earlier review", "the P\<n>
-  tracker entry says ...". Followups files, `tmp/` scopes, code-review
-  threads, and review-input files are working state that does not survive in
-  `git log`. If a constraint matters, restate it inline; if it's just a paper
-  trail, drop it.
+Don't restate the manifest version bump in the commit message; the bump is
+automatic and restating is noise.

@@ -4,9 +4,9 @@ Conventions and patterns for the automations shipped by this integration. Read
 this when writing a new automation, modifying an existing one, or reviewing
 such a change.
 
-The companion `DEVELOPMENT.md` covers dev-process content (code review, doc
-hygiene, testing, releases). This file documents conventions and patterns
-specific to the automations themselves.
+The companion `DEVELOPMENT.md` covers the dev process (doc hygiene, testing,
+deploys, releases). This file documents conventions and patterns specific to
+the automations themselves.
 
 ## Architecture
 
@@ -1175,6 +1175,6 @@ internal) as a sub-heading.
 
 Configuration / attribute reference tables in user docs stay as markdown
 tables; they render cleanly in HTML and on GitHub, which is where users read
-them. (The "prefer lists over tables" rule in `DEVELOPMENT.md` applies to
-developer-facing docs that are read in plain text more often than in a
+them. (The "prefer lists over tables" rule in `DEVELOPMENT_SHARED.md` applies
+to developer-facing docs that are read in plain text more often than in a
 browser.)
