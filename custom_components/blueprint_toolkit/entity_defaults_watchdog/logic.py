@@ -193,6 +193,8 @@ class EntityDriftInfo:
     # The entity's whole name as HA computes it today, which
     # for a legacy entity can differ from any stored value.
     full_name: str
+    # The name HA shows, which the entity name exclude matches.
+    friendly_name: str
     # True when HA's "Use device name" switch reads on. HA
     # stores no flag for it: it reads on while the entity's
     # own name, less any device name prefix, is empty.
@@ -385,6 +387,8 @@ class DevicelessEntityInfo:
     # for state-only entities, ``attributes.friendly_name``.
     # Empty string when no name is set.
     effective_name: str
+    # The name HA shows, which the entity name exclude matches.
+    friendly_name: str
     # Registry ``entry.platform`` -- the integration that
     # supplied the entity.  None for state-only entities.
     platform: str | None
@@ -825,7 +829,7 @@ def _check_entity_drift(
     if _is_excluded(
         config,
         entity.entity_id,
-        entity.current_name,
+        entity.friendly_name,
     ):
         return None
 
@@ -1127,7 +1131,7 @@ def _evaluate_device(
             if _is_excluded(
                 config,
                 entity.entity_id,
-                entity.current_name,
+                entity.friendly_name,
             ):
                 excluded += 1
         else:
@@ -1301,7 +1305,7 @@ def _evaluate_deviceless(
         if _is_excluded(
             config,
             entity.entity_id,
-            entity.effective_name,
+            entity.friendly_name,
         ):
             excluded += 1
             continue
@@ -1633,12 +1637,10 @@ class DirectiveInputs:
       about.
     - ``entity_id_candidates``: the same set as
       ``all_entity_ids``.
-    - ``entity_name_candidates``: the union of ``name`` and
-      ``original_name`` across every entity-registry entry
-      (NOT ``name_by_user``, which is device-registry only;
-      the entity registry's user-set name lives in
-      ``name``), plus each deviceless entity's effective
-      name.
+    - ``entity_name_candidates``: every name the entity name
+      exclude is measured against: the friendly name of each
+      entity-registry entry, plus those of the deviceless
+      inputs and visible-aliased candidates.
     """
 
     enabled: bool

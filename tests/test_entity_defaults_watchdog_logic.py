@@ -94,6 +94,7 @@ def _entity_drift(
     current_name: str = "Test",
     expected_name: str | None = None,
     full_name: str | None = None,
+    friendly_name: str | None = None,
     uses_device_name: bool = False,
     has_redundant_prefix: bool = False,
 ) -> EntityDriftInfo:
@@ -105,6 +106,7 @@ def _entity_drift(
         current_name=current_name,
         expected_name=expected_name,
         full_name=current_name if full_name is None else full_name,
+        friendly_name=current_name if friendly_name is None else friendly_name,
         uses_device_name=uses_device_name,
         has_redundant_prefix=has_redundant_prefix,
     )
@@ -196,6 +198,56 @@ class TestIsExcluded:
         assert _is_excluded(cfg, "sensor.b", "B") is True
         assert _is_excluded(cfg, "sensor.c", "Ignore Me") is True
         assert _is_excluded(cfg, "sensor.c", "Keep") is False
+
+
+class TestNameExcludeMatchesFriendlyName:
+    def _humidity(self) -> EntityDriftInfo:
+        return _entity_drift(
+            entity_id="sensor.old_id",
+            expected_entity_id="sensor.view_plus_humidity",
+            current_name="Humidity",
+            friendly_name="View Plus Humidity",
+        )
+
+    def test_device_entity_matches_the_name_ha_shows(self) -> None:
+        cfg = _config(exclude_entity_name_regex="^View Plus Humidity$")
+        assert _check_entity_drift(cfg, self._humidity(), _device()) is None
+
+    def test_device_entity_ignores_its_stored_name(self) -> None:
+        cfg = _config(exclude_entity_name_regex="^Humidity$")
+        result = _check_entity_drift(cfg, self._humidity(), _device())
+        assert result is not None
+        assert result.id_drifted is True
+
+    def test_device_result_counts_the_exclusion(self) -> None:
+        cfg = _config(exclude_entity_name_regex="^View Plus Humidity$")
+        result = _evaluate_device(
+            cfg,
+            _device(entities=[self._humidity()]),
+        )
+        assert result.has_issue is False
+        assert result.entities_excluded == 1
+
+    def test_deviceless_entity_matches_the_name_ha_shows(self) -> None:
+        cfg = _config(exclude_entity_name_regex="^Shown Name$")
+        entity = _deviceless(
+            "input_boolean.old_id",
+            effective_name="Stored Name",
+            friendly_name="Shown Name",
+        )
+        result = _evaluate_deviceless(cfg, [entity], {})
+        assert result.has_issue is False
+        assert result.entities_excluded == 1
+
+    def test_deviceless_entity_ignores_its_stored_name(self) -> None:
+        cfg = _config(exclude_entity_name_regex="^Stored Name$")
+        entity = _deviceless(
+            "input_boolean.old_id",
+            effective_name="Stored Name",
+            friendly_name="Shown Name",
+        )
+        result = _evaluate_deviceless(cfg, [entity], {})
+        assert result.has_issue is True
 
 
 class TestCheckEntityDrift:
@@ -1182,10 +1234,14 @@ def _deviceless(
     unique_id: str | None = None,
     from_registry: bool = True,
     config_entry_id: str | None = "ui_entry",
+    friendly_name: str | None = None,
 ) -> DevicelessEntityInfo:
     return DevicelessEntityInfo(
         entity_id=entity_id,
         effective_name=effective_name,
+        friendly_name=(
+            effective_name if friendly_name is None else friendly_name
+        ),
         platform=platform,
         unique_id=unique_id,
         from_registry=from_registry,

@@ -1174,6 +1174,82 @@ class TestVisibleAliasedScan:
             ]
             assert len(repair_issues) == expected
 
+    async def test_name_exclude_matches_the_source_friendly_name(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.den",
+            wrapper_entity_id="den",
+            wrapper_target_domain="fan",
+            source_friendly_name="Den Fan",
+            source_hidden_by=None,
+        )
+        hass.states.async_set(
+            "switch.den",
+            "off",
+            {"friendly_name": "Den Exhaust"},
+        )
+
+        for pattern, expected in (("", 1), ("^Den Exhaust$", 0)):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    drift_checks=["visible-aliased-entity"],
+                    create_repairs=True,
+                    exclude_entity_name_regex=pattern,
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+            repairs = [
+                i
+                for i in ir.async_get(hass).issues.values()
+                if i.domain == DOMAIN and "__repair_" in i.issue_id
+            ]
+            assert len(repairs) == expected, pattern
+
+    async def test_excluding_a_nameless_source_is_not_unmatched(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.den",
+            wrapper_entity_id="den",
+            wrapper_target_domain="fan",
+            source_friendly_name="",
+            source_hidden_by=None,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=["visible-aliased-entity"],
+                exclude_entity_name_regex=r"^switch\.den$",
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert not [
+            notification_id
+            for notification_id in _async_get_or_create_notifications(hass)
+            if "unmatched_directives" in notification_id
+        ]
+
     async def test_repair_header_names_the_source_device_area(
         self,
         hass: HomeAssistant,
@@ -1633,6 +1709,40 @@ class TestScriptYamlKeyScan:
             original_name=friendly_name,
         )
         return entry.entity_id
+
+    async def test_name_exclude_matches_the_friendly_name(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        eid = self._plant_script(
+            hass,
+            unique_id="bath_fan",
+            suggested_object_id="bathroom",
+        )
+        hass.states.async_set(eid, "off", {"friendly_name": "Bath Exhaust"})
+
+        for pattern, expected in (("", 1), ("^Bath Exhaust$", 0)):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    drift_checks=["script-yaml-key"],
+                    create_repairs=True,
+                    exclude_entity_name_regex=pattern,
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+            repairs = [
+                i
+                for i in ir.async_get(hass).issues.values()
+                if i.domain == DOMAIN and "__repair_" in i.issue_id
+            ]
+            assert len(repairs) == expected, pattern
 
     async def test_create_repairs_true_publishes_repair(
         self,
@@ -2729,6 +2839,152 @@ class TestRedundantPrefixComesFromHomeAssistant:
         ]
         assert len(bodies) == 1
         assert section in bodies[0]
+
+
+class TestNameExcludeMatchesFriendlyName:
+    async def _scan(
+        self,
+        hass: HomeAssistant,
+        drift_check: str,
+        pattern: str = "",
+    ) -> None:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=[drift_check],
+                create_repairs=True,
+                exclude_entity_name_regex=pattern,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    def _repairs(self, hass: HomeAssistant) -> list[str]:
+        from homeassistant.helpers import issue_registry as ir
+
+        return [
+            i.issue_id
+            for i in ir.async_get(hass).issues.values()
+            if i.domain == DOMAIN and "__repair_" in i.issue_id
+        ]
+
+    def _unmatched(self, hass: HomeAssistant) -> str:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        return "".join(
+            n["message"]
+            for nid, n in _async_get_or_create_notifications(hass).items()
+            if "unmatched_directives" in nid
+        )
+
+    def _plant_drifted_sensor(self, hass: HomeAssistant) -> str:
+        """Plant a modern entity with a drifted ID; return that ID."""
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        fake_entry = _mock_config_entry(
+            domain="fake_integration",
+            title="fake_integration",
+        )
+        fake_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_integration", "air")},
+            name="View Plus",
+        )
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="humidity",
+            device_id=device.id,
+            has_entity_name=True,
+            original_name="Humidity",
+            object_id_base="Humidity",
+        )
+        ent_reg.async_update_entity(
+            entry.entity_id,
+            new_entity_id="sensor.old_id",
+        )
+        return "sensor.old_id"
+
+    @pytest.mark.parametrize(
+        ("friendly_name", "pattern"),
+        [
+            ("View Plus Humidity", "^View Plus Humidity$"),
+            ("Damp Meter", "^Damp Meter$"),
+            # An entity with no state takes the name HA computes.
+            (None, "^View Plus Humidity$"),
+        ],
+    )
+    async def test_device_entity_is_excluded_by_the_name_ha_shows(
+        self,
+        hass: HomeAssistant,
+        friendly_name: str | None,
+        pattern: str,
+    ) -> None:
+        await _setup_integration(hass)
+        entity_id = self._plant_drifted_sensor(hass)
+        if friendly_name is not None:
+            hass.states.async_set(
+                entity_id,
+                "50",
+                {"friendly_name": friendly_name},
+            )
+
+        await self._scan(hass, "device-entity-id")
+        assert len(self._repairs(hass)) == 1
+
+        await self._scan(hass, "device-entity-id", pattern)
+        assert self._repairs(hass) == []
+        assert self._unmatched(hass) == ""
+
+    async def test_integration_name_no_longer_excludes(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        entity_id = self._plant_drifted_sensor(hass)
+        hass.states.async_set(
+            entity_id,
+            "50",
+            {"friendly_name": "View Plus Humidity"},
+        )
+
+        await self._scan(hass, "device-entity-id", "^Humidity$")
+
+        assert len(self._repairs(hass)) == 1
+        assert "exclude_entity_name_regex" in self._unmatched(hass)
+
+    async def test_deviceless_entity_is_excluded_by_the_name_ha_shows(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        er.async_get(hass).async_get_or_create(
+            domain="input_boolean",
+            platform="input_boolean",
+            unique_id="old_id",
+            suggested_object_id="old_id",
+            original_name="Stored Name",
+        )
+        hass.states.async_set(
+            "input_boolean.old_id",
+            "off",
+            {"friendly_name": "Shown Name"},
+        )
+
+        await self._scan(hass, "entity-id")
+        assert len(self._repairs(hass)) == 1
+
+        await self._scan(hass, "entity-id", "^Shown Name$")
+        assert self._repairs(hass) == []
+        assert self._unmatched(hass) == ""
 
 
 class TestFindingLifecycle(WatchdogFindingLifecycleBase):

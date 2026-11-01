@@ -182,6 +182,9 @@ def install_homeassistant_stubs(
         "entity_registry_updated"
     )
     helpers_er.async_get = lambda _hass: None  # type: ignore[attr-defined]
+    helpers_er.async_get_full_entity_name = (  # type: ignore[attr-defined]
+        lambda _hass, _entry: ""
+    )
 
     # Default no-op stubs for the two HA helpers a handler
     # might subscribe to. Per-port test files swap these for

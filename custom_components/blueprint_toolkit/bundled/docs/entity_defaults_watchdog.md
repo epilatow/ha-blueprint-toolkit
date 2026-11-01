@@ -61,7 +61,7 @@ None.
 | Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                                                                           |
 | Exclude entities                      | Specific entities to exclude from all checks.                                                                                                                                                                                                                    |
 | Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                                                                                                                            |
-| Entity name exclude regex             | Skip entities whose name matches. One pattern per line.                                                                                                                                                                                                          |
+| Entity name exclude regex             | Skip entities whose friendly name matches. One pattern per line.                                                                                                                                                                                                 |
 | Check interval (minutes)              | Minutes between drift evaluations.                                                                                                                                                                                                                               |
 | Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                                                                                                                      |
 | Create repairs for fixable findings   | Default on. Routes entity-ID drift, entity-name drift, visible-aliased, and script YAML-key findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Script YAML-key drift surfaces ONLY when this is on. See **Repairs** below. |
@@ -278,7 +278,7 @@ notification clears on the next scan:
 - **Exclude entities**: pick specific entity IDs from a list.
 - **Entity ID exclude regex**: match entity IDs by pattern (e.g., `battery` to
   skip all battery entities).
-- **Entity name exclude regex**: match entity names by pattern.
+- **Entity name exclude regex**: match friendly names by pattern.
 - **Device name exclude regex**: skip entire devices by name.
 - **Include / Exclude integrations**: keep or skip everything an integration
   owns. Excluding an integration skips every device it has an entity on,

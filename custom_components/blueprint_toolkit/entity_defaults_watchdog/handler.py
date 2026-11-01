@@ -62,6 +62,7 @@ from ..helpers import (
     automation_friendly_name,
     cv_ha_domain_list,
     device_area_name,
+    entity_friendly_names,
     entry_for_domain,
     integration_device_ids,
     integration_entity_ids,
@@ -403,12 +404,15 @@ async def _async_service_layer(
         name for d in dev_reg.devices if (name := d.name_by_user or d.name)
     )
     entity_id_candidates = all_entity_ids
-    entity_name_candidates: frozenset[str] = frozenset(
-        v
-        for e in ent_reg.entities.values()
-        for v in (e.name, e.original_name)
-        if v
-    ) | {e.effective_name for e in deviceless_entities}
+    entity_name_candidates: frozenset[str] = (
+        frozenset(
+            name
+            for e in ent_reg.entities.values()
+            if (name := _friendly_name(hass, e))
+        )
+        | {e.friendly_name for e in deviceless_entities}
+        | {c.source_friendly_name for c in visible_aliased_candidates}
+    )
 
     directive_inputs = logic.DirectiveInputs(
         enabled=validate_includes_excludes,
@@ -630,6 +634,7 @@ def _build_device_inputs(
                         current_name=current_name,
                         expected_name=expected_name,
                         full_name=er.async_get_full_entity_name(hass, entry),
+                        friendly_name=_friendly_name(hass, entry),
                         uses_device_name=not unprefixed_name,
                         has_redundant_prefix=(
                             entry.has_entity_name
@@ -642,6 +647,18 @@ def _build_device_inputs(
             logic.DeviceInfo(de=dev_entry, entities=entity_infos),
         )
     return devices
+
+
+def _friendly_name(hass: HomeAssistant, entry: er.RegistryEntry) -> str:
+    """The name HA shows for ``entry``, or "" if it has none.
+
+    An entity with no state, such as a disabled one, takes the
+    name HA computes from the registry.
+    """
+    eid = entry.entity_id
+    return entity_friendly_names(hass, [eid]).get(
+        eid,
+    ) or er.async_get_full_entity_name(hass, entry)
 
 
 def _default_friendly_name(obj_id: str) -> str:
@@ -719,6 +736,7 @@ def _build_deviceless_inputs(
             logic.DevicelessEntityInfo(
                 entity_id=entry.entity_id,
                 effective_name=effective,
+                friendly_name=_friendly_name(hass, entry) or effective,
                 platform=entry.platform,
                 unique_id=entry.unique_id,
                 from_registry=True,
@@ -748,6 +766,7 @@ def _build_deviceless_inputs(
             logic.DevicelessEntityInfo(
                 entity_id=eid,
                 effective_name=fn,
+                friendly_name=fn,
                 platform=None,
                 unique_id=None,
                 from_registry=False,
@@ -875,7 +894,7 @@ def _extract_visible_aliased_candidates(
                     else None
                 ),
                 source_friendly_name=str(
-                    source.name or source.original_name or source_eid,
+                    _friendly_name(hass, source) or source_eid,
                 ),
                 source_device_id=source.device_id,
                 source_config_entry_id=source.config_entry_id,
@@ -908,7 +927,7 @@ def _build_script_inputs(hass: HomeAssistant) -> list[logic.ScriptInfo]:
             logic.ScriptInfo(
                 entity_id=e.entity_id,
                 unique_id=e.unique_id or "",
-                friendly_name=(e.name or e.original_name or ""),
+                friendly_name=_friendly_name(hass, e),
             ),
         )
     return infos

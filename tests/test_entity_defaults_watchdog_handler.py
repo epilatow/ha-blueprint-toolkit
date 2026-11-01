@@ -658,9 +658,28 @@ class _FakeConfigEntries:
         return [e for e in self._entries if e.domain == domain]
 
 
+class _FakeState:
+    def __init__(self, friendly_name: str) -> None:
+        self.attributes = {"friendly_name": friendly_name}
+
+
+class _FakeStates:
+    def __init__(self, friendly_names: dict[str, str]) -> None:
+        self._friendly_names = friendly_names
+
+    def get(self, entity_id: str) -> _FakeState | None:
+        name = self._friendly_names.get(entity_id)
+        return None if name is None else _FakeState(name)
+
+
 class _FakeHassForBuilder:
-    def __init__(self, entries: list[_FakeConfigEntry]) -> None:
+    def __init__(
+        self,
+        entries: list[_FakeConfigEntry],
+        friendly_names: dict[str, str] | None = None,
+    ) -> None:
         self.config_entries = _FakeConfigEntries(entries)
+        self.states = _FakeStates(friendly_names or {})
 
 
 class TestExtractVisibleAliasedCandidates:
@@ -713,7 +732,7 @@ class TestExtractVisibleAliasedCandidates:
             domain="switch_as_x",
             options={"entity_id": "switch.foo", "target_domain": "fan"},
         )
-        h = _FakeHassForBuilder([entry])
+        h = _FakeHassForBuilder([entry], {"switch.foo": "Shown Foo"})
 
         candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
@@ -726,7 +745,7 @@ class TestExtractVisibleAliasedCandidates:
         assert c.wrapper_obj_ids == ("foo",)
         assert c.source_hidden_by is None
         assert c.source_disabled_by is None
-        assert c.source_friendly_name == "Foo"
+        assert c.source_friendly_name == "Shown Foo"
         assert c.source_platform == "lutron_caseta"
 
     def test_wrapper_missing_yields_no_wrapper_ids(self) -> None:
