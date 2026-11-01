@@ -61,6 +61,7 @@ from ..helpers import (
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
+    device_area_name,
     entry_for_domain,
     integration_device_ids,
     integration_entity_ids,
@@ -591,6 +592,7 @@ def _build_device_inputs(
                     name=device.name_by_user or device.name or "",
                     default_name=device.name or "",
                     integration_excluded=dev_id in excluded_device_ids,
+                    area=device_area_name(hass, dev_id),
                 )
                 populate_eids[dev_id] = {}
             ie = device_map[dev_id].integration_entities
@@ -839,11 +841,13 @@ def _extract_visible_aliased_candidates(
             continue
 
         device_name: str | None = None
+        device_area: str | None = None
         device_integrations: tuple[str, ...] = ()
         if source.device_id is not None:
             device = dr.async_get(hass).async_get(source.device_id)
             if device is not None:
                 device_name = device.name_by_user or device.name
+            device_area = device_area_name(hass, source.device_id)
             device_integrations = tuple(
                 sorted(
                     {
@@ -876,6 +880,7 @@ def _extract_visible_aliased_candidates(
                 source_device_id=source.device_id,
                 source_config_entry_id=source.config_entry_id,
                 source_device_name=device_name,
+                source_device_area=device_area,
                 source_device_integrations=device_integrations,
                 source_platform=source.platform,
                 source_integration_excluded=(

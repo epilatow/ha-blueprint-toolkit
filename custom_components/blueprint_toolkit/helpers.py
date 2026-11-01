@@ -21,6 +21,7 @@ from __future__ import annotations
 from .helpers_lifecycle import (
     all_integration_ids,
     cv_ha_domain_list,
+    device_area_name,
     file_editor_addon_ingress_url,
     integration_device_ids,
     integration_entity_ids,
@@ -129,6 +130,7 @@ __all__ = [
     "cv_ha_domain_list",
     "dashboard_link",
     "dashboard_url",
+    "device_area_name",
     "device_attribution_lines",
     "device_entity_link",
     "device_entity_url",

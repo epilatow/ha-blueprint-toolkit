@@ -1174,6 +1174,54 @@ class TestVisibleAliasedScan:
             ]
             assert len(repair_issues) == expected
 
+    async def test_repair_header_names_the_source_device_area(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.den",
+            wrapper_entity_id="den",
+            wrapper_target_domain="fan",
+            source_friendly_name="Den Fan",
+            source_hidden_by=None,
+            source_device_id="dev-den",
+        )
+        source = er.async_get(hass).async_get("switch.den")
+        assert source is not None
+        assert source.device_id is not None
+        area = ar.async_get(hass).async_get_or_create("Den")
+        dr.async_get(hass).async_update_device(
+            source.device_id,
+            area_id=area.id,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=["visible-aliased-entity"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        [issue] = [
+            i
+            for i in ir.async_get(hass).issues.values()
+            if i.domain == DOMAIN
+            and "__repair_fix_edw_visible_aliased_entity__" in i.issue_id
+        ]
+        attribution = (issue.translation_placeholders or {})["attribution"]
+        assert attribution.endswith(" (Den)")
+
     async def test_excluding_another_integration_on_the_device_clears_repair(
         self,
         hass: HomeAssistant,
@@ -2565,6 +2613,34 @@ class TestLegacyNamesFollowHomeAssistant:
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
         assert "`switch.old_id` -> `switch.main_bath_fan`" in entities
+
+    async def test_repair_header_names_the_device_area(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Fan",
+            original_name="Main Bath Fan",
+            entity_id="switch.main_bath_fan",
+        )
+        await self._rename_device(hass, device_id, "Fan")
+        er.async_get(hass).async_update_entity(
+            "switch.main_bath_fan",
+            name=None,
+        )
+
+        await self._scan(hass)
+
+        repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
+        attribution = (repairs[0].translation_placeholders or {})["attribution"]
+        assert (
+            f"Device: [Fan](/config/devices/device/{device_id}) (Main Bath)"
+            in attribution
+        )
 
     async def test_second_rename_flags_the_stale_name(
         self,

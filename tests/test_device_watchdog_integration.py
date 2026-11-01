@@ -964,6 +964,123 @@ class TestFindingLifecycle(WatchdogFindingLifecycleBase):
         return entry.device_id
 
 
+class TestDeviceAreaInHeader:
+    def _plant_device(self, hass: HomeAssistant) -> str:
+        """Plant a device in an area; return its ID."""
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+
+        zwave_entry = _mock_config_entry(domain="zwave_js")
+        zwave_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=zwave_entry.entry_id,
+            identifiers={("zwave_js", "vac")},
+            name="Vac",
+        )
+        area = ar.async_get(hass).async_get_or_create("Living Room")
+        dev_reg.async_update_device(device.id, area_id=area.id)
+        return device.id
+
+    async def test_health_notification_names_the_area(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant_device(hass)
+        entry = er.async_get(hass).async_get_or_create(
+            domain="binary_sensor",
+            platform="zwave_js",
+            unique_id="vac-status",
+            device_id=device_id,
+        )
+        hass.states.async_set(entry.entity_id, "unavailable")
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(enabled_checks=["unavailable-entities"]),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        bodies = [
+            n["message"]
+            for n in _async_get_or_create_notifications(hass).values()
+        ]
+        expected = (
+            f"Device: [Vac](/config/devices/device/{device_id}) (Living Room)"
+        )
+        assert any(expected in body for body in bodies), bodies
+
+    async def test_child_device_takes_the_area_of_its_parent(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import device_registry as dr
+
+        from custom_components.blueprint_toolkit.helpers import (
+            device_area_name,
+        )
+
+        parent_id = self._plant_device(hass)
+        dev_reg = dr.async_get(hass)
+        parent = dev_reg.async_get(parent_id)
+        assert parent is not None
+        child = dev_reg.async_get_or_create_child(
+            config_entry_id=parent.config_entry_id,
+            identifiers={("zwave_js", "vac-dock")},
+            name="Dock",
+            parent_device_id=parent_id,
+        )
+
+        assert device_area_name(hass, child.id) == "Living Room"
+
+    async def test_diagnostics_repair_names_the_area(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        device_id = self._plant_device(hass)
+        er.async_get(hass).async_get_or_create(
+            domain="sensor",
+            platform="zwave_js",
+            unique_id="vac-last-seen",
+            device_id=device_id,
+            original_name="Last seen",
+            entity_category=EntityCategory.DIAGNOSTIC,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                enabled_checks=["disabled-diagnostics"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        [issue] = [
+            i
+            for i in ir.async_get(hass).issues.values()
+            if i.domain == DOMAIN and "__repair_" in i.issue_id
+        ]
+        attribution = (issue.translation_placeholders or {})["attribution"]
+        assert attribution.endswith(" (Living Room)")
+
+
 class TestExcludedIntegrationCoversTheDevice:
     async def test_unavailable_wrapper_on_an_excluded_device_is_skipped(
         self,

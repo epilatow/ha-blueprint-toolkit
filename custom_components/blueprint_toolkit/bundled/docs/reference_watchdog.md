@@ -252,11 +252,11 @@ Heuristic guards baked in regardless of opt-in:
 
 Each per-device notification leads with the shared attribution header --
 automation name, the device's integration(s), the device (linked to its
-settings page), and a config-entry line carrying the config-entry title
-(disambiguates multi-instance integrations) plus manufacturer / model. The
-body below lists every **visible** enabled entity on the device. A
-partially-excluded device's body lists only the entities the user hasn't
-already silenced.
+settings page, with its area when it has one), and a config-entry line
+carrying the config-entry title (disambiguates multi-instance integrations)
+plus manufacturer / model. The body below lists every **visible** enabled
+entity on the device. A partially-excluded device's body lists only the
+entities the user hasn't already silenced.
 
 To silence false positives:
 

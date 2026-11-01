@@ -51,6 +51,7 @@ from ..helpers import (
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
+    device_area_name,
     entry_for_domain,
     file_editor_addon_ingress_url,
     make_emit_config_error,
@@ -544,6 +545,7 @@ def _build_truth_set(hass: HomeAssistant) -> logic.TruthSet:
             config_entry_title=ce_title,
             via_device_id=device.via_device_id,
             entry_type=entry_type_value,
+            area=device_area_name(hass, device.id),
         )
 
     # Live states catch built-ins (sun.sun, weather.home)

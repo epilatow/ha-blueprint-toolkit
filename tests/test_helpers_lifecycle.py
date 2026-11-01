@@ -771,6 +771,20 @@ class TestDeviceAttributionLines:
             "Device: [Kitchen Sensor](/config/devices/device/abc)",
         ]
 
+    def test_device_line_names_the_area(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(device_id="abc", name="Vac", area="Living Room"),
+        )
+        assert lines == [
+            "Device: [Vac](/config/devices/device/abc) (Living Room)",
+        ]
+
+    def test_area_is_escaped(self) -> None:
+        lines = helpers.device_attribution_lines(
+            helpers.DeviceRef(device_id="abc", name="Vac", area="Den [2]"),
+        )
+        assert lines[0].endswith("(Den \\[2\\])")
+
     def test_config_entry_line_for_rw_shape(self) -> None:
         lines = helpers.device_attribution_lines(
             helpers.DeviceRef(

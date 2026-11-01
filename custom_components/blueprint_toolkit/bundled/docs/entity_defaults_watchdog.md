@@ -133,9 +133,9 @@ higher than what the watchdog reported.
 
 Device-attached drift creates one persistent notification per device. Every
 notification leads with an attribution header -- the automation that emitted
-it, the device's integration(s), and a link to the device -- so you can click
-straight through to the source. The body below contains up to five sections
-depending on what kind of drift was found:
+it, the device's integration(s), and a link to the device with its area when
+it has one -- so you can click straight through to the source. The body below
+contains up to five sections depending on what kind of drift was found:
 
 **Name overrides to clear** -- entities where the name override should be
 removed:
@@ -327,10 +327,11 @@ convert:
 
 Each Fix dialog leads with the same attribution header the notifications carry
 -- always the automation that emitted it, the owning integration(s) when
-known, and a link to the device for device-attached findings. Deviceless
-findings (deviceless entity-ID drift, script YAML-key drift) carry the owning
-integration but no device line -- the script YAML-key fix, for instance, shows
-the built-in `script` integration linked to the script-list dashboard.
+known, and a link to the device with its area when it has one for
+device-attached findings. Deviceless findings (deviceless entity-ID drift,
+script YAML-key drift) carry the owning integration but no device line -- the
+script YAML-key fix, for instance, shows the built-in `script` integration
+linked to the script-list dashboard.
 
 Each fixable finding surfaces in one place: as a Repair with the toggle on, or
 in a notification with it off (script YAML-key drift has no notification

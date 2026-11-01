@@ -1232,6 +1232,60 @@ class TestUnusedDeviceCheckEndToEnd:
             f"notifs2={sorted(notifs2.keys())}"
         )
 
+    async def test_header_names_the_device_area(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        fake_entry = _mock_config_entry(
+            domain="fake_area",
+            title="fake_area",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_area", "vac")},
+            name="Vac",
+        )
+        area = ar.async_get(hass).async_get_or_create("Living Room")
+        dev_reg.async_update_device(device.id, area_id=area.id)
+        er.async_get(hass).async_get_or_create(
+            domain="vacuum",
+            platform="fake_area",
+            unique_id="vac",
+            device_id=device.id,
+            config_entry=fake_entry,
+            original_name="vac",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_area",
+                enabled_checks_raw=["unused-devices"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        bodies = [
+            n["message"]
+            for n in _async_get_or_create_notifications(hass).values()
+        ]
+        expected = (
+            f"Device: [Vac](/config/devices/device/{device.id}) (Living Room)"
+        )
+        assert any(expected in body for body in bodies), bodies
+
 
 class TestUnusedDevicelessCheckEndToEnd:
     async def test_per_platform_rollup_groups_by_integration(

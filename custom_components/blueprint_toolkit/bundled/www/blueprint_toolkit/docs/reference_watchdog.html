@@ -344,11 +344,11 @@ containing self-referencing or A-B-C-A cycles; the walk stops on a repeat.</li>
 </ul>
 <p>Each per-device notification leads with the shared attribution header --
 automation name, the device's integration(s), the device (linked to its
-settings page), and a config-entry line carrying the config-entry title
-(disambiguates multi-instance integrations) plus manufacturer / model. The
-body below lists every <strong>visible</strong> enabled entity on the device. A
-partially-excluded device's body lists only the entities the user hasn't
-already silenced.</p>
+settings page, with its area when it has one), and a config-entry line
+carrying the config-entry title (disambiguates multi-instance integrations)
+plus manufacturer / model. The body below lists every <strong>visible</strong> enabled
+entity on the device. A partially-excluded device's body lists only the
+entities the user hasn't already silenced.</p>
 <p>To silence false positives:</p>
 <ul>
 <li><strong>Exclude devices by name (regex, multi-line)</strong> -- per-line regex matched

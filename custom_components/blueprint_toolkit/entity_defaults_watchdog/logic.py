@@ -84,6 +84,9 @@ class DeviceEntry:
     # An excluded integration has an entity on this device.
     integration_excluded: bool = False
 
+    # Name of the device's area, for the attribution header.
+    area: str | None = None
+
 
 # Check identifiers surfaced as blueprint options. Adding
 # a new check = one new constant, add it to ``CHECK_ALL``,
@@ -471,13 +474,14 @@ class VisibleAliasedCandidate:
     source_friendly_name: str = ""
     source_device_id: str | None = None
     source_config_entry_id: str | None = None
-    # Source device's display name + the integrations whose
-    # entities are attached to it, resolved when the source has
-    # a ``device_id``. Threaded into the finding's repair
-    # ``DeviceRef`` so the confirm modal's attribution header
-    # carries the Device / Integrations lines. Empty for
+    # Source device's display name + area + the integrations
+    # whose entities are attached to it, resolved when the
+    # source has a ``device_id``. Threaded into the finding's
+    # repair ``DeviceRef`` so the confirm modal's attribution
+    # header carries the Device / Integrations lines. Empty for
     # deviceless (template / helper) sources.
     source_device_name: str | None = None
+    source_device_area: str | None = None
     source_device_integrations: tuple[str, ...] = ()
     # The source entity's integration, which a finding belongs to
     # for the include / exclude integration inputs.
@@ -511,6 +515,7 @@ class VisibleAliasedEntityFinding:
     source_device_id: str | None
     source_config_entry_id: str | None
     source_device_name: str | None = None
+    source_device_area: str | None = None
     source_device_integrations: tuple[str, ...] = ()
 
 
@@ -1155,6 +1160,7 @@ def _evaluate_device(
         device=helpers.DeviceRef(
             device_id=device.de.id,
             name=device.de.name or device.de.id,
+            area=device.de.area,
         ),
         integrations=tuple(sorted(device.de.integration_entities)),
     )
@@ -1491,6 +1497,7 @@ def _evaluate_visible_aliased_entities(
                 source_device_id=c.source_device_id,
                 source_config_entry_id=c.source_config_entry_id,
                 source_device_name=c.source_device_name,
+                source_device_area=c.source_device_area,
                 source_device_integrations=c.source_device_integrations,
             ),
         )
@@ -1923,6 +1930,7 @@ def _build_visible_aliased_repair_specs(
             device_ref = helpers.DeviceRef(
                 device_id=f.source_device_id,
                 name=f.source_device_name or f.source_device_id,
+                area=f.source_device_area,
             )
         specs.append(
             helpers.PersistentNotification(

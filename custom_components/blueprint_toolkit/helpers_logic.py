@@ -865,12 +865,13 @@ class DeviceRef:
     Carries the already-resolved device identity so the
     framework renders the shared ``Device`` / ``Config Entry``
     header lines centrally instead of each handler
-    hand-formatting them. RW additionally sets
-    ``manufacturer`` / ``model`` off the device's own registry
-    entry, and ``config_entry_title`` off the config entry the
-    device belongs to. All but ``device_id`` + ``name`` are
-    optional; absent config-entry / mfr / model omit the
-    ``Config Entry`` line.
+    hand-formatting them. ``area`` is the device's area name,
+    since a device's own name often leaves it out. RW
+    additionally sets ``manufacturer`` / ``model`` off the
+    device's own registry entry, and ``config_entry_title`` off
+    the config entry the device belongs to. All but
+    ``device_id`` + ``name`` are optional; absent config-entry /
+    mfr / model omit the ``Config Entry`` line.
 
     Integrations are NOT carried here -- they ride on the
     notification spec's ``integrations`` field so a deviceless
@@ -882,22 +883,26 @@ class DeviceRef:
     config_entry_title: str | None = None
     manufacturer: str | None = None
     model: str | None = None
+    area: str | None = None
 
 
 def device_attribution_lines(device: DeviceRef) -> list[str]:
     """Render the device header lines for the attribution block.
 
-    Order: ``Device: [name](link)``, then ``Config Entry:
-    <title> -- <mfr> / <model>`` (omitted unless a config-entry
-    title and / or manufacturer / model are known). The
-    ``Integrations`` line is rendered separately by
-    ``attribution_lines`` from the spec's integrations, since it
-    isn't tied to a device. User-controlled strings are
-    ``md_escape``d; the device name goes through the link
-    helper.
+    Order: ``Device: [name](link) (area)``, with the area
+    omitted unless known, then ``Config Entry: <title> -- <mfr>
+    / <model>`` (omitted unless a config-entry title and / or
+    manufacturer / model are known). The ``Integrations`` line
+    is rendered separately by ``attribution_lines`` from the
+    spec's integrations, since it isn't tied to a device.
+    User-controlled strings are ``md_escape``d; the device name
+    goes through the link helper.
     """
     lines: list[str] = []
-    lines.append(f"Device: {device_link(device.name, device.device_id)}")
+    device_line = f"Device: {device_link(device.name, device.device_id)}"
+    if device.area:
+        device_line += f" ({md_escape(device.area)})"
+    lines.append(device_line)
     ce_parts: list[str] = []
     if device.config_entry_title:
         ce_parts.append(md_escape(device.config_entry_title))

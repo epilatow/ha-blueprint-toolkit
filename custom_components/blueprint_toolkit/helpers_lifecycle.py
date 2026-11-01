@@ -118,6 +118,21 @@ def integration_device_ids(
     }
 
 
+def device_area_name(hass: HomeAssistant, device_id: str) -> str | None:
+    """Name of the area HA places ``device_id`` in, if any."""
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import device_registry as dr
+
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        return None
+    area_id = dr.async_get_effective_area_id(hass, device)
+    if area_id is None:
+        return None
+    area = ar.async_get(hass).async_get_area(area_id)
+    return area.name if area is not None else None
+
+
 def file_editor_addon_ingress_url(hass: HomeAssistant) -> str:
     """Return the ingress URL prefix for the ``core_configurator`` add-on.
 
@@ -1061,6 +1076,7 @@ async def register_blueprint_handler(
 __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
+    "device_area_name",
     "file_editor_addon_ingress_url",
     "integration_device_ids",
     "integration_entity_ids",

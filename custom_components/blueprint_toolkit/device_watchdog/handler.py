@@ -53,6 +53,7 @@ from ..helpers import (
     all_integration_ids,
     automation_friendly_name,
     cv_ha_domain_list,
+    device_area_name,
     entry_for_domain,
     integration_device_ids,
     integration_entity_ids,
@@ -561,6 +562,7 @@ def _build_device_inputs(
                     name=device.name_by_user or device.name or "",
                     default_name=device.name or "",
                     integration_excluded=dev_id in excluded_device_ids,
+                    area=device_area_name(hass, dev_id),
                 )
                 populate_eids[dev_id] = {}
             ie = device_map[dev_id].integration_entities

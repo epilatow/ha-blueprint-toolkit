@@ -505,6 +505,7 @@ class DeviceRecord:
     config_entry_title: str | None
     via_device_id: str | None
     entry_type: str | None = None
+    area: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2746,6 +2747,7 @@ class UnusedDevice:
     manufacturer: str | None
     model: str | None
     enabled_entity_ids: tuple[str, ...]
+    area: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3013,6 +3015,7 @@ def _scan_unused_devices(
                 manufacturer=dev.manufacturer,
                 model=dev.model,
                 enabled_entity_ids=visible_ents,
+                area=dev.area,
             ),
         )
     return UnusedDevicesResult(
@@ -3163,6 +3166,7 @@ def _build_unused_device_notification(
             config_entry_title=dev.config_entry_title,
             manufacturer=dev.manufacturer,
             model=dev.model,
+            area=dev.area,
         ),
         integrations=(dev.integration,) if dev.integration else (),
     )

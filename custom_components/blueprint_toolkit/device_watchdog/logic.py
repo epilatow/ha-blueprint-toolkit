@@ -43,6 +43,9 @@ class DeviceEntry:
     # An excluded integration has an entity on this device.
     integration_excluded: bool = False
 
+    # Name of the device's area, for the attribution header.
+    area: str | None = None
+
 
 # Check identifiers surfaced as blueprint options. Adding
 # a new check = one new constant, add it to ``CHECK_ALL``,
@@ -358,6 +361,7 @@ def evaluate_diagnostics(
         device_ref = helpers.DeviceRef(
             device_id=device.de.id,
             name=device.de.name or device.de.id,
+            area=device.de.area,
         )
         device_integrations = tuple(sorted(device.de.integration_entities))
         if config.create_repairs:
@@ -615,6 +619,7 @@ def _evaluate_device(
         device=helpers.DeviceRef(
             device_id=device.de.id,
             name=device.de.name or device.de.id,
+            area=device.de.area,
         ),
         integrations=tuple(sorted(device.de.integration_entities)),
     )
