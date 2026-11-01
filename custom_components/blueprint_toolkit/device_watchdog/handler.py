@@ -54,6 +54,7 @@ from ..helpers import (
     automation_friendly_name,
     cv_ha_domain_list,
     entry_for_domain,
+    integration_device_ids,
     integration_entity_ids,
     make_emit_config_error,
     make_lifecycle_mutators,
@@ -347,6 +348,7 @@ async def _async_service_layer(
         hass,
         all_integrations,
         target_integrations,
+        exclude_integrations,
         diag_check_enabled=(logic.CHECK_DISABLED_DIAGNOSTICS in enabled_checks),
     )
 
@@ -510,6 +512,7 @@ def _build_device_inputs(
     hass: HomeAssistant,
     all_integration_ids: list[str],
     target_integrations: set[str],
+    exclude_integrations: list[str],
     *,
     diag_check_enabled: bool,
 ) -> list[logic.DeviceInfo]:
@@ -521,6 +524,9 @@ def _build_device_inputs(
     state snapshots; the device's ``integration_entities``
     map carries every integration the device touches but
     only the targeted ones contribute ``EntityInfo`` rows.
+    ``exclude_integrations`` reaches further: any of them
+    on a device excludes the whole device, including what
+    other integrations add to it.
 
     ``all_integration_ids`` is threaded in by the caller
     (already computed for filter resolution) so we don't
@@ -537,6 +543,7 @@ def _build_device_inputs(
     # Map device_id -> {integration_id -> [entity_id]} for
     # the entities we want full state snapshots on.
     populate_eids: dict[str, dict[str, list[str]]] = {}
+    excluded_device_ids = integration_device_ids(hass, exclude_integrations)
 
     for integration_id in all_integration_ids:
         entity_ids = integration_entity_ids(hass, integration_id)
@@ -553,6 +560,7 @@ def _build_device_inputs(
                     id=dev_id,
                     name=device.name_by_user or device.name or "",
                     default_name=device.name or "",
+                    integration_excluded=dev_id in excluded_device_ids,
                 )
                 populate_eids[dev_id] = {}
             ie = device_map[dev_id].integration_entities

@@ -953,6 +953,73 @@ class TestFindingLifecycle(WatchdogFindingLifecycleBase):
             disabled_by=None,
         )
 
+    def finding_device_id(self, hass: HomeAssistant, index: int = 0) -> str:
+        from homeassistant.helpers import entity_registry as er
+
+        entry = er.async_get(hass).async_get(
+            f"sensor.lifecycle_{index}_last_seen",
+        )
+        assert entry is not None
+        assert entry.device_id is not None
+        return entry.device_id
+
+
+class TestExcludedIntegrationCoversTheDevice:
+    async def test_unavailable_wrapper_on_an_excluded_device_is_skipped(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        lutron_entry = _mock_config_entry(domain="lutron_caseta")
+        lutron_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=lutron_entry.entry_id,
+            identifiers={("lutron_caseta", "fan")},
+            name="Main Bath Fan",
+        )
+        ent_reg = er.async_get(hass)
+        ent_reg.async_get_or_create(
+            domain="switch",
+            platform="lutron_caseta",
+            unique_id="fan",
+            device_id=device.id,
+            config_entry=lutron_entry,
+        )
+        wrapper = ent_reg.async_get_or_create(
+            domain="fan",
+            platform="switch_as_x",
+            unique_id="fan",
+            device_id=device.id,
+        )
+        hass.states.async_set(wrapper.entity_id, "unavailable")
+
+        async def scan(exclude: list[str]) -> list[str]:
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    instance_id="automation.dw_shared",
+                    exclude_integrations=exclude,
+                    enabled_checks=["unavailable-entities"],
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            return [
+                notification_id
+                for notification_id in _async_get_or_create_notifications(hass)
+                if "__automation.dw_shared__device_" in notification_id
+            ]
+
+        assert len(await scan([])) == 1
+        assert await scan(["lutron_caseta"]) == []
+
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "DW"

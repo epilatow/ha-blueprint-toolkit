@@ -115,7 +115,7 @@ device name + ID drift)</li>
 </tr>
 <tr>
 <td>Exclude integrations</td>
-<td>Integration IDs to skip even if included. Same scope as Include integrations.</td>
+<td>Integration IDs to skip even if included. Same scope as Include integrations, and also skips every device they have an entity on.</td>
 </tr>
 <tr>
 <td>Device name exclude regex</td>
@@ -328,9 +328,12 @@ skip all battery entities).</li>
 <li><strong>Entity name exclude regex</strong>: match entity names by pattern.</li>
 <li><strong>Device name exclude regex</strong>: skip entire devices by name.</li>
 <li><strong>Include / Exclude integrations</strong>: keep or skip everything an integration
-owns. A visible-aliased finding belongs to its source entity's integration,
-and a script YAML-key finding to the <code>script</code> integration, so an include
-list without <code>script</code> drops script YAML-key findings.</li>
+owns. Excluding an integration skips every device it has an entity on,
+including entities another integration adds to that device, such as a
+<code>switch_as_x</code> wrapper, and any visible-aliased finding for a source on it.
+Otherwise a visible-aliased finding belongs to its source entity's
+integration, and a script YAML-key finding to the <code>script</code> integration, so
+an include list without <code>script</code> drops script YAML-key findings.</li>
 </ul>
 <h3>Unmatched include / exclude directives</h3>
 <p>With <strong>Validate include / exclude directives</strong> on (default), any include /

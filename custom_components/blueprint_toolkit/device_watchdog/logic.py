@@ -40,6 +40,9 @@ class DeviceEntry:
         default_factory=dict,
     )
 
+    # An excluded integration has an entity on this device.
+    integration_excluded: bool = False
+
 
 # Check identifiers surfaced as blueprint options. Adding
 # a new check = one new constant, add it to ``CHECK_ALL``,
@@ -309,12 +312,12 @@ def evaluate_diagnostics(
     dispatcher's prefix sweep removes any prior-run artifact
     for them. Skips devices with no integrations in
     RECOMMENDED_DIAGNOSTICS, and devices or entities the
-    exclude regexes cover.
+    exclude inputs cover.
     """
     results: list[helpers.PersistentNotification] = []
     repairs: dict[str, DisabledDiagnosticsRepair] = {}
     for device in devices:
-        if helpers.matches_pattern(
+        if device.de.integration_excluded or helpers.matches_pattern(
             device.de.name,
             config.exclude_device_name_regex,
         ):
@@ -537,7 +540,7 @@ def _evaluate_device(
     notification_id = f"{config.notification_prefix}device_{device.de.id}"
 
     # Skip excluded devices
-    device_excluded = helpers.matches_pattern(
+    device_excluded = device.de.integration_excluded or helpers.matches_pattern(
         device.de.name,
         config.exclude_device_name_regex,
     )

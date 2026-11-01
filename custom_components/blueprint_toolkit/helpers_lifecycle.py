@@ -97,6 +97,27 @@ def integration_entity_ids(
     ]
 
 
+def integration_device_ids(
+    hass: HomeAssistant, integrations: list[str]
+) -> set[str]:
+    """IDs of the devices any of ``integrations`` has an entity on.
+
+    Counts disabled entities too: a device belongs to an
+    integration whether or not those entities are enabled.
+    """
+    if not integrations:
+        return set()
+
+    from homeassistant.helpers import entity_registry as er
+
+    ent_reg = er.async_get(hass)
+    return {
+        entry.device_id
+        for entry in ent_reg.entities.values()
+        if entry.device_id is not None and entry.platform in integrations
+    }
+
+
 def file_editor_addon_ingress_url(hass: HomeAssistant) -> str:
     """Return the ingress URL prefix for the ``core_configurator`` add-on.
 
@@ -1041,6 +1062,7 @@ __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
     "file_editor_addon_ingress_url",
+    "integration_device_ids",
     "integration_entity_ids",
     "make_lifecycle_mutators",
     "process_repairs_with_sweep",

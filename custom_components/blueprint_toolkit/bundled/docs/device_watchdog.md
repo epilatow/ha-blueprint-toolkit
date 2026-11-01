@@ -41,21 +41,21 @@ None.
 
 ## Configuration
 
-| Parameter                             | Description                                                                                                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Include integrations                  | Integration IDs to monitor. Empty means all.                                                                                                                  |
-| Exclude integrations                  | Integration IDs to skip even if included.                                                                                                                     |
-| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                        |
-| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                         |
-| Monitored entity domains              | Only check entities in these domains                                                                                                                          |
-| Check interval (minutes)              | Minutes between watchdog evaluations                                                                                                                          |
-| Dead device threshold (minutes)       | Staleness threshold for state reports                                                                                                                         |
-| Enabled checks                        | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all.                                                      |
-| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                   |
-| Create repairs for fixable findings   | Default on. Routes disabled-diagnostic-entity findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. See **Repairs** below. |
-| Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                           |
-| Validate include / exclude directives | Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.    |
-| Debug Logging                         | Log debug info to HA logs                                                                                                                                     |
+| Parameter                             | Description                                                                                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Include integrations                  | Integration IDs to monitor. Empty means all.                                                                                                                            |
+| Exclude integrations                  | Integration IDs to skip even if included. Also skips every device they have an entity on, including entities another integration adds, such as a `switch_as_x` wrapper. |
+| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                  |
+| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                                   |
+| Monitored entity domains              | Only check entities in these domains                                                                                                                                    |
+| Check interval (minutes)              | Minutes between watchdog evaluations                                                                                                                                    |
+| Dead device threshold (minutes)       | Staleness threshold for state reports                                                                                                                                   |
+| Enabled checks                        | Which checks to run (`unavailable-entities`, `device-updates`, `disabled-diagnostics`). Empty means all.                                                                |
+| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                             |
+| Create repairs for fixable findings   | Default on. Routes disabled-diagnostic-entity findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. See **Repairs** below.           |
+| Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                                     |
+| Validate include / exclude directives | Default on. Surface typo'd integrations or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.              |
+| Debug Logging                         | Log debug info to HA logs                                                                                                                                               |
 
 See the blueprint UI for default values.
 

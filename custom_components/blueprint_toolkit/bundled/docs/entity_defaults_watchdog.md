@@ -57,7 +57,7 @@ None.
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), `visible-aliased-entity`, `script-yaml-key`, or any combination. Empty means all.                                                                                       |
 | Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities, registry-backed deviceless entries (e.g. `template`, `rachio`), visible-aliased sources, and scripts. State-only entities have no platform to filter on.              |
-| Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations.                                                                                                                                                                                    |
+| Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations, and also skips every device they have an entity on.                                                                                                                                |
 | Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                                                                           |
 | Exclude entities                      | Specific entities to exclude from all checks.                                                                                                                                                                                                                    |
 | Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                                                                                                                            |
@@ -281,9 +281,12 @@ notification clears on the next scan:
 - **Entity name exclude regex**: match entity names by pattern.
 - **Device name exclude regex**: skip entire devices by name.
 - **Include / Exclude integrations**: keep or skip everything an integration
-  owns. A visible-aliased finding belongs to its source entity's integration,
-  and a script YAML-key finding to the `script` integration, so an include
-  list without `script` drops script YAML-key findings.
+  owns. Excluding an integration skips every device it has an entity on,
+  including entities another integration adds to that device, such as a
+  `switch_as_x` wrapper, and any visible-aliased finding for a source on it.
+  Otherwise a visible-aliased finding belongs to its source entity's
+  integration, and a script YAML-key finding to the `script` integration, so
+  an include list without `script` drops script YAML-key findings.
 
 ### Unmatched include / exclude directives
 

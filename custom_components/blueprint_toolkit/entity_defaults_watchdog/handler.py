@@ -62,6 +62,7 @@ from ..helpers import (
     automation_friendly_name,
     cv_ha_domain_list,
     entry_for_domain,
+    integration_device_ids,
     integration_entity_ids,
     make_emit_config_error,
     make_lifecycle_mutators,
@@ -355,6 +356,7 @@ async def _async_service_layer(
         hass,
         all_integrations,
         target_integrations,
+        exclude_integrations,
     )
     deviceless_entities, peers_by_domain = _build_deviceless_inputs(
         hass,
@@ -367,7 +369,10 @@ async def _async_service_layer(
     # entry, so the entry list is the natural starting point.
     # The extractor only reads the registry; the logic layer
     # owns the defensive-skip + finding decisions.
-    visible_aliased_candidates = _extract_visible_aliased_candidates(hass)
+    visible_aliased_candidates = _extract_visible_aliased_candidates(
+        hass,
+        exclude_integrations,
+    )
     # Script inputs come from the entity registry: every
     # ``platform == "script"`` entry carries the unique_id HA
     # registered the YAML block key as, so a slug that has
@@ -539,6 +544,7 @@ def _build_device_inputs(
     hass: HomeAssistant,
     all_integration_ids: list[str],
     target_integrations: set[str],
+    exclude_integrations: list[str],
 ) -> list[logic.DeviceInfo]:
     """Walk registries to build ``DeviceInfo`` per device.
 
@@ -549,6 +555,9 @@ def _build_device_inputs(
     device's ``integration_entities`` map carries every
     integration the device touches but only the targeted
     ones contribute ``EntityDriftInfo`` rows.
+    ``exclude_integrations`` reaches further: any of them
+    on a device excludes the whole device, including what
+    other integrations add to it.
 
     ``all_integration_ids`` is threaded in by the caller
     (already computed for filter resolution) so we don't
@@ -562,6 +571,7 @@ def _build_device_inputs(
     # Map device_id -> {integration_id -> [entity_id]} for
     # the entities we want full drift snapshots on.
     populate_eids: dict[str, dict[str, list[str]]] = {}
+    excluded_device_ids = integration_device_ids(hass, exclude_integrations)
 
     for integration_id in all_integration_ids:
         entity_ids = integration_entity_ids(hass, integration_id)
@@ -580,6 +590,7 @@ def _build_device_inputs(
                     id=dev_id,
                     name=device.name_by_user or device.name or "",
                     default_name=device.name or "",
+                    integration_excluded=dev_id in excluded_device_ids,
                 )
                 populate_eids[dev_id] = {}
             ie = device_map[dev_id].integration_entities
@@ -765,6 +776,7 @@ _SWITCH_AS_X_DOMAIN = "switch_as_x"
 
 def _extract_visible_aliased_candidates(
     hass: HomeAssistant,
+    exclude_integrations: list[str],
 ) -> list[logic.VisibleAliasedCandidate]:
     """Extract one candidate per switch_as_x config entry.
 
@@ -780,6 +792,7 @@ def _extract_visible_aliased_candidates(
     """
     ent_reg = er.async_get(hass)
     candidates: list[logic.VisibleAliasedCandidate] = []
+    excluded_device_ids = integration_device_ids(hass, exclude_integrations)
 
     for entry in hass.config_entries.async_entries(
         _SWITCH_AS_X_DOMAIN,
@@ -865,6 +878,9 @@ def _extract_visible_aliased_candidates(
                 source_device_name=device_name,
                 source_device_integrations=device_integrations,
                 source_platform=source.platform,
+                source_integration_excluded=(
+                    source.device_id in excluded_device_ids
+                ),
             ),
         )
     return candidates

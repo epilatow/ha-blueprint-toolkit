@@ -81,6 +81,9 @@ class DeviceEntry:
         default_factory=dict,
     )
 
+    # An excluded integration has an entity on this device.
+    integration_excluded: bool = False
+
 
 # Check identifiers surfaced as blueprint options. Adding
 # a new check = one new constant, add it to ``CHECK_ALL``,
@@ -479,6 +482,8 @@ class VisibleAliasedCandidate:
     # The source entity's integration, which a finding belongs to
     # for the include / exclude integration inputs.
     source_platform: str = ""
+    # An excluded integration has an entity on the source's device.
+    source_integration_excluded: bool = False
 
 
 @dataclass
@@ -1091,7 +1096,7 @@ def _evaluate_device(
     notification_id = f"{config.notification_prefix}device_{device.de.id}"
 
     # Skip excluded devices
-    if helpers.matches_pattern(
+    if device.de.integration_excluded or helpers.matches_pattern(
         device.de.name,
         config.exclude_device_name_regex,
     ):
@@ -1448,7 +1453,8 @@ def _evaluate_visible_aliased_entities(
     wrapper becomes a finding, a user-excluded one is counted as
     excluded, and everything else is a defensive skip. The
     excludes apply to the source entity:
-    ``target_integrations`` for the integration inputs, plus the
+    ``target_integrations`` for the integration inputs, an
+    excluded integration anywhere on its device, plus the
     device-name and per-entity config fields shared with the
     device-attached + deviceless paths.
     """
@@ -1467,6 +1473,7 @@ def _evaluate_visible_aliased_entities(
         assert c.target_domain is not None
         if (
             not _integration_in_scope(config, c.source_platform)
+            or c.source_integration_excluded
             or helpers.matches_pattern(
                 c.source_device_name or "",
                 config.exclude_device_name_regex,

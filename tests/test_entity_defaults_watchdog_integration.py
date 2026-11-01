@@ -1174,6 +1174,58 @@ class TestVisibleAliasedScan:
             ]
             assert len(repair_issues) == expected
 
+    async def test_excluding_another_integration_on_the_device_clears_repair(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._plant_pair(
+            hass,
+            source_entity_id="switch.den",
+            wrapper_entity_id="den",
+            wrapper_target_domain="fan",
+            source_friendly_name="Den Fan",
+            source_hidden_by=None,
+            source_device_id="dev-den",
+        )
+        ent_reg = er.async_get(hass)
+        source = ent_reg.async_get("switch.den")
+        assert source is not None
+        ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="other_integration",
+            unique_id="shared-device",
+            device_id=source.device_id,
+        )
+
+        for exclude_integrations, expected in (
+            (None, 1),
+            (["other_integration"], 0),
+        ):
+            await hass.services.async_call(
+                DOMAIN,
+                SERVICE,
+                _valid_payload(
+                    instance_id="automation.edw_va_shared",
+                    drift_checks=["visible-aliased-entity"],
+                    create_repairs=True,
+                    exclude_integrations=exclude_integrations,
+                ),
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+
+            repair_issues = [
+                i
+                for i in ir.async_get(hass).issues.values()
+                if i.domain == DOMAIN
+                and "__repair_fix_edw_visible_aliased_entity__" in i.issue_id
+            ]
+            assert len(repair_issues) == expected
+
     async def test_create_repairs_false_emits_aggregate_no_issues(
         self,
         hass: HomeAssistant,
@@ -2656,6 +2708,109 @@ class TestFindingLifecycle(WatchdogFindingLifecycleBase):
             entity_id,
             new_entity_id=ent_reg.async_regenerate_entity_id(entry),
         )
+
+    def finding_device_id(self, hass: HomeAssistant, index: int = 0) -> str:
+        from homeassistant.helpers import entity_registry as er
+
+        entry = er.async_get(hass).async_get(
+            f"sensor.lifecycle_drift_{index}",
+        )
+        assert entry is not None
+        assert entry.device_id is not None
+        return entry.device_id
+
+
+class TestExcludedIntegrationCoversTheDevice:
+    def _plant(self, hass: HomeAssistant) -> None:
+        """Plant a drifted ``switch_as_x`` wrapper on a Lutron device."""
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        lutron_entry = _mock_config_entry(domain="lutron_caseta")
+        lutron_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=lutron_entry.entry_id,
+            identifiers={("lutron_caseta", "fan")},
+            name="Main Bath Fan",
+        )
+        ent_reg = er.async_get(hass)
+        ent_reg.async_get_or_create(
+            domain="switch",
+            platform="lutron_caseta",
+            unique_id="fan",
+            device_id=device.id,
+            config_entry=lutron_entry,
+        )
+        wrapper = ent_reg.async_get_or_create(
+            domain="fan",
+            platform="switch_as_x",
+            unique_id="fan",
+            device_id=device.id,
+            has_entity_name=False,
+            original_name="Main Bath Fan",
+            object_id_base="Main Bath Fan",
+        )
+        ent_reg.async_update_entity(
+            wrapper.entity_id,
+            new_entity_id="fan.old_id",
+        )
+
+    async def _id_repairs(
+        self,
+        hass: HomeAssistant,
+        exclude: list[str],
+    ) -> list[str]:
+        from homeassistant.helpers import issue_registry as ir
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=["device-entity-id"],
+                exclude_integrations=exclude,
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        return [
+            issue.issue_id
+            for issue in ir.async_get(hass).issues.values()
+            if issue.domain == DOMAIN
+            and "__repair_fix_edw_entity_id_drift__" in issue.issue_id
+        ]
+
+    async def test_drifted_wrapper_on_an_excluded_device_is_skipped(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        self._plant(hass)
+
+        assert len(await self._id_repairs(hass, [])) == 1
+        assert await self._id_repairs(hass, ["lutron_caseta"]) == []
+
+    async def test_disabled_entity_still_ties_the_device_to_its_integration(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        self._plant(hass)
+        ent_reg = er.async_get(hass)
+        source = ent_reg.async_get_entity_id(
+            "switch",
+            "lutron_caseta",
+            "fan",
+        )
+        assert source is not None
+        ent_reg.async_update_entity(
+            source,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+
+        assert await self._id_repairs(hass, ["lutron_caseta"]) == []
 
 
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):

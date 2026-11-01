@@ -411,6 +411,7 @@ class WatchdogFindingLifecycleBase:
             def payload(self, **overrides): ...
             def seed_finding(self, hass, index=0): ...
             def fix_finding(self, hass, index=0): ...
+            def finding_device_id(self, hass, index=0): ...
 
     Inherited tests drive the real service against HA's real
     issue registry and notification store, once per surface:
@@ -439,6 +440,10 @@ class WatchdogFindingLifecycleBase:
 
     def fix_finding(self, hass: Any, index: int = 0) -> None:
         """Resolve the finding ``seed_finding`` planted."""
+        raise NotImplementedError
+
+    def finding_device_id(self, hass: Any, index: int = 0) -> str:
+        """Return the device the planted finding sits on."""
         raise NotImplementedError
 
     async def _scan(self, hass: Any, **overrides: Any) -> None:
@@ -552,6 +557,31 @@ class WatchdogFindingLifecycleBase:
                 await self._scan(hass, create_repairs=True, **exclusion)
 
                 assert self._repairs(hass) == {}, (label, ignored)
+
+    async def test_excluding_another_integration_on_the_device_clears_it(
+        self,
+        hass: Any,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await self.setup_integration(hass)
+        self.seed_finding(hass)
+        er.async_get(hass).async_get_or_create(
+            domain="fan",
+            platform="switch_as_x",
+            unique_id="shared-device",
+            device_id=self.finding_device_id(hass),
+        )
+        await self._scan(hass, create_repairs=True)
+        assert len(self._repairs(hass)) == 1
+
+        await self._scan(
+            hass,
+            create_repairs=True,
+            exclude_integrations=["switch_as_x"],
+        )
+
+        assert self._repairs(hass) == {}
 
     async def test_dismissed_notification_returns_on_next_scan(
         self,

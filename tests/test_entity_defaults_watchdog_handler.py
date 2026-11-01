@@ -715,7 +715,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         c = candidates[0]
@@ -747,7 +747,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         assert candidates[0].wrapper_obj_ids == ()
@@ -780,7 +780,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         assert set(candidates[0].wrapper_obj_ids) == {"dup_a", "dup_b"}
@@ -808,7 +808,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         assert candidates[0].source_disabled_by == "user"
@@ -822,7 +822,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         assert candidates[0].entry_disabled is True
@@ -835,7 +835,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         c = candidates[0]
@@ -854,7 +854,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert len(candidates) == 1
         c = candidates[0]
@@ -872,7 +872,7 @@ class TestExtractVisibleAliasedCandidates:
         )
         h = _FakeHassForBuilder([entry])
 
-        candidates = handler._extract_visible_aliased_candidates(h)  # type: ignore[arg-type]
+        candidates = handler._extract_visible_aliased_candidates(h, [])  # type: ignore[arg-type]
 
         assert candidates == []
 

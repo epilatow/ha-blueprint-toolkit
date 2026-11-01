@@ -178,6 +178,8 @@ Cross-handler accessors:
 - `notification_prefix` -- the per-instance notification ID prefix.
 - `all_integration_ids` / `integration_entity_ids` -- entity-registry walks
   that seed watchdog truth sets.
+- `integration_device_ids` -- the devices an integration has an entity on. An
+  excluded integration excludes the whole device, not just its own entities.
 - `resolve_target_integrations` -- apply include / exclude filters; empty
   `include` means "all".
 - `filter_on_entities` -- the subset of entities currently `on`, so a turn-off
