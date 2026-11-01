@@ -95,6 +95,7 @@ def _entity_drift(
     expected_name: str | None = None,
     full_name: str | None = None,
     uses_device_name: bool = False,
+    has_redundant_prefix: bool = False,
 ) -> EntityDriftInfo:
     return EntityDriftInfo(
         entity_id=entity_id,
@@ -105,6 +106,7 @@ def _entity_drift(
         expected_name=expected_name,
         full_name=current_name if full_name is None else full_name,
         uses_device_name=uses_device_name,
+        has_redundant_prefix=has_redundant_prefix,
     )
 
 
@@ -302,6 +304,7 @@ class TestCheckEntityDrift:
             has_name_override=True,
             current_name="Kitchen Sensor Temperature",
             expected_name="Temperature",
+            has_redundant_prefix=True,
         )
         result = _check_entity_drift(cfg, entity, dev)
         assert result is not None

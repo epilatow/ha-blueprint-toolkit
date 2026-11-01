@@ -34,7 +34,8 @@ would use today:
   name to change.
 - Redundant prefix: HA prepends the device name for
   ``has_entity_name=True`` entities, so an override that
-  starts with it is redundant.
+  starts with it is redundant. The handler asks HA whether
+  one does.
 - Deviceless entity ID drift: for registry entries with no
   ``device_id`` in ``DEVICELESS_DOMAINS``, the slug of
   ``entry.name or entry.original_name`` against the entity
@@ -190,6 +191,9 @@ class EntityDriftInfo:
     # stores no flag for it: it reads on while the entity's
     # own name, less any device name prefix, is empty.
     uses_device_name: bool
+    # True when HA would strip the device name from the front
+    # of a has_entity_name=True entity's stored name.
+    has_redundant_prefix: bool
 
 
 @dataclass
@@ -617,24 +621,6 @@ class DeviceResult:
         )
 
 
-def _detect_redundant_prefix(
-    entry_name: str | None,
-    device_name: str,
-    has_entity_name: bool,
-) -> bool:
-    """True if a name override redundantly includes the
-    device name.
-
-    Only applies to has_entity_name=True entities where
-    HA already prepends the device name automatically.
-    """
-    if not has_entity_name:
-        return False
-    if not entry_name or not device_name:
-        return False
-    return entry_name.startswith(device_name)
-
-
 def _strip_device_prefix(name: str, prefix: str) -> str | None:
     """Return ``name`` without its leading ``prefix``.
 
@@ -823,8 +809,8 @@ def _check_entity_drift(
     """Check a single entity for drift.
 
     Returns DriftDetail if drifted, None if clean or
-    excluded. Computes redundant prefix and recommended
-    override on the fly using device-level data.
+    excluded. Computes the recommended override on the fly
+    using device-level data.
     """
     if _is_excluded(
         config,
@@ -846,11 +832,6 @@ def _check_entity_drift(
     # A stored copy of the device name goes stale at the
     # next device rename; a blank one follows it.
     recommended = USE_DEVICE_NAME if ha_name == device.de.name else ha_name
-    redundant = _detect_redundant_prefix(
-        entity.current_name if entity.has_name_override else None,
-        device.de.name,
-        entity.has_entity_name,
-    )
     # HA hides the name field while its "Use device name"
     # switch is on, so such a name is never ours to change.
     name_settable = not entity.uses_device_name
@@ -898,7 +879,7 @@ def _check_entity_drift(
         name_drifted=name_drifted,
         current_name=entity.full_name if name_pending else entity.current_name,
         expected_name=entity.expected_name,
-        has_redundant_prefix=redundant,
+        has_redundant_prefix=entity.has_redundant_prefix,
         recommended_override=recommended,
         expected_entity_id=entity.expected_entity_id,
     )

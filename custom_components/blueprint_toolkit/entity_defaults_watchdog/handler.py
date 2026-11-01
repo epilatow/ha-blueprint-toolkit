@@ -607,6 +607,7 @@ def _build_device_inputs(
                 expected_name: str | None = None
                 if has_name_override or not entry.has_entity_name:
                     expected_name = str(entry.original_name or "")
+                unprefixed_name = er.async_get_unprefixed_name(hass, entry)
                 entity_infos.append(
                     logic.EntityDriftInfo(
                         entity_id=eid,
@@ -616,9 +617,11 @@ def _build_device_inputs(
                         current_name=current_name,
                         expected_name=expected_name,
                         full_name=er.async_get_full_entity_name(hass, entry),
-                        uses_device_name=not er.async_get_unprefixed_name(
-                            hass,
-                            entry,
+                        uses_device_name=not unprefixed_name,
+                        has_redundant_prefix=(
+                            entry.has_entity_name
+                            and bool(entry.name)
+                            and unprefixed_name != entry.name
                         ),
                     ),
                 )

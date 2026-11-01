@@ -2536,6 +2536,73 @@ class TestLegacyNamesFollowHomeAssistant:
         assert '"Remote Off" -> "Clicker Off"' in entities
 
 
+class TestRedundantPrefixComesFromHomeAssistant:
+    @pytest.mark.parametrize(
+        ("override", "own_area", "section"),
+        [
+            ("Kitchen Sensor Temp", False, "redundant device name"),
+            ("kitchen sensor Temp", False, "redundant device name"),
+            ("Kitchen Sensorium", False, "Name overrides to clear"),
+            ("Kitchen Sensor Temp", True, "Name overrides to clear"),
+        ],
+    )
+    async def test_notification_section_follows_ha(
+        self,
+        hass: HomeAssistant,
+        override: str,
+        own_area: bool,
+        section: str,
+    ) -> None:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        fake_entry = _mock_config_entry(
+            domain="fake_integration",
+            title="fake_integration",
+        )
+        fake_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_integration", "sensor")},
+            name="Kitchen Sensor",
+        )
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="temp",
+            device_id=device.id,
+            has_entity_name=True,
+            original_name="Temperature",
+        )
+        ent_reg.async_update_entity(entry.entity_id, name=override)
+        if own_area:
+            # HA doesn't build this entity's name from the device.
+            area = ar.async_get(hass).async_get_or_create("Kitchen")
+            ent_reg.async_update_entity(entry.entity_id, area_id=area.id)
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(drift_checks=["device-entity-name"]),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        bodies = [
+            n["message"]
+            for n in _async_get_or_create_notifications(hass).values()
+            if entry.entity_id in n["message"]
+        ]
+        assert len(bodies) == 1
+        assert section in bodies[0]
+
+
 class TestFindingLifecycle(WatchdogFindingLifecycleBase):
     service = SERVICE
     setup_integration = staticmethod(_setup_integration)
