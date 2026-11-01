@@ -87,6 +87,13 @@ These can drift from their expected values over time:
   conventions (e.g., during an upgrade), HA preserves the old name as a "name
   override" to avoid breaking automations. The override becomes stale when the
   integration's new name is what you actually want.
+- **Legacy entity name drift** -- some integrations (Lutron Caseta, for
+  example) build each entity's name from the device's name. When you rename
+  such a device, HA stores a matching name on the entity. Without it, HA shows
+  the new device name in front of the old name ("Fan Main Bath Fan"), so the
+  watchdog flags an entity missing that name, or still holding one from an
+  earlier rename, and reports its entity ID only once the name is right, since
+  the expected ID depends on it.
 - **Deviceless ID drift** -- automations, scripts, helpers, template sensors,
   and similar user-named entities have entity IDs derived from their name at
   creation. Renaming the entity later doesn't update the entity ID, leaving
@@ -123,7 +130,7 @@ higher than what the watchdog reported.
 Device-attached drift creates one persistent notification per device. Every
 notification leads with an attribution header -- the automation that emitted
 it, the device's integration(s), and a link to the device -- so you can click
-straight through to the source. The body below contains up to three sections
+straight through to the source. The body below contains up to four sections
 depending on what kind of drift was found:
 
 **Name overrides to clear** -- entities where the name override should be
@@ -138,6 +145,13 @@ device name, which HA already adds automatically:
 
 ```text
 - `sensor.kitchen_co2`: "Kitchen Sensor CO2" -> "CO2"
+```
+
+**Name overrides to set** -- legacy entities on a renamed device, with the
+name HA stores at a rename:
+
+```text
+- `switch.main_bath_fan`: set to "Fan"
 ```
 
 **Non-default entity IDs** -- entities whose ID does not match what HA would
@@ -282,7 +296,8 @@ convert:
   entities, ...) get one Repair each, since they have no device to group
   under.
 - **Entity-name drift** -- "reset friendly name on `<entity_id>` from
-  `<current>` to `<default>`". Submit clears the user-set name override.
+  `<current>` to `<default>`". Submit clears the user-set name override, or
+  for a legacy entity on a renamed device, stores the name HA uses there.
 - **Visible aliased entity** -- "re-hide `<source_entity_id>`". One repair per
   flagged `switch_as_x` source whose row is still visible; Submit sets
   `hidden_by=integration` on the source, restoring the original wrapper

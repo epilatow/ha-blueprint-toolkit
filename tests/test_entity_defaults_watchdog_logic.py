@@ -92,6 +92,7 @@ def _entity_drift(
     expected_entity_id: str | None = "sensor.test",
     current_name: str = "Test",
     expected_name: str | None = None,
+    full_name: str | None = None,
 ) -> EntityDriftInfo:
     return EntityDriftInfo(
         entity_id=entity_id,
@@ -100,6 +101,7 @@ def _entity_drift(
         expected_entity_id=expected_entity_id,
         current_name=current_name,
         expected_name=expected_name,
+        full_name=current_name if full_name is None else full_name,
     )
 
 
@@ -307,8 +309,24 @@ class TestCheckEntityDrift:
     ) -> None:
         cfg = _config()
         # Device renamed from "Pedestal Fan" to
-        # "Main Bedroom Pedestal Fan". Entity has
-        # correct suffix override.
+        # "Main Bedroom Pedestal Fan". Entity holds the
+        # name HA stores at that rename.
+        dev = _device(
+            device_name="Main Bedroom Pedestal Fan",
+            default_name="Pedestal Fan",
+        )
+        entity = _entity_drift(
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Main Bedroom Pedestal Fan Temperature",
+            expected_name="Pedestal Fan Temperature",
+        )
+        assert _check_entity_drift(cfg, entity, dev) is None
+
+    def test_hen_false_bare_suffix_drifted(
+        self,
+    ) -> None:
+        cfg = _config()
         dev = _device(
             device_name="Main Bedroom Pedestal Fan",
             default_name="Pedestal Fan",
@@ -319,7 +337,68 @@ class TestCheckEntityDrift:
             current_name="Temperature",
             expected_name="Pedestal Fan Temperature",
         )
+        result = _check_entity_drift(cfg, entity, dev)
+        assert result is not None
+        assert result.name_drifted is True
+        assert (
+            result.recommended_override
+            == "Main Bedroom Pedestal Fan Temperature"
+        )
+
+    def test_hen_false_second_integration_still_recommends(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(
+            device_name="Fan",
+            default_name="Main Bath Fan",
+            integrations=["lutron_caseta", "switch_as_x"],
+        )
+        entity = _entity_drift(
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Fan",
+            expected_name="Main Bath Fan",
+        )
         assert _check_entity_drift(cfg, entity, dev) is None
+
+    def test_hen_false_pending_name_holds_back_id_drift(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(device_name="Fan", default_name="Main Bath Fan")
+        entity = _entity_drift(
+            entity_id="switch.main_bath_fan",
+            expected_entity_id="switch.main_bath_fan_main_bath_fan",
+            has_entity_name=False,
+            current_name="Main Bath Fan",
+            expected_name="Main Bath Fan",
+            full_name="Fan Main Bath Fan",
+        )
+        result = _check_entity_drift(cfg, entity, dev)
+        assert result is not None
+        assert result.name_drifted is True
+        assert result.id_drifted is False
+        assert result.current_name == "Fan Main Bath Fan"
+        assert result.recommended_override == "Fan"
+
+    def test_hen_false_id_drift_reported_once_name_is_right(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(device_name="Fan", default_name="Main Bath Fan")
+        entity = _entity_drift(
+            entity_id="switch.old_id",
+            expected_entity_id="switch.main_bath_fan",
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Fan",
+            expected_name="Main Bath Fan",
+        )
+        result = _check_entity_drift(cfg, entity, dev)
+        assert result is not None
+        assert result.id_drifted is True
+        assert result.name_drifted is False
 
     def test_hen_false_wrong_override_drifted(
         self,
@@ -338,7 +417,10 @@ class TestCheckEntityDrift:
         result = _check_entity_drift(cfg, entity, dev)
         assert result is not None
         assert result.name_drifted is True
-        assert result.recommended_override == "Temperature"
+        assert (
+            result.recommended_override
+            == "Main Bedroom Pedestal Fan Temperature"
+        )
 
     def test_hen_false_no_override_drifted(
         self,
@@ -376,25 +458,54 @@ class TestCheckEntityDrift:
 
 
 class TestComputeRecommendedOverride:
-    def test_multi_integration_skips(self) -> None:
+    """Shape of the result; ``TestLegacyNamesFollowHomeAssistant``
+    in the integration tests holds its value to real HA.
+    """
+
+    def test_exact_name_recommends_device_name(self) -> None:
+        result = _compute_recommended_override(
+            entity_name="Pedestal Fan",
+            device_default_name="Pedestal Fan",
+            device_display_name="Main Bedroom Fan",
+            has_entity_name=False,
+        )
+        assert result == "Main Bedroom Fan"
+
+    def test_suffix_follows_device_name(self) -> None:
         result = _compute_recommended_override(
             entity_name="Pedestal Fan Temperature",
             device_default_name="Pedestal Fan",
             device_display_name="Main Bedroom Fan",
             has_entity_name=False,
-            multi_integration=True,
+        )
+        assert result == "Main Bedroom Fan Temperature"
+
+    def test_device_not_renamed_skips(self) -> None:
+        result = _compute_recommended_override(
+            entity_name="Pedestal Fan Temperature",
+            device_default_name="Pedestal Fan",
+            device_display_name="Pedestal Fan",
+            has_entity_name=False,
         )
         assert result is None
 
-    def test_single_integration_recommends(self) -> None:
+    def test_has_entity_name_skips(self) -> None:
         result = _compute_recommended_override(
             entity_name="Pedestal Fan Temperature",
             device_default_name="Pedestal Fan",
             device_display_name="Main Bedroom Fan",
-            has_entity_name=False,
-            multi_integration=False,
+            has_entity_name=True,
         )
-        assert result == "Temperature"
+        assert result is None
+
+    def test_name_from_another_device_skips(self) -> None:
+        result = _compute_recommended_override(
+            entity_name="Wall Switch Temperature",
+            device_default_name="Pedestal Fan",
+            device_display_name="Main Bedroom Fan",
+            has_entity_name=False,
+        )
+        assert result is None
 
 
 class TestBuildNotificationMessage:

@@ -19,6 +19,13 @@ would use today:
 - Device entity name drift: ``entry.name``, a name
   override set by a user or HA's migration logic, against
   ``entry.original_name``, the integration's default.
+- Legacy entity name drift: a ``has_entity_name=False``
+  entity whose integration name embeds the device's default
+  name needs a stored name once the device is renamed,
+  because HA otherwise shows the new device name in front
+  of the whole integration name. The handler reads the
+  entity's name from HA and compares it to the name HA
+  stores at a rename, ``_compute_recommended_override``.
 - Redundant prefix: HA prepends the device name for
   ``has_entity_name=True`` entities, so an override that
   starts with it is redundant.
@@ -165,6 +172,9 @@ class EntityDriftInfo:
     expected_entity_id: str | None
     current_name: str
     expected_name: str | None
+    # The entity's whole name as HA computes it today, which
+    # for a legacy entity can differ from any stored value.
+    full_name: str
 
 
 @dataclass
@@ -608,43 +618,75 @@ def _detect_redundant_prefix(
     return entry_name.startswith(device_name)
 
 
+def _strip_device_prefix(name: str, prefix: str) -> str | None:
+    """Return ``name`` without its leading ``prefix``.
+
+    Returns None if ``name`` doesn't start with ``prefix``
+    as a whole word, and "" if ``name`` is just ``prefix``.
+    """
+    folded_prefix = prefix.casefold()
+    head = name[: len(folded_prefix)]
+    folded_head = head.casefold()
+    if not folded_head.startswith(folded_prefix):
+        return None
+    # Casefolding can change a string's length, so walk back
+    # to where the prefix really ends in ``name``.
+    end = len(head)
+    excess = len(folded_head) - len(folded_prefix)
+    while excess > 0:
+        end -= 1
+        excess -= len(name[end].casefold())
+    if excess < 0:
+        return None
+    rest = name[end:]
+    stripped = rest.lstrip(" -:")
+    if not stripped:
+        return ""
+    if stripped == rest:
+        return None
+    if stripped.partition(" ")[0].islower():
+        return stripped[0].upper() + stripped[1:]
+    return stripped
+
+
 def _compute_recommended_override(
     entity_name: str,
     device_default_name: str,
     device_display_name: str,
     has_entity_name: bool,
-    multi_integration: bool,
 ) -> str | None:
-    """Compute the correct name override for legacy entities.
+    """Compute the name HA stores when a device is renamed.
 
-    For has_entity_name=False entities whose entity_name
-    embeds the device default name, returns the override
-    value that produces correct entity IDs.
+    HA gives this name to has_entity_name=False entities
+    whose ``entity_name`` embeds the device name, since it
+    would otherwise show the new device name in front of
+    all of ``entity_name``. It does so only for an entity
+    with no stored name, so after a further rename this is
+    the name HA would have stored for the current device.
+
+    HA keeps this rule, and the prefix match under it, in
+    private registry code, so they can only be copied.
+    ``TestLegacyNamesFollowHomeAssistant`` holds this copy
+    to what a real device rename stores.
 
     Returns None if not applicable (has_entity_name=True,
-    entity_name doesn't start with the device default
-    name, device hasn't been renamed, or device has
-    multiple integrations).
+    the device hasn't been renamed, or entity_name doesn't
+    start with the device default name). ``default_name``
+    can come from another integration on a shared device;
+    the prefix match is what screens that out.
     """
     if has_entity_name:
-        return None
-    # Multi-integration devices have non-deterministic
-    # default_name -- skip recommendation to avoid
-    # incorrect suggestions.
-    if multi_integration:
         return None
     if not entity_name or not device_default_name:
         return None
     if device_default_name == device_display_name:
         return None
-    if not entity_name.startswith(
-        device_default_name,
-    ):
+    suffix = _strip_device_prefix(entity_name, device_default_name)
+    if suffix is None:
         return None
-    suffix = entity_name[len(device_default_name) :].strip()
     if not suffix:
         return device_display_name
-    return suffix
+    return f"{device_display_name} {suffix}"
 
 
 def _check_id_enabled(config: Config) -> bool:
@@ -778,23 +820,25 @@ def _check_entity_drift(
     name_drifted = False
 
     # Compute has_entity_name=False recommendations
-    multi = len(device.de.integration_entities) > 1
     recommended = _compute_recommended_override(
         entity.expected_name or "",
         device.de.default_name,
         device.de.name,
         entity.has_entity_name,
-        multi,
     )
     redundant = _detect_redundant_prefix(
         entity.current_name if entity.has_name_override else None,
         device.de.name,
         entity.has_entity_name,
     )
+    # HA derives the expected ID from the name, so a name
+    # waiting on its fix leaves that ID unusable as a target.
+    name_pending = recommended is not None and entity.full_name != recommended
 
     # ID drift check
     if (
         _check_id_enabled(config)
+        and not name_pending
         and entity.expected_entity_id is not None
         and entity.entity_id != entity.expected_entity_id
     ):
@@ -802,15 +846,11 @@ def _check_entity_drift(
 
     # Name drift check
     if _check_name_enabled(config):
-        if not entity.has_entity_name and recommended is not None:
-            # has_entity_name=False with extractable
-            # device name prefix: compare override
-            # against the recommended value. Flag even
-            # without an existing override (entity IDs
-            # will be broken without the correct
-            # override).
-            if entity.current_name != recommended:
-                name_drifted = True
+        if recommended is not None:
+            # A legacy entity on a renamed device: flag it
+            # even without a stored name, because that is
+            # what doubles the device name.
+            name_drifted = name_pending
         elif (
             entity.has_name_override
             and entity.expected_name is not None
@@ -825,7 +865,7 @@ def _check_entity_drift(
         entity_id=entity.entity_id,
         id_drifted=id_drifted,
         name_drifted=name_drifted,
-        current_name=entity.current_name,
+        current_name=entity.full_name if name_pending else entity.current_name,
         expected_name=entity.expected_name,
         has_redundant_prefix=redundant,
         recommended_override=recommended,

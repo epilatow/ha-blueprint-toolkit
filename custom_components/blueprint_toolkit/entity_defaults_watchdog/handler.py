@@ -542,10 +542,10 @@ def _build_device_inputs(
 ) -> list[logic.DeviceInfo]:
     """Walk registries to build ``DeviceInfo`` per device.
 
-    Always scans every integration so multi-integration
-    detection (which gates the recommended-override path)
-    stays accurate. ``target_integrations`` filters which
-    integrations populate entity drift snapshots; the
+    Always scans every integration so a device's
+    attribution names all of them.
+    ``target_integrations`` filters which integrations
+    populate entity drift snapshots; the
     device's ``integration_entities`` map carries every
     integration the device touches but only the targeted
     ones contribute ``EntityDriftInfo`` rows.
@@ -605,7 +605,7 @@ def _build_device_inputs(
                     entry.name or entry.original_name or "",
                 )
                 expected_name: str | None = None
-                if has_name_override:
+                if has_name_override or not entry.has_entity_name:
                     expected_name = str(entry.original_name or "")
                 entity_infos.append(
                     logic.EntityDriftInfo(
@@ -615,6 +615,7 @@ def _build_device_inputs(
                         expected_entity_id=expected_id,
                         current_name=current_name,
                         expected_name=expected_name,
+                        full_name=er.async_get_full_entity_name(hass, entry),
                     ),
                 )
         devices.append(

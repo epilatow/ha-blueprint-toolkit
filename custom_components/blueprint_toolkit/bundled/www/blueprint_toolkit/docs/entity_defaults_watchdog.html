@@ -174,6 +174,13 @@ example, renaming &quot;Kitchen Multisensor&quot; to &quot;Kitchen Sensor&quot; 
 conventions (e.g., during an upgrade), HA preserves the old name as a &quot;name
 override&quot; to avoid breaking automations. The override becomes stale when the
 integration's new name is what you actually want.</li>
+<li><strong>Legacy entity name drift</strong> -- some integrations (Lutron Caseta, for
+example) build each entity's name from the device's name. When you rename
+such a device, HA stores a matching name on the entity. Without it, HA shows
+the new device name in front of the old name (&quot;Fan Main Bath Fan&quot;), so the
+watchdog flags an entity missing that name, or still holding one from an
+earlier rename, and reports its entity ID only once the name is right, since
+the expected ID depends on it.</li>
 <li><strong>Deviceless ID drift</strong> -- automations, scripts, helpers, template sensors,
 and similar user-named entities have entity IDs derived from their name at
 creation. Renaming the entity later doesn't update the entity ID, leaving
@@ -205,7 +212,7 @@ higher than what the watchdog reported.</p>
 <p>Device-attached drift creates one persistent notification per device. Every
 notification leads with an attribution header -- the automation that emitted
 it, the device's integration(s), and a link to the device -- so you can click
-straight through to the source. The body below contains up to three sections
+straight through to the source. The body below contains up to four sections
 depending on what kind of drift was found:</p>
 <p><strong>Name overrides to clear</strong> -- entities where the name override should be
 removed:</p>
@@ -214,6 +221,10 @@ removed:</p>
 <p><strong>Name overrides with redundant device name</strong> -- the override includes the
 device name, which HA already adds automatically:</p>
 <pre><code class="language-text">- `sensor.kitchen_co2`: &quot;Kitchen Sensor CO2&quot; -&gt; &quot;CO2&quot;
+</code></pre>
+<p><strong>Name overrides to set</strong> -- legacy entities on a renamed device, with the
+name HA stores at a rename:</p>
+<pre><code class="language-text">- `switch.main_bath_fan`: set to &quot;Fan&quot;
 </code></pre>
 <p><strong>Non-default entity IDs</strong> -- entities whose ID does not match what HA would
 assign today:</p>
@@ -332,7 +343,8 @@ renames into one Repair; deviceless entities (automations, template / helper
 entities, ...) get one Repair each, since they have no device to group
 under.</li>
 <li><strong>Entity-name drift</strong> -- &quot;reset friendly name on <code>&lt;entity_id&gt;</code> from
-<code>&lt;current&gt;</code> to <code>&lt;default&gt;</code>&quot;. Submit clears the user-set name override.</li>
+<code>&lt;current&gt;</code> to <code>&lt;default&gt;</code>&quot;. Submit clears the user-set name override, or
+for a legacy entity on a renamed device, stores the name HA uses there.</li>
 <li><strong>Visible aliased entity</strong> -- &quot;re-hide <code>&lt;source_entity_id&gt;</code>&quot;. One repair per
 flagged <code>switch_as_x</code> source whose row is still visible; Submit sets
 <code>hidden_by=integration</code> on the source, restoring the original wrapper
