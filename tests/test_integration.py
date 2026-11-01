@@ -31,6 +31,7 @@ plumbing in ``custom_components/blueprint_toolkit/__init__.py``.
 
 from __future__ import annotations
 
+import struct
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -333,6 +334,33 @@ class TestDocsStaticRoute:
         assert "Device Watchdog" in body, (
             "rendered doc body did not contain the expected title"
         )
+
+
+class TestBrandImages:
+    @pytest.mark.parametrize(
+        ("image", "size"),
+        [("icon.png", 256), ("icon@2x.png", 512)],
+    )
+    async def test_ha_serves_the_icon_from_the_integration(
+        self,
+        hass: HomeAssistant,
+        hass_client: ClientSessionGenerator,
+        image: str,
+        size: int,
+    ) -> None:
+        from homeassistant.setup import async_setup_component
+
+        assert await async_setup_component(hass, "brands", {})
+        await hass.async_block_till_done()
+
+        client = await hass_client()
+        resp = await client.get(f"/api/brands/integration/{DOMAIN}/{image}")
+
+        assert resp.status == 200
+        body = await resp.read()
+        assert body.startswith(b"\x89PNG\r\n\x1a\n")
+        # The IHDR chunk carries width and height at these offsets.
+        assert struct.unpack(">II", body[16:24]) == (size, size)
 
 
 class TestRemoveEntry:

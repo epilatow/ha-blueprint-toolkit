@@ -37,10 +37,10 @@ symlinks that Windows (with default git settings) checks out as text files
 containing the target path, which breaks tests, install scripts, and deploys.
 Use macOS or Linux; WSL2 works too.
 
-Brand assets for the HA integration live at `assets/` at the repo root (source
-SVG + 256/512 PNG renders). They are only consumed by a future PR to
-`home-assistant/brands`; they do not ship inside the bundle because HA's UI
-only reads brand assets from the brands CDN.
+The integration's icon ships in `custom_components/blueprint_toolkit/brand/`,
+where HA looks for a custom integration's brand images before trying its
+brands CDN: `icon.png` and `icon@2x.png` are 256 and 512 px renders of
+`assets/icon.svg`, the source, which stays out of the shipped tree.
 
 Repo-local Claude Code skills live at `skills/<name>/SKILL.md`, and
 `.claude/skills` is a committed symlink to `../skills` so Claude Code finds
