@@ -133,6 +133,24 @@ def device_area_name(hass: HomeAssistant, device_id: str) -> str | None:
     return area.name if area is not None else None
 
 
+def voice_exposed_entity_ids(hass: HomeAssistant) -> frozenset[str]:
+    """Entities HA exposes to at least one voice assistant."""
+    from homeassistant.components.homeassistant.exposed_entities import (
+        KNOWN_ASSISTANTS,
+        async_get_assistant_settings,
+    )
+
+    return frozenset(
+        entity_id
+        for assistant in KNOWN_ASSISTANTS
+        for entity_id, settings in async_get_assistant_settings(
+            hass,
+            assistant,
+        ).items()
+        if settings.get("should_expose")
+    )
+
+
 def file_editor_addon_ingress_url(hass: HomeAssistant) -> str:
     """Return the ingress URL prefix for the ``core_configurator`` add-on.
 
@@ -1084,4 +1102,5 @@ __all__ = [
     "process_repairs_with_sweep",
     "register_blueprint_handler",
     "schedule_periodic_with_jitter",
+    "voice_exposed_entity_ids",
 ]

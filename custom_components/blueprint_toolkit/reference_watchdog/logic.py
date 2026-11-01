@@ -407,11 +407,6 @@ class Config:
     # to skip devices whose effective name (``name_by_user``
     # or ``name``) matches.
     exclude_device_name_regex: str = ""
-    # When True, the ``homeassistant.exposed_entities``
-    # storage scan is skipped from the reference set --
-    # voice-assistant-only references no longer rescue an
-    # entity from the unused-* checks.
-    exclude_exposed_entities: bool = False
     # Per-instance notification ID prefix, ending with
     # the canonical ``__`` separator. Every notification
     # this module mints must start with this string so
@@ -2712,10 +2707,10 @@ def _build_source_orphans_notification(
 # The unused-* checks are the inverse of broken-references: rather
 # than asking "every reference resolves to something live", they
 # ask "every live thing is referenced somewhere". They reuse the
-# already-built per-owner reference set plus three extra storage
-# scans (``homeassistant.exposed_entities``, ``.storage/energy``,
-# ``.storage/person``) so voice-exposure / energy-dashboard /
-# person-card bindings count as references.
+# already-built per-owner reference set plus the caller's
+# voice-exposed entities and two extra storage scans
+# (``.storage/energy``, ``.storage/person``) so voice-exposure /
+# energy-dashboard / person-card bindings count as references.
 #
 # Devices: a device is "unused" when no enabled entity on it is
 # referenced AND the device itself isn't device-id-referenced AND
@@ -2839,11 +2834,10 @@ def _collect_referenced_entity_ids(
 
     Combines the entity-kind ref values seen during the
     per-owner walk (``OwnerResult.seen_entity_refs``) with
-    extended-source entity_ids harvested by
-    ``_build_extended_reference_set`` (voice exposures,
-    energy dashboard, person trackers). The resulting set is
-    what the unused-* checks treat as "referenced anywhere
-    this run".
+    the extended-source entity_ids (voice exposures, energy
+    dashboard, person trackers). The resulting set is what
+    the unused-* checks treat as "referenced anywhere this
+    run".
 
     Source orphans are a separate concern (registry entries with
     no definer); they don't intersect with the referenced set.
@@ -3367,59 +3361,12 @@ def _build_unused_deviceless_notifications(
 
 # -- Extended reference-set scans ---------------------------------------
 #
-# Three additional ``.storage/*`` files extend the reference
-# set used by the unused-* checks. Broken-references uses the
+# Two additional ``.storage/*`` files extend the reference set
+# used by the unused-* checks. Broken-references uses the
 # narrower set already (per-owner walks); the unused-* checks
 # need a fuller "what counts as referenced" so an entity that's
-# only consumed by the voice / energy / person UIs isn't
+# only consumed by the energy / person UIs isn't
 # false-positive-flagged as unused.
-
-
-def _scan_exposed_entities(
-    parsed: object,
-) -> set[str]:
-    """Extract entity_ids exposed to at least one voice assistant.
-
-    ``homeassistant.exposed_entities`` shape::
-
-        data:
-          exposed_entities:
-            <entity_id>:
-              <assistant>:
-                should_expose: true|false
-                ...
-
-    Only emit an entity_id when at least one assistant has
-    ``should_expose: true``. Entries where every assistant
-    declines exposure (the user opted-out everywhere) don't
-    count as "referenced". Defensive against shape drift:
-    missing or non-dict ``assistants`` value at any level
-    skips the entry without raising.
-    """
-    out: set[str] = set()
-    if not isinstance(parsed, dict):
-        return out
-    data = parsed.get("data")
-    if not isinstance(data, dict):
-        return out
-    exposed = data.get("exposed_entities")
-    if not isinstance(exposed, dict):
-        return out
-    for eid, assistants in exposed.items():
-        if not isinstance(eid, str):
-            continue
-        if not isinstance(assistants, dict):
-            continue
-        any_exposed = False
-        for assistant in assistants.values():
-            if not isinstance(assistant, dict):
-                continue
-            if assistant.get("should_expose") is True:
-                any_exposed = True
-                break
-        if any_exposed:
-            out.add(eid)
-    return out
 
 
 def _scan_energy_storage(
@@ -3497,18 +3444,12 @@ def _scan_person_storage(
     return out
 
 
-def _build_extended_reference_set(
-    config_dir: str,
-    config: Config,
-) -> frozenset[str]:
-    """Read the three extended-source storage files into one set.
+def _build_extended_reference_set(config_dir: str) -> frozenset[str]:
+    """Read the extended-source storage files into one set.
 
-    Gated by ``config.exclude_exposed_entities`` -- when True,
-    the ``homeassistant.exposed_entities`` scan is skipped
-    entirely. The other two scans always run; they're
-    user-controlled config (energy dashboard configuration,
-    person card binding) that's authoritative regardless of
-    whether the user exposes anything to voice.
+    Both are user-controlled config (energy dashboard
+    configuration, person card binding), so they're
+    authoritative whatever the user exposes to voice.
 
     Missing files are silently ignored; this matches the
     rest of RW's source-discovery behavior.
@@ -3516,17 +3457,6 @@ def _build_extended_reference_set(
     import os
 
     out: set[str] = set()
-
-    if not config.exclude_exposed_entities:
-        ee_path = os.path.join(
-            config_dir,
-            ".storage",
-            "homeassistant.exposed_entities",
-        )
-        if os.path.isfile(ee_path):
-            parsed = _read_json_file(ee_path)
-            if parsed is not None:
-                out.update(_scan_exposed_entities(parsed))
 
     energy_path = os.path.join(config_dir, ".storage", "energy")
     if os.path.isfile(energy_path):
@@ -3825,6 +3755,7 @@ def run_evaluation(
     truth_set: TruthSet,
     max_notifications: int,
     directive_inputs: DirectiveInputs | None = None,
+    exposed_entity_ids: frozenset[str] = frozenset(),
 ) -> EvaluationResult:
     """Run the full evaluation pipeline.
 
@@ -3836,6 +3767,9 @@ def run_evaluation(
     The caller (service wrapper) is responsible for:
     - Building the truth set (requires HA registries,
       must run on the event loop)
+    - Passing ``exposed_entity_ids``, the voice-exposed
+      entities the unused-* checks count as referenced
+      (requires HA's exposure API, same restriction)
     - Processing the returned notifications (HA service
       calls, must run on the event loop)
     - Saving state attributes
@@ -3891,7 +3825,9 @@ def run_evaluation(
         or CHECK_UNUSED_DEVICELESS_ENTITIES in config.enabled_checks
     )
     if needs_unused_checks:
-        extended_refs = _build_extended_reference_set(config_dir, config)
+        extended_refs = (
+            _build_extended_reference_set(config_dir) | exposed_entity_ids
+        )
     else:
         extended_refs = frozenset()
 

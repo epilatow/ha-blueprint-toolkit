@@ -182,6 +182,8 @@ Cross-handler accessors:
   excluded integration excludes the whole device, not just its own entities.
 - `device_area_name` -- the name of a device's area, or `None`. Handlers pass
   it to logic for `DeviceRef.area`.
+- `voice_exposed_entity_ids` -- the entities exposed to any voice assistant.
+  Reference Watchdog counts them as referenced.
 - `resolve_target_integrations` -- apply include / exclude filters; empty
   `include` means "all".
 - `filter_on_entities` -- the subset of entities currently `on`, so a turn-off

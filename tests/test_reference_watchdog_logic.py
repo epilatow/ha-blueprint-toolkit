@@ -79,7 +79,6 @@ from custom_components.blueprint_toolkit.reference_watchdog.logic import (  # no
     _scan_config_entries,
     _scan_customize,
     _scan_energy_storage,
-    _scan_exposed_entities,
     _scan_generic_yaml,
     _scan_lovelace,
     _scan_person,
@@ -4060,69 +4059,6 @@ class TestScanUnusedDevicelessEntities:
         assert out == []
 
 
-class TestScanExposedEntities:
-    def test_should_expose_true_emits_id(self) -> None:
-        parsed = {
-            "data": {
-                "exposed_entities": {
-                    "light.kitchen": {
-                        "google": {"should_expose": True},
-                    },
-                },
-            },
-        }
-        out = _scan_exposed_entities(parsed)
-        assert out == {"light.kitchen"}
-
-    def test_all_should_expose_false_skipped(self) -> None:
-        parsed = {
-            "data": {
-                "exposed_entities": {
-                    "light.kitchen": {
-                        "google": {"should_expose": False},
-                        "alexa": {"should_expose": False},
-                    },
-                },
-            },
-        }
-        out = _scan_exposed_entities(parsed)
-        assert out == set()
-
-    def test_at_least_one_assistant_exposes(self) -> None:
-        parsed = {
-            "data": {
-                "exposed_entities": {
-                    "light.kitchen": {
-                        "google": {"should_expose": False},
-                        "alexa": {"should_expose": True},
-                    },
-                },
-            },
-        }
-        out = _scan_exposed_entities(parsed)
-        assert out == {"light.kitchen"}
-
-    def test_missing_assistants_key_skipped_no_raise(self) -> None:
-        parsed = {
-            "data": {
-                "exposed_entities": {
-                    "light.kitchen": "not a dict",
-                },
-            },
-        }
-        # Must not raise; entity dropped.
-        out = _scan_exposed_entities(parsed)
-        assert out == set()
-
-    def test_missing_data_key_returns_empty(self) -> None:
-        assert _scan_exposed_entities({}) == set()
-        assert _scan_exposed_entities({"data": "wrong"}) == set()
-
-    def test_non_dict_input_returns_empty(self) -> None:
-        assert _scan_exposed_entities("not a dict") == set()
-        assert _scan_exposed_entities(None) == set()
-
-
 class TestScanEnergyStorage:
     def test_energy_sources_extracts_entity_ids(self) -> None:
         parsed = {
@@ -4748,13 +4684,10 @@ class TestRunEvaluationSharedCap:
 
 
 class TestRunEvaluationExtendedRefs:
-    def test_exposed_entities_rescues_unused_deviceless(
+    def test_exposed_entity_is_not_flagged_unused(
         self,
         tmp_path: Path,
     ) -> None:
-        # Plant a deviceless entity that would otherwise be
-        # unused, plus a homeassistant.exposed_entities file
-        # that exposes it. Should NOT be flagged.
         reg_dl = _reg_entry(
             "sensor.exposed_only",
             platform="utility_meter",
@@ -4763,28 +4696,24 @@ class TestRunEvaluationExtendedRefs:
         )
         ts = _ts(registry={reg_dl.entity_id: reg_dl})
         (tmp_path / "configuration.yaml").write_text("")
-        storage = tmp_path / ".storage"
-        storage.mkdir()
-        (storage / "homeassistant.exposed_entities").write_text(
-            '{"data": {"exposed_entities": '
-            '{"sensor.exposed_only": '
-            '{"google": {"should_expose": true}}}}}'
-        )
         cfg = _config(
             enabled_checks=frozenset(
                 {CHECK_UNUSED_DEVICELESS_ENTITIES},
             ),
         )
-        ev = run_evaluation(str(tmp_path), cfg, ts, 0)
+        ev = run_evaluation(
+            str(tmp_path),
+            cfg,
+            ts,
+            0,
+            exposed_entity_ids=frozenset({"sensor.exposed_only"}),
+        )
         assert ev.unused_deviceless_count == 0
 
-    def test_exclude_exposed_entities_flips_flag(
+    def test_unexposed_entity_is_flagged_unused(
         self,
         tmp_path: Path,
     ) -> None:
-        # Same setup; with exclude_exposed_entities=True the
-        # voice-exposure scan is skipped, so the entity flips
-        # back to flagged.
         reg_dl = _reg_entry(
             "sensor.exposed_only",
             platform="utility_meter",
@@ -4793,18 +4722,10 @@ class TestRunEvaluationExtendedRefs:
         )
         ts = _ts(registry={reg_dl.entity_id: reg_dl})
         (tmp_path / "configuration.yaml").write_text("")
-        storage = tmp_path / ".storage"
-        storage.mkdir()
-        (storage / "homeassistant.exposed_entities").write_text(
-            '{"data": {"exposed_entities": '
-            '{"sensor.exposed_only": '
-            '{"google": {"should_expose": true}}}}}'
-        )
         cfg = _config(
             enabled_checks=frozenset(
                 {CHECK_UNUSED_DEVICELESS_ENTITIES},
             ),
-            exclude_exposed_entities=True,
         )
         ev = run_evaluation(str(tmp_path), cfg, ts, 0)
         assert ev.unused_deviceless_count == 1

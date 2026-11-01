@@ -29,6 +29,7 @@ from .helpers_lifecycle import (
     process_repairs_with_sweep,
     register_blueprint_handler,
     schedule_periodic_with_jitter,
+    voice_exposed_entity_ids,
 )
 from .helpers_logic import (
     CONTROLLABLE_DOMAINS,
@@ -185,5 +186,6 @@ __all__ = [
     "validate_directives_item",
     "validate_directives_regex",
     "validate_payload_or_emit_config_error",
+    "voice_exposed_entity_ids",
     "zwave_js_entry",
 ]

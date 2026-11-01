@@ -139,7 +139,7 @@ add-on the same bodies show the filename as a plain <code>code-spanned</code> pa
 </tr>
 <tr>
 <td>Exclude voice-assistant exposure from the reference set</td>
-<td>When enabled, the <code>homeassistant.exposed_entities</code> storage scan is skipped from the reference set. By default an entity exposed to a voice assistant counts as &quot;referenced&quot; for the unused-* checks; enable this if you want voice-only entities surfaced in the unused-* findings.</td>
+<td>When enabled, voice exposure is left out of the reference set. By default an entity exposed to a voice assistant counts as &quot;referenced&quot; for the unused-* checks; enable this if you want voice-only entities surfaced in the unused-* findings.</td>
 </tr>
 <tr>
 <td>Check disabled entities</td>
@@ -403,14 +403,15 @@ references for that target).</li>
 platform.</li>
 </ul>
 <h3>Voice-assistant exposure</h3>
-<p>By default, an entity exposed to a voice assistant via HA's Voice Assistants
-UI (<code>homeassistant.exposed_entities</code> storage with at least one
-<code>should_expose: true</code> entry) counts as &quot;referenced&quot; for the unused-* checks
--- otherwise every voice-only entity would surface as unused.</p>
-<p>Enable <strong>Exclude voice-assistant exposure from the reference set</strong> to drop
-that scan, so voice-only entities get flagged. The other extended sources
-(<code>.storage/energy</code>, <code>.storage/person</code>) always run -- they're authoritative
-config the user controls directly.</p>
+<p>By default, an entity exposed to any voice assistant counts as &quot;referenced&quot;
+for the unused-* checks -- otherwise every voice-only entity would surface as
+unused.</p>
+<p>Exposure isn't always a choice you made. Once a voice assistant has run, HA
+records most lights, switches, and similar entities as exposed, so few of
+those get flagged. Enable <strong>Exclude voice-assistant exposure from the
+reference set</strong> to leave exposure out, so voice-only entities get flagged. The
+other extended sources (<code>.storage/energy</code>, <code>.storage/person</code>) always run --
+they're authoritative config the user controls directly.</p>
 <p><code>.storage/person</code> plays a second, independent role: it is also scanned as a
 broken-references owner source (one owner per person), so a person whose
 <code>device_trackers</code> binding points at a deleted <code>device_tracker</code> surfaces as a
@@ -600,13 +601,6 @@ hasn't created any entities yet, or one whose entities haven't been loaded
 this run) will silently fail to emit refs to those entity_ids. Once the
 integration loads and the registry sees the domain, subsequent runs pick up
 the refs.</li>
-<li><strong>Voice-exposure scan reads the unified store only.</strong> The voice-exposure
-reference set is harvested from <code>.storage/homeassistant.exposed_entities</code>,
-the unified store HA writes for every assistant. Per-assistant cloud configs
-(Google Assistant, Alexa, etc.) maintained as separate storage blobs aren't
-consulted. An entity exposed only via a per-assistant config that bypasses
-the unified store won't be rescued from the unused-* checks via voice
-exposure -- add it to <strong>Exclude entities</strong> if needed.</li>
 <li><strong>Some source-orphan false positives.</strong> Object_ids derived by slugifying a
 scene or group <code>name:</code> aren't harvested, so a <code>scene:</code> block without an
 explicit <code>id:</code> appears as an orphan. Give it an <code>id:</code> (recommended) or add

@@ -99,12 +99,14 @@ async def _setup_integration(hass: Any) -> Any:
     """Create + load a config entry; return it.
 
     Also explicitly sets up ``persistent_notification`` so
-    the argparse-error code path can dispatch to it. The
-    pytest-HACC harness doesn't auto-load it.
+    the argparse-error code path can dispatch to it, and
+    ``homeassistant`` for its voice-exposure store. The
+    pytest-HACC harness auto-loads neither.
     """
     from homeassistant.setup import async_setup_component
 
     assert await async_setup_component(hass, "persistent_notification", {})
+    assert await async_setup_component(hass, "homeassistant", {})
     entry = _mock_config_entry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -1104,18 +1106,23 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         assert attrs.get("unused_device_count") == 0
 
+    @pytest.mark.parametrize(
+        "assistant",
+        ["cloud.alexa", "cloud.google_assistant", "conversation"],
+    )
     async def test_exclude_exposed_entities_toggle_flips_rescue(
         self,
         hass: HomeAssistant,
+        assistant: str,
     ) -> None:
-        # A device whose only "use" is via the unified
-        # voice-exposure store. With ``exclude_exposed_entities``
-        # off (default), the entity is part of the reference
-        # set and the device is rescued. Toggle on, the
-        # exposure scan is skipped and the device flips to
-        # flagged.
-        import json
-
+        # A device whose only "use" is being exposed to a voice
+        # assistant. With ``exclude_exposed_entities`` off
+        # (default), the entity is part of the reference set and
+        # the device is rescued. Toggle on, exposure is left out
+        # and the device flips to flagged.
+        from homeassistant.components.homeassistant.exposed_entities import (
+            async_expose_entity,
+        )
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
 
@@ -1146,26 +1153,7 @@ class TestUnusedDeviceCheckEndToEnd:
             original_name="voice_light",
         )
 
-        # Plant a unified exposed-entities store flagging
-        # the entity as exposed to one assistant.
-        config_dir = Path(hass.config.config_dir)
-        (config_dir / ".storage").mkdir(exist_ok=True)
-        (config_dir / ".storage" / "homeassistant.exposed_entities").write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "minor_version": 1,
-                    "key": "homeassistant.exposed_entities",
-                    "data": {
-                        "exposed_entities": {
-                            entity.entity_id: {
-                                "cloud.alexa": {"should_expose": True},
-                            },
-                        },
-                    },
-                },
-            ),
-        )
+        async_expose_entity(hass, assistant, entity.entity_id, True)
 
         # Toggle off: exposure rescues the device.
         await hass.services.async_call(
@@ -1205,8 +1193,8 @@ class TestUnusedDeviceCheckEndToEnd:
         for nid in list(notifs.keys()):
             async_dismiss(hass, nid)
 
-        # Toggle on: exposure scan is skipped, device flips
-        # to flagged.
+        # Toggle on: exposure is left out, device flips to
+        # flagged.
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
@@ -1231,6 +1219,68 @@ class TestUnusedDeviceCheckEndToEnd:
             f"toggle on: device must be flagged; got "
             f"notifs2={sorted(notifs2.keys())}"
         )
+
+    async def test_entity_hidden_from_every_assistant_stays_flagged(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.homeassistant.exposed_entities import (
+            KNOWN_ASSISTANTS,
+            async_expose_entity,
+        )
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "automation.rw_hidden",
+            "on",
+            {"friendly_name": "RW: Hidden", "id": "4"},
+        )
+        fake_entry = _mock_config_entry(
+            domain="fake_hidden",
+            title="fake_hidden",
+        )
+        fake_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_hidden", "device-1")},
+            name="Hidden Light",
+        )
+        entity = er.async_get(hass).async_get_or_create(
+            domain="light",
+            platform="fake_hidden",
+            unique_id="hidden_light",
+            device_id=device.id,
+            config_entry=fake_entry,
+            original_name="hidden_light",
+        )
+        for assistant in KNOWN_ASSISTANTS:
+            async_expose_entity(hass, assistant, entity.entity_id, False)
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                instance_id="automation.rw_hidden",
+                enabled_checks_raw=["unused-devices"],
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        flagged = [
+            nid
+            for nid in _async_get_or_create_notifications(hass)
+            if nid.startswith(
+                "blueprint_toolkit_reference_watchdog"
+                "__automation.rw_hidden__unused_device_"
+            )
+        ]
+        assert len(flagged) == 1
 
     async def test_header_names_the_device_area(
         self,

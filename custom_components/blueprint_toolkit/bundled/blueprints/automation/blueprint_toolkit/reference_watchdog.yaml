@@ -110,13 +110,14 @@ blueprint:
     exclude_exposed_entities:
       name: Exclude voice-assistant exposure from the reference set
       description: >
-        By default, an entity that's deliberately exposed
-        to a voice assistant (HA's Voice Assistants UI,
-        with should_expose=true) counts as "referenced"
-        for the unused-* checks. Enable this toggle to
-        drop the homeassistant.exposed_entities scan from
-        the reference set. Has no effect when neither
-        unused-* check is enabled.
+        By default, an entity exposed to a voice assistant
+        counts as "referenced" for the unused-* checks.
+        Once a voice assistant has run, HA records most
+        lights, switches, and similar entities as exposed,
+        whether or not you chose to, so few of those get
+        flagged. Enable this toggle to leave voice exposure
+        out of the reference set. Has no effect when
+        neither unused-* check is enabled.
       default: false
       selector:
         boolean: {}

@@ -67,6 +67,7 @@ from ..helpers import (
     update_instance_state,
     validate_and_join_regex_patterns,
     validate_payload_or_emit_config_error,
+    voice_exposed_entity_ids,
 )
 from . import logic
 
@@ -314,7 +315,6 @@ async def _async_service_layer(
         check_disabled_entities=check_disabled_entities,
         enabled_checks=enabled_checks,
         exclude_device_name_regex=exclude_device_name_regex,
-        exclude_exposed_entities=exclude_exposed_entities,
         notification_prefix=notif_prefix,
         instance_id=instance_id,
         file_editor_ingress_url=file_editor_addon_ingress_url(hass),
@@ -323,6 +323,11 @@ async def _async_service_layer(
     # Build the truth set on the event loop -- the
     # registries it queries are loop-only.
     truth_set = _build_truth_set(hass)
+    exposed_entity_ids = (
+        frozenset()
+        if exclude_exposed_entities
+        else voice_exposed_entity_ids(hass)
+    )
 
     # RW's exclude_integrations matches against
     # ``Owner.integration`` -- which can be a config-entry
@@ -362,6 +367,7 @@ async def _async_service_layer(
         truth_set,
         max_notifications,
         directive_inputs,
+        exposed_entity_ids,
     )
 
     unmatched_spec = make_unmatched_directives_notification(

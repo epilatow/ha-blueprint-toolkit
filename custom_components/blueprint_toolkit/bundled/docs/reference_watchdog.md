@@ -74,7 +74,7 @@ add-on the same bodies show the filename as a plain `code-spanned` path. See
 | Exclude entity regex                                    | Multi-line regex, matched against entity and device reference values, applied symmetrically to source and target sides. Also silences source-orphan findings.                                                                                                                                                                                                                                                                                 |
 | Enabled checks                                          | Subset of `broken-references`, `source-orphans`, `unused-devices`, `unused-deviceless-entities`. Default set is `broken-references` + `source-orphans`. The two `unused-*` checks are noisier prune-cleanup signals and require explicit opt-in. An empty selection means "all checks" (DW-style empty-means-all).                                                                                                                            |
 | Exclude devices by name (regex, multi-line)             | Multi-line regex patterns matched against device names. A matching device is excluded from the unused-devices check (broken-references and source-orphans are unaffected).                                                                                                                                                                                                                                                                    |
-| Exclude voice-assistant exposure from the reference set | When enabled, the `homeassistant.exposed_entities` storage scan is skipped from the reference set. By default an entity exposed to a voice assistant counts as "referenced" for the unused-\* checks; enable this if you want voice-only entities surfaced in the unused-\* findings.                                                                                                                                                         |
+| Exclude voice-assistant exposure from the reference set | When enabled, voice exposure is left out of the reference set. By default an entity exposed to a voice assistant counts as "referenced" for the unused-\* checks; enable this if you want voice-only entities surfaced in the unused-\* findings.                                                                                                                                                                                             |
 | Check disabled entities                                 | When enabled, references to entities that exist in the registry but are disabled are reported as "Disabled-but-existing references".                                                                                                                                                                                                                                                                                                          |
 | Check interval (minutes)                                | Minutes between reference-integrity evaluations (default 60 -- reference scans do more file I/O than the other watchdogs).                                                                                                                                                                                                                                                                                                                    |
 | Max source notifications                                | Notification cap. Default 10. 0 = unlimited. Applied independently to the broken-references per-owner notifications and the unused-device per-device notifications -- each check gets its own cap-summary slot when the cap is reached. The source-orphan summary and the unused-deviceless per-integration rollups are aggregate notifications bounded by HA-platform cardinality and aren't subject to this cap.                            |
@@ -316,15 +316,16 @@ To silence false positives:
 
 ### Voice-assistant exposure
 
-By default, an entity exposed to a voice assistant via HA's Voice Assistants
-UI (`homeassistant.exposed_entities` storage with at least one
-`should_expose: true` entry) counts as "referenced" for the unused-\* checks
--- otherwise every voice-only entity would surface as unused.
+By default, an entity exposed to any voice assistant counts as "referenced"
+for the unused-\* checks -- otherwise every voice-only entity would surface as
+unused.
 
-Enable **Exclude voice-assistant exposure from the reference set** to drop
-that scan, so voice-only entities get flagged. The other extended sources
-(`.storage/energy`, `.storage/person`) always run -- they're authoritative
-config the user controls directly.
+Exposure isn't always a choice you made. Once a voice assistant has run, HA
+records most lights, switches, and similar entities as exposed, so few of
+those get flagged. Enable **Exclude voice-assistant exposure from the
+reference set** to leave exposure out, so voice-only entities get flagged. The
+other extended sources (`.storage/energy`, `.storage/person`) always run --
+they're authoritative config the user controls directly.
 
 `.storage/person` plays a second, independent role: it is also scanned as a
 broken-references owner source (one owner per person), so a person whose
@@ -453,13 +454,6 @@ Documented gaps that won't be fixed in v1 without a design change:
   this run) will silently fail to emit refs to those entity_ids. Once the
   integration loads and the registry sees the domain, subsequent runs pick up
   the refs.
-- **Voice-exposure scan reads the unified store only.** The voice-exposure
-  reference set is harvested from `.storage/homeassistant.exposed_entities`,
-  the unified store HA writes for every assistant. Per-assistant cloud configs
-  (Google Assistant, Alexa, etc.) maintained as separate storage blobs aren't
-  consulted. An entity exposed only via a per-assistant config that bypasses
-  the unified store won't be rescued from the unused-\* checks via voice
-  exposure -- add it to **Exclude entities** if needed.
 - **Some source-orphan false positives.** Object_ids derived by slugifying a
   scene or group `name:` aren't harvested, so a `scene:` block without an
   explicit `id:` appears as an orphan. Give it an `id:` (recommended) or add
