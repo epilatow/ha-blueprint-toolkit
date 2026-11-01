@@ -28,6 +28,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     DRIFT_CHECK_DEVICE_ENTITY_NAME,
     DRIFT_CHECK_SCRIPT_YAML_KEY,
     DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
+    USE_DEVICE_NAME,
     Config,
     DeviceEntityNameDriftRepair,
     DeviceEntry,
@@ -93,6 +94,7 @@ def _entity_drift(
     current_name: str = "Test",
     expected_name: str | None = None,
     full_name: str | None = None,
+    uses_device_name: bool = False,
 ) -> EntityDriftInfo:
     return EntityDriftInfo(
         entity_id=entity_id,
@@ -102,6 +104,7 @@ def _entity_drift(
         current_name=current_name,
         expected_name=expected_name,
         full_name=current_name if full_name is None else full_name,
+        uses_device_name=uses_device_name,
     )
 
 
@@ -350,15 +353,110 @@ class TestCheckEntityDrift:
     ) -> None:
         cfg = _config()
         dev = _device(
-            device_name="Fan",
-            default_name="Main Bath Fan",
+            device_name="Main Bedroom Fan",
+            default_name="Pedestal Fan",
             integrations=["lutron_caseta", "switch_as_x"],
         )
         entity = _entity_drift(
             has_entity_name=False,
             has_name_override=True,
+            current_name="Main Bedroom Fan Temperature",
+            expected_name="Pedestal Fan Temperature",
+        )
+        assert _check_entity_drift(cfg, entity, dev) is None
+
+    def test_hen_false_blank_name_uses_device_name(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(device_name="Fan", default_name="Main Bath Fan")
+        entity = _entity_drift(
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Main Bath Fan",
+            expected_name="Main Bath Fan",
+            full_name="Fan",
+            uses_device_name=True,
+        )
+        assert _check_entity_drift(cfg, entity, dev) is None
+
+    def test_hen_false_stored_copy_with_switch_on_not_drifted(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(device_name="Fan", default_name="Main Bath Fan")
+        entity = _entity_drift(
+            has_entity_name=False,
+            has_name_override=True,
             current_name="Fan",
             expected_name="Main Bath Fan",
+            uses_device_name=True,
+        )
+        assert _check_entity_drift(cfg, entity, dev) is None
+
+    def test_hen_false_stored_copy_with_switch_off_drifted(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(device_name="Fan", default_name="Main Bath Fan")
+        entity = _entity_drift(
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Fan",
+            expected_name="Main Bath Fan",
+        )
+        result = _check_entity_drift(cfg, entity, dev)
+        assert result is not None
+        assert result.name_drifted is True
+        assert result.recommended_override == USE_DEVICE_NAME
+
+    def test_hen_false_switch_on_keeps_suffixed_entity_clean(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device(device_name="Remote", default_name="Kitchen Remote")
+        entity = _entity_drift(
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Kitchen Remote Off",
+            expected_name="Kitchen Remote Off",
+            full_name="Remote",
+            uses_device_name=True,
+        )
+        assert _check_entity_drift(cfg, entity, dev) is None
+
+    def test_hen_false_switch_on_does_not_hold_back_id_drift(
+        self,
+    ) -> None:
+        # No name finding will ever clear this one, so holding
+        # the ID back would hide the drift for good.
+        cfg = _config()
+        dev = _device(device_name="Remote", default_name="Kitchen Remote")
+        entity = _entity_drift(
+            entity_id="button.old_id",
+            expected_entity_id="button.remote",
+            has_entity_name=False,
+            has_name_override=True,
+            current_name="Kitchen Remote Off",
+            expected_name="Kitchen Remote Off",
+            full_name="Remote",
+            uses_device_name=True,
+        )
+        result = _check_entity_drift(cfg, entity, dev)
+        assert result is not None
+        assert result.id_drifted is True
+        assert result.name_drifted is False
+
+    def test_hen_true_switch_on_not_drifted(
+        self,
+    ) -> None:
+        cfg = _config()
+        dev = _device()
+        entity = _entity_drift(
+            has_name_override=True,
+            current_name="Test Device",
+            expected_name="Temperature",
+            uses_device_name=True,
         )
         assert _check_entity_drift(cfg, entity, dev) is None
 
@@ -380,7 +478,7 @@ class TestCheckEntityDrift:
         assert result.name_drifted is True
         assert result.id_drifted is False
         assert result.current_name == "Fan Main Bath Fan"
-        assert result.recommended_override == "Fan"
+        assert result.recommended_override == USE_DEVICE_NAME
 
     def test_hen_false_id_drift_reported_once_name_is_right(
         self,
@@ -392,8 +490,33 @@ class TestCheckEntityDrift:
             expected_entity_id="switch.main_bath_fan",
             has_entity_name=False,
             has_name_override=True,
+            current_name="Main Bath Fan",
+            expected_name="Main Bath Fan",
+            full_name="Fan",
+            uses_device_name=True,
+        )
+        result = _check_entity_drift(cfg, entity, dev)
+        assert result is not None
+        assert result.id_drifted is True
+        assert result.name_drifted is False
+
+    def test_hen_false_stored_copy_does_not_hold_back_id_drift(
+        self,
+    ) -> None:
+        # The name check is off, so holding the ID back here
+        # would hide the drift for good.
+        cfg = _config(
+            drift_checks=frozenset({DRIFT_CHECK_DEVICE_ENTITY_ID}),
+        )
+        dev = _device(device_name="Fan", default_name="Main Bath Fan")
+        entity = _entity_drift(
+            entity_id="switch.old_id",
+            expected_entity_id="switch.main_bath_fan",
+            has_entity_name=False,
+            has_name_override=True,
             current_name="Fan",
             expected_name="Main Bath Fan",
+            uses_device_name=True,
         )
         result = _check_entity_drift(cfg, entity, dev)
         assert result is not None
@@ -440,21 +563,81 @@ class TestCheckEntityDrift:
         assert result is not None
         assert result.name_drifted is True
 
-    def test_hen_false_device_entity_correct(
-        self,
-    ) -> None:
-        cfg = _config()
-        dev = _device(
-            device_name="Main Bedroom Pedestal Fan",
-            default_name="Pedestal Fan",
+
+class TestUseDeviceNameRendering:
+    def _detail(self) -> DriftDetail:
+        return DriftDetail(
+            entity_id="switch.main_bath_fan",
+            id_drifted=False,
+            name_drifted=True,
+            current_name="Fan Main Bath Fan",
+            expected_name="Main Bath Fan",
+            recommended_override=USE_DEVICE_NAME,
         )
-        entity = _entity_drift(
-            has_entity_name=False,
-            has_name_override=True,
-            current_name="Main Bedroom Pedestal Fan",
-            expected_name="Pedestal Fan",
+
+    def test_notification_says_to_use_the_device_name(self) -> None:
+        message = _build_device_notification_message(
+            _device(),
+            [self._detail()],
         )
-        assert _check_entity_drift(cfg, entity, dev) is None
+        assert "**Names to unset:**" in message
+        assert '- `switch.main_bath_fan`: "Fan Main Bath Fan"' in message
+        assert "**Use device name**" in message
+
+    def test_notification_does_not_say_to_clear_it(self) -> None:
+        # Clearing is the state that doubles the device name.
+        message = _build_device_notification_message(
+            _device(),
+            [self._detail()],
+        )
+        assert "Clear" not in message
+        assert "Recreate entity IDs" not in message
+        assert not message.endswith("\n")
+
+    def test_clear_advice_excludes_it_beside_other_sections(self) -> None:
+        stale = DriftDetail(
+            entity_id="sensor.kitchen_temp",
+            id_drifted=False,
+            name_drifted=True,
+            current_name="Old Temp",
+            expected_name="Temperature",
+        )
+        message = _build_device_notification_message(
+            _device(),
+            [self._detail(), stale],
+        )
+        assert "Clear or edit the other name overrides above" in message
+
+    def test_repair_line_says_unset(self) -> None:
+        cfg = _config(create_repairs=True)
+        result = _evaluate_device(
+            cfg,
+            _device(
+                device_name="Fan",
+                default_name="Main Bath Fan",
+                entities=[
+                    _entity_drift(
+                        entity_id="switch.main_bath_fan",
+                        expected_entity_id="switch.main_bath_fan",
+                        has_entity_name=False,
+                        current_name="Main Bath Fan",
+                        expected_name="Main Bath Fan",
+                        full_name="Fan Main Bath Fan",
+                    ),
+                ],
+            ),
+        )
+        specs, repairs = _build_device_repair_specs(cfg, [result])
+        placeholders = specs[0].translation_placeholders or {}
+        assert (
+            placeholders["entities"]
+            == '- `switch.main_bath_fan`: "Fan Main Bath Fan" -> `<unset>`'
+        )
+        payload = next(iter(repairs.values()))
+        assert isinstance(payload, DeviceEntityNameDriftRepair)
+        assert payload.entity_name_targets == (
+            ("switch.main_bath_fan", USE_DEVICE_NAME),
+        )
 
 
 class TestComputeRecommendedOverride:

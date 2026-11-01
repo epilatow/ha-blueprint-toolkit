@@ -93,7 +93,10 @@ These can drift from their expected values over time:
   the new device name in front of the old name ("Fan Main Bath Fan"), so the
   watchdog flags an entity missing that name, or still holding one from an
   earlier rename, and reports its entity ID only once the name is right, since
-  the expected ID depends on it.
+  the expected ID depends on it. Where that name is just the device name, the
+  watchdog wants **Use device name** on instead. An entity with **Use device
+  name** on is never flagged for its name, because HA leaves you no name to
+  change.
 - **Deviceless ID drift** -- automations, scripts, helpers, template sensors,
   and similar user-named entities have entity IDs derived from their name at
   creation. Renaming the entity later doesn't update the entity ID, leaving
@@ -105,9 +108,10 @@ These can drift from their expected values over time:
 When a device has both name overrides and non-default entity IDs, the fix must
 happen in two steps:
 
-1. **First cycle**: clear or edit name overrides in each entity's settings.
-   The watchdog re-evaluates and may surface new non-default entity IDs
-   (because clearing the name override changes the expected ID).
+1. **First cycle**: clear or edit name overrides in each entity's settings, or
+   turn on **Use device name** where the watchdog says to. The watchdog
+   re-evaluates and may surface new non-default entity IDs (because clearing
+   the name override changes the expected ID).
 2. **Second cycle**: use **Recreate entity IDs** on the device page repeatedly
    until no more changes occur. Collisions between entity IDs can cause
    temporary numeric suffixes (e.g., `_2`) that resolve on subsequent passes
@@ -130,7 +134,7 @@ higher than what the watchdog reported.
 Device-attached drift creates one persistent notification per device. Every
 notification leads with an attribution header -- the automation that emitted
 it, the device's integration(s), and a link to the device -- so you can click
-straight through to the source. The body below contains up to four sections
+straight through to the source. The body below contains up to five sections
 depending on what kind of drift was found:
 
 **Name overrides to clear** -- entities where the name override should be
@@ -151,7 +155,14 @@ device name, which HA already adds automatically:
 name HA stores at a rename:
 
 ```text
-- `switch.main_bath_fan`: set to "Fan"
+- `button.kitchen_remote_off`: set to "Remote Off"
+```
+
+**Names to unset** -- legacy entities on a renamed device whose name should
+match the default. Turn on **Use device name** in each entity's settings:
+
+```text
+- `switch.main_bath_fan`: "Fan Main Bath Fan"
 ```
 
 **Non-default entity IDs** -- entities whose ID does not match what HA would
@@ -295,9 +306,10 @@ convert:
   renames into one Repair; deviceless entities (automations, template / helper
   entities, ...) get one Repair each, since they have no device to group
   under.
-- **Entity-name drift** -- "reset friendly name on `<entity_id>` from
-  `<current>` to `<default>`". Submit clears the user-set name override, or
-  for a legacy entity on a renamed device, stores the name HA uses there.
+- **Entity-name drift** -- "Update entity names?". One Repair per device,
+  listing each entity's current name and its target. Submit clears a stale
+  override. For a legacy entity on a renamed device, it stores the name HA
+  uses there or turns on **Use device name**.
 - **Visible aliased entity** -- "re-hide `<source_entity_id>`". One repair per
   flagged `switch_as_x` source whose row is still visible; Submit sets
   `hidden_by=integration` on the source, restoring the original wrapper

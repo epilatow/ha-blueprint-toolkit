@@ -69,7 +69,7 @@
         "step": {
           "confirm": {
             "title": "Update entity names?",
-            "description": "{attribution}\n\nUpdate {count} drifted entity name(s) on `{device_name}`:\n\n{entities}\n\nA cleared override reverts to the integration default name. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
+            "description": "{attribution}\n\nUpdate {count} drifted entity name(s) on `{device_name}`:\n\n{entities}\n\nAn entity whose name matches the default should be unset. Only the entities the last scan flagged are changed; anything you've added to the watchdog's exclusions was already left out.\n\nClick Submit to apply."
           }
         }
       }

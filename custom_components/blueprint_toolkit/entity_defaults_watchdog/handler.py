@@ -616,6 +616,10 @@ def _build_device_inputs(
                         current_name=current_name,
                         expected_name=expected_name,
                         full_name=er.async_get_full_entity_name(hass, entry),
+                        uses_device_name=not er.async_get_unprefixed_name(
+                            hass,
+                            entry,
+                        ),
                     ),
                 )
         devices.append(

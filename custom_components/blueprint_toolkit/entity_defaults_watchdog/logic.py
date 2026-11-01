@@ -26,6 +26,12 @@ would use today:
   of the whole integration name. The handler reads the
   entity's name from HA and compares it to the name HA
   stores at a rename, ``_compute_recommended_override``.
+  Where that name is just the device name, a blank name is
+  the target instead (``USE_DEVICE_NAME``): HA shows both
+  the same way, but only blank follows a later rename.
+- No entity with HA's "Use device name" switch on is
+  flagged for its name, since the switch leaves the user no
+  name to change.
 - Redundant prefix: HA prepends the device name for
   ``has_entity_name=True`` entities, so an override that
   starts with it is redundant.
@@ -96,6 +102,11 @@ CHECK_ALL: frozenset[str] = frozenset(
 
 # The integration a script YAML-key finding belongs to.
 _SCRIPT_INTEGRATION = "script"
+
+# The stored entity name HA's "Use device name" switch writes.
+# Distinct from no stored name, which on a renamed device
+# makes HA show both names.
+USE_DEVICE_NAME = ""
 
 # Domains eligible for the deviceless entity_id drift
 # check. Limited to user-named domains whose entity_ids
@@ -175,6 +186,10 @@ class EntityDriftInfo:
     # The entity's whole name as HA computes it today, which
     # for a legacy entity can differ from any stored value.
     full_name: str
+    # True when HA's "Use device name" switch reads on. HA
+    # stores no flag for it: it reads on while the entity's
+    # own name, less any device name prefix, is empty.
+    uses_device_name: bool
 
 
 @dataclass
@@ -248,8 +263,10 @@ class DeviceEntityNameDriftRepair:
 
     Carries ``(entity_id, target_name)`` pairs. A non-None
     target SETS the override (legacy recommended-override
-    case); ``None`` CLEARS it (the standard stale-override
-    case, reverting to the integration default).
+    case, with ``USE_DEVICE_NAME`` turning on HA's "Use
+    device name"); ``None`` CLEARS it (the standard
+    stale-override case, reverting to the integration
+    default).
     """
 
     device_id: str
@@ -820,32 +837,46 @@ def _check_entity_drift(
     name_drifted = False
 
     # Compute has_entity_name=False recommendations
-    recommended = _compute_recommended_override(
+    ha_name = _compute_recommended_override(
         entity.expected_name or "",
         device.de.default_name,
         device.de.name,
         entity.has_entity_name,
     )
+    # A stored copy of the device name goes stale at the
+    # next device rename; a blank one follows it.
+    recommended = USE_DEVICE_NAME if ha_name == device.de.name else ha_name
     redundant = _detect_redundant_prefix(
         entity.current_name if entity.has_name_override else None,
         device.de.name,
         entity.has_entity_name,
     )
-    # HA derives the expected ID from the name, so a name
-    # waiting on its fix leaves that ID unusable as a target.
-    name_pending = recommended is not None and entity.full_name != recommended
+    # HA hides the name field while its "Use device name"
+    # switch is on, so such a name is never ours to change.
+    name_settable = not entity.uses_device_name
+    name_pending = (
+        name_settable
+        and recommended is not None
+        and entity.full_name != recommended
+    )
+    # HA derives the expected ID from the name, so a settable
+    # name not showing HA's name leaves that ID unusable as a
+    # target. A stored copy and a blank both show it.
+    id_unusable = (
+        name_settable and ha_name is not None and entity.full_name != ha_name
+    )
 
     # ID drift check
     if (
         _check_id_enabled(config)
-        and not name_pending
+        and not id_unusable
         and entity.expected_entity_id is not None
         and entity.entity_id != entity.expected_entity_id
     ):
         id_drifted = True
 
     # Name drift check
-    if _check_name_enabled(config):
+    if _check_name_enabled(config) and name_settable:
         if recommended is not None:
             # A legacy entity on a renamed device: flag it
             # even without a stored name, because that is
@@ -879,13 +910,15 @@ def _build_device_notification_message(
 ) -> str:
     """Build the notification body for a device with drift.
 
-    Groups entities into up to four sections:
+    Groups entities into up to five sections:
     - Name overrides to clear (has_entity_name=True stale
       overrides)
     - Name overrides with redundant device name
       (has_entity_name=True with device prefix in override)
     - Name overrides to set (has_entity_name=False with
       recommended override from device name extraction)
+    - Names to unset (has_entity_name=False, recommended
+      ``USE_DEVICE_NAME``)
     - Non-default entity IDs (ID drift only, no name drift)
 
     Entities with both name+ID drift appear only in the
@@ -901,10 +934,13 @@ def _build_device_notification_message(
     name_clear: list[DriftDetail] = []
     name_redundant: list[DriftDetail] = []
     name_set: list[DriftDetail] = []
+    name_use_device: list[DriftDetail] = []
     id_only: list[DriftDetail] = []
 
     for d in drifted:
-        if d.name_drifted and d.recommended_override is not None:
+        if d.name_drifted and d.recommended_override == USE_DEVICE_NAME:
+            name_use_device.append(d)
+        elif d.name_drifted and d.recommended_override is not None:
             name_set.append(d)
         elif d.name_drifted and d.has_redundant_prefix:
             name_redundant.append(d)
@@ -931,6 +967,12 @@ def _build_device_notification_message(
         d
         for _, _, d in sorted(
             [(d.entity_id, i, d) for i, d in enumerate(name_set)]
+        )
+    ]
+    name_use_device = [
+        d
+        for _, _, d in sorted(
+            [(d.entity_id, i, d) for i, d in enumerate(name_use_device)]
         )
     ]
     id_only = [
@@ -993,19 +1035,38 @@ def _build_device_notification_message(
             " Recreate entity IDs.",
         )
 
+    if name_use_device:
+        lines.append("")
+        lines.append("**Names to unset:**")
+        for d in name_use_device:
+            current = helpers.md_escape(d.current_name)
+            lines.append(f'- `{d.entity_id}`: "{current}"')
+        lines.append("")
+        lines.append(
+            "An entity whose name matches the default should be"
+            " unset. Turn on **Use device name** in each entity's"
+            " settings.",
+        )
+
     if id_only:
         lines.append("")
         lines.append("**Non-default entity IDs:**")
         for d in id_only:
             lines.append(f"- `{d.entity_id}`")
 
-    # How to fix section
-    lines.append("")
+    # How to fix section. Names to unset carry their own
+    # instruction, and clearing one is what doubles its name.
+    edit_overrides = (
+        "Clear or edit the other name overrides"
+        if name_use_device
+        else "Clear or edit the name overrides"
+    )
+    if has_name_issues or id_only:
+        lines.append("")
     if has_name_issues and id_only:
         lines.append("**How to fix:**")
         lines.append(
-            "1. Clear or edit the name overrides"
-            " above in each entity's settings.",
+            f"1. {edit_overrides} above in each entity's settings.",
         )
         lines.append(
             "2. Use **Recreate entity IDs** on the"
@@ -1022,13 +1083,12 @@ def _build_device_notification_message(
     elif has_name_issues:
         lines.append("**How to fix:**")
         lines.append(
-            "Clear or edit the name overrides"
-            " above in each entity's settings."
+            f"{edit_overrides} above in each entity's settings."
             " Clearing a name override may reveal"
             " non-default entity IDs on the next"
             " check.",
         )
-    else:
+    elif id_only:
         lines.append(
             "Use **Recreate entity IDs** on the"
             " device page to fix non-default IDs.",
@@ -1647,11 +1707,14 @@ class EvaluationResult:
 def _name_drift_line(d: DriftDetail) -> str:
     """Render one ``old -> new`` name-drift bullet.
 
-    New value is the recommended override (set case) or the
-    expected default name (clear case); falls back to a
-    prose phrase when the default name isn't known. The
-    current name + the override are user-controllable, so
-    both are ``md_escape``d; the entity_id is a code span.
+    New value is the recommended override (set case),
+    ``<unset>`` (``USE_DEVICE_NAME`` case), or the expected
+    default name (clear case); falls back to a prose phrase
+    when the default name isn't known. The current name +
+    the override are user-controllable, so both are
+    ``md_escape``d; the entity_id is a code span, as is
+    ``<unset>``, which markdown would otherwise take for an
+    HTML tag.
     """
     new = (
         d.recommended_override
@@ -1659,6 +1722,8 @@ def _name_drift_line(d: DriftDetail) -> str:
         else d.expected_name
     )
     current = helpers.md_escape(d.current_name)
+    if d.recommended_override == USE_DEVICE_NAME:
+        return f'- `{d.entity_id}`: "{current}" -> `<unset>`'
     if new:
         return f'- `{d.entity_id}`: "{current}" -> "{helpers.md_escape(new)}"'
     return f'- `{d.entity_id}`: "{current}" -> the integration default name'

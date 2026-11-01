@@ -2190,39 +2190,183 @@ class TestLegacyNamesFollowHomeAssistant:
             == stored.name
         )
 
-    @pytest.mark.parametrize(
-        ("original_name", "device_name", "renamed_to", "entity_id"),
-        [
-            ("Main Bath Fan", "Main Bath Fan", "Fan", "switch.main_bath_fan"),
-            (
-                "Main Bath Remote Off",
-                "Main Bath Remote",
-                "Remote",
-                "button.main_bath_remote_off",
-            ),
-        ],
-    )
-    async def test_name_ha_stored_is_not_drift(
+    async def test_suffixed_name_ha_stored_is_not_drift(
         self,
         hass: HomeAssistant,
-        original_name: str,
-        device_name: str,
-        renamed_to: str,
-        entity_id: str,
     ) -> None:
         await _setup_integration(hass)
         device_id = self._plant(
             hass,
-            device_name=device_name,
-            original_name=original_name,
-            entity_id=entity_id,
+            device_name="Main Bath Remote",
+            original_name="Main Bath Remote Off",
+            entity_id="button.main_bath_remote_off",
         )
-        await self._rename_device(hass, device_id, renamed_to)
+        await self._rename_device(hass, device_id, "Remote")
 
         await self._scan(hass)
 
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
+
+    async def test_stored_copy_of_device_name_is_not_drift(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Fan",
+            original_name="Main Bath Fan",
+            entity_id="switch.main_bath_fan",
+        )
+        await self._rename_device(hass, device_id, "Fan")
+        stored = er.async_get(hass).async_get("switch.main_bath_fan")
+        assert stored is not None
+        assert stored.name == "Fan"
+
+        await self._scan(hass)
+
+        assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
+        assert self._repairs(hass, "fix_edw_entity_id_drift") == []
+
+    async def test_copy_left_by_an_earlier_rename_is_unset(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Fan",
+            original_name="Main Bath Fan",
+            entity_id="switch.main_bath_fan",
+        )
+        await self._rename_device(hass, device_id, "Fan")
+        await self._rename_device(hass, device_id, "Exhaust")
+
+        await self._scan(hass)
+
+        repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
+        assert len(repairs) == 1
+        entities = (repairs[0].translation_placeholders or {})["entities"]
+        assert '"Fan" -> `<unset>`' in entities
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_device_entity_name_drift",
+            {"notification_id": repairs[0].issue_id},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        await self._scan(hass)
+
+        ent_reg = er.async_get(hass)
+        fixed = ent_reg.async_get("switch.main_bath_fan")
+        assert fixed is not None
+        assert fixed.name == ""
+        assert er.async_get_full_entity_name(hass, fixed) == "Exhaust"
+        assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
+
+        # The reason to prefer blank: the name now follows the device.
+        await self._rename_device(hass, device_id, "Vent")
+        renamed = ent_reg.async_get("switch.main_bath_fan")
+        assert renamed is not None
+        assert er.async_get_full_entity_name(hass, renamed) == "Vent"
+
+    async def test_stored_copy_on_entity_with_its_own_area_is_unset(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        # An entity's own area turns HA's switch off for a stored
+        # copy, which leaves the name editable.
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Fan",
+            original_name="Main Bath Fan",
+            entity_id="switch.main_bath_fan",
+        )
+        await self._rename_device(hass, device_id, "Fan")
+        closet = ar.async_get(hass).async_get_or_create("Closet")
+        er.async_get(hass).async_update_entity(
+            "switch.main_bath_fan",
+            area_id=closet.id,
+        )
+
+        await self._scan(hass)
+
+        repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
+        assert len(repairs) == 1
+        entities = (repairs[0].translation_placeholders or {})["entities"]
+        assert '"Fan" -> `<unset>`' in entities
+
+    async def test_use_device_name_is_left_alone_on_suffixed_entity(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Remote",
+            original_name="Main Bath Remote Off",
+            entity_id="button.main_bath_remote_off",
+        )
+        await self._rename_device(hass, device_id, "Remote")
+        er.async_get(hass).async_update_entity(
+            "button.main_bath_remote_off",
+            name="",
+        )
+
+        await self._scan(hass)
+
+        assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
+        # Its ID has nothing left to wait on.
+        repairs = self._repairs(hass, "fix_edw_entity_id_drift")
+        assert len(repairs) == 1
+        entities = (repairs[0].translation_placeholders or {})["entities"]
+        assert (
+            "`button.main_bath_remote_off` -> `button.main_bath_remote`"
+            in entities
+        )
+
+    @pytest.mark.parametrize("stored_name", ["", "Main Bath Sensor"])
+    async def test_use_device_name_is_left_alone_on_modern_entity(
+        self,
+        hass: HomeAssistant,
+        stored_name: str,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Sensor",
+            original_name="Main Bath Sensor",
+            entity_id="sensor.main_bath_sensor",
+        )
+        ent_reg = er.async_get(hass)
+        modern = ent_reg.async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="modern",
+            device_id=device_id,
+            has_entity_name=True,
+            original_name="Temperature",
+            object_id_base="Temperature",
+        )
+        ent_reg.async_update_entity(modern.entity_id, name=stored_name)
+
+        await self._scan(hass)
+
+        assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
 
     async def test_blank_name_is_not_drift(
         self,
@@ -2248,10 +2392,12 @@ class TestLegacyNamesFollowHomeAssistant:
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
 
-    async def test_second_integration_on_the_device_is_not_drift(
+    async def test_second_integration_on_the_device_changes_nothing(
         self,
         hass: HomeAssistant,
     ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
         await _setup_integration(hass)
         device_id = self._plant(
             hass,
@@ -2268,13 +2414,31 @@ class TestLegacyNamesFollowHomeAssistant:
             tag="wrapper",
         )
         await self._rename_device(hass, device_id, "Fan")
+        ent_reg = er.async_get(hass)
+        ent_reg.async_update_entity("switch.main_bath_fan", name=None)
+        ent_reg.async_update_entity("fan.main_bath_fan", name=None)
 
+        await self._scan(hass)
+
+        repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
+        assert len(repairs) == 1
+        entities = (repairs[0].translation_placeholders or {})["entities"]
+        assert (
+            '`switch.main_bath_fan`: "Fan Main Bath Fan" -> `<unset>`'
+            in entities
+        )
+        assert (
+            '`fan.main_bath_fan`: "Fan Main Bath Fan" -> `<unset>`' in entities
+        )
+
+        ent_reg.async_update_entity("switch.main_bath_fan", name="")
+        ent_reg.async_update_entity("fan.main_bath_fan", name="")
         await self._scan(hass)
 
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
 
-    async def test_cleared_name_is_repaired_by_restoring_it(
+    async def test_cleared_name_is_repaired_with_the_device_name(
         self,
         hass: HomeAssistant,
     ) -> None:
@@ -2296,7 +2460,7 @@ class TestLegacyNamesFollowHomeAssistant:
         repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
-        assert '"Fan Main Bath Fan" -> "Fan"' in entities
+        assert '"Fan Main Bath Fan" -> `<unset>`' in entities
         # The doubled ID HA derives from the cleared name is not offered.
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
 
@@ -2311,9 +2475,44 @@ class TestLegacyNamesFollowHomeAssistant:
 
         fixed = ent_reg.async_get("switch.main_bath_fan")
         assert fixed is not None
-        assert fixed.name == "Fan"
+        assert fixed.name == ""
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
+
+    async def test_stored_copy_keeps_id_drift_visible(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        device_id = self._plant(
+            hass,
+            device_name="Main Bath Fan",
+            original_name="Main Bath Fan",
+            entity_id="switch.main_bath_fan",
+        )
+        await self._rename_device(hass, device_id, "Fan")
+        er.async_get(hass).async_update_entity(
+            "switch.main_bath_fan",
+            new_entity_id="switch.old_id",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=["device-entity-id"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        repairs = self._repairs(hass, "fix_edw_entity_id_drift")
+        assert len(repairs) == 1
+        entities = (repairs[0].translation_placeholders or {})["entities"]
+        assert "`switch.old_id` -> `switch.main_bath_fan`" in entities
 
     async def test_second_rename_flags_the_stale_name(
         self,
