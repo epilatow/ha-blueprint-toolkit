@@ -114,9 +114,15 @@ def test_desired_annotations_for_sleeping_device() -> None:
     assert "Guest Bath" in body
     assert "node 42" in body
     assert "wakes every 1 hour" in body
-    assert "next wake ~2026-06-01 09:00" in body  # 08:00 + 1h
     # The always-listening device carries no wake annotation.
     assert body.count("wakes every") == 1
+    assert "next wake" not in body
+
+
+def test_pending_annotates_the_next_wake() -> None:
+    body = render_report_body(_report(), pending_only=True)
+    assert "wakes every 1 hour" in body
+    assert "next wake ~2026-06-01 09:00" in body  # 08:00 + 1h
     assert body.count("next wake") == 1
 
 

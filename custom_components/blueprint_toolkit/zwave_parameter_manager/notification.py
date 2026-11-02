@@ -3,10 +3,11 @@
 
 The automation surface for the shared desired / actual / pending model.
 Each device renders as a clickable device link (its name plus the HA
-device page) annotated with location, node id, wake interval, and
-expected next wake, then the params being set -- each as
-``actual -> desired``. The desired report lists every device and param;
-the pending report lists only the devices and params not yet converged.
+device page) annotated with location, node id, and wake interval, then
+the params being set -- each as ``actual -> desired``. The desired report
+lists every device and param; the pending report lists only the devices
+and params not yet converged, and adds each device's expected next wake,
+when its writes can land.
 The unused report renders ``Plan.unused`` -- configured policies /
 settings that landed on no device -- as a flat bullet list, off the same
 planner output a future CLI view will render as rows.
@@ -66,8 +67,10 @@ def _device_block(dc: DeviceConvergence, *, pending_only: bool) -> str:
         notes.append(
             f"wakes every {humanize_duration(device.wake_interval_seconds)}"
         )
+    # A next-wake estimate dates within one wake, so only the pending
+    # report, which tracks writes still waiting on a wake, carries it.
     next_wake = device.expected_next_wake
-    if next_wake is not None:
+    if pending_only and next_wake is not None:
         notes.append(f"next wake ~{format_wake_time(next_wake)}")
     header = f"{head} -- {', '.join(notes)}"
     params = dc.pending_params if pending_only else dc.params
