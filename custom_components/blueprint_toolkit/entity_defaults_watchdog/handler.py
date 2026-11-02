@@ -27,11 +27,12 @@ pattern):
   capped by ``max_device_notifications`` via
   ``helpers.prepare_notifications``) -- never both.
   Script-yaml-key drift is repair-only: nothing is emitted
-  when ``create_repairs`` is off. The complete per-instance
-  batch is sweep-dispatched via ``process_repairs_with_sweep``
-  so prior-run findings no longer present this run get
-  cleaned up from both the notification surface and the issue
-  registry.
+  when ``create_repairs`` is off. Stale cached names render
+  as one notification per integration. The complete
+  per-instance batch is sweep-dispatched via
+  ``process_repairs_with_sweep`` so prior-run findings no
+  longer present this run get cleaned up from both the
+  notification surface and the issue registry.
 """
 
 from __future__ import annotations
@@ -42,14 +43,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
@@ -82,6 +85,9 @@ from ..helpers import (
     validate_payload_or_emit_config_error,
 )
 from . import logic
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -356,18 +362,21 @@ async def _async_service_layer(
         target_integrations=frozenset(target_integrations),
     )
     reserved_entity_ids: set[str] = set()
+    live_entities = _live_entities(hass, all_integrations)
     devices = _build_device_inputs(
         hass,
         all_integrations,
         target_integrations,
         exclude_integrations,
         reserved_entity_ids,
+        live_entities,
     )
     deviceless_entities = _build_deviceless_inputs(
         hass,
         logic.DEVICELESS_DOMAINS,
         target_integrations,
         reserved_entity_ids,
+        live_entities,
     )
     # Visible-aliased candidates come from the switch_as_x
     # config entries, not the entity registry walk -- the
@@ -520,6 +529,7 @@ async def _async_service_layer(
             ),
             "visible_aliased_flagged": (ev.stat_visible_aliased_flagged),
             "script_yaml_key_flagged": ev.stat_script_yaml_key_flagged,
+            "cached_name_drift": ev.stat_cached_name_drift,
             "unmatched_directives": len(ev.unmatched_directives),
         },
     )
@@ -528,7 +538,7 @@ async def _async_service_layer(
         _LOGGER.warning(
             "%s integrations=%d devices=%d entities=%d"
             " device_issues=%d entity_issues=%d"
-            " deviceless_drift=%d"
+            " deviceless_drift=%d cached_name_drift=%d"
             " unmatched_directives=%d",
             tag,
             ev.all_integrations_count,
@@ -537,6 +547,7 @@ async def _async_service_layer(
             ev.issues_count,
             ev.stat_entity_issues,
             ev.stat_deviceless_drift,
+            ev.stat_cached_name_drift,
             len(ev.unmatched_directives),
         )
 
@@ -591,12 +602,69 @@ def _named_entity_id(
     return expected_id
 
 
+def _live_entities(
+    hass: HomeAssistant,
+    integrations: list[str],
+) -> dict[str, Entity]:
+    """Every loaded entity of ``integrations``, by entity ID."""
+    return {
+        entity_id: entity
+        for integration in integrations
+        for platform in entity_platform.async_get_platforms(hass, integration)
+        for entity_id, entity in platform.entities.items()
+    }
+
+
+def _entity_area_name(
+    hass: HomeAssistant,
+    entry: er.RegistryEntry,
+) -> str | None:
+    """Name of the area HA places ``entry`` in, if any."""
+    area_id = er.async_get_effective_area_id(hass, entry)
+    if area_id is None:
+        return None
+    area = ar.async_get(hass).async_get_area(area_id)
+    return area.name if area is not None else None
+
+
+def _cached_name_drift(
+    hass: HomeAssistant,
+    entry: er.RegistryEntry,
+    live_entities: Mapping[str, Entity],
+) -> logic.CachedNameDrift | None:
+    """The stale name HA cached for ``entry``, if it has one.
+
+    Each time HA adds an entity it caches the entity's
+    ``suggested_object_id`` as the entry's ``object_id_base``,
+    which "Recreate entity IDs" builds the ID from unless a
+    stored name or ``suggested_object_id`` takes precedence. A
+    rename while the entity stays loaded leaves the cache
+    behind. An entity that isn't loaded has nothing to
+    compare it to.
+    """
+    if entry.name is not None or entry.suggested_object_id is not None:
+        return None
+    entity = live_entities.get(entry.entity_id)
+    if entity is None:
+        return None
+    current_name = entity.suggested_object_id
+    if current_name == entry.object_id_base:
+        return None
+    return logic.CachedNameDrift(
+        integration=entry.platform,
+        cached_name=entry.object_id_base or "",
+        current_name=current_name or "",
+        area=_entity_area_name(hass, entry),
+    )
+
+
 def _build_device_inputs(
     hass: HomeAssistant,
     all_integration_ids: list[str],
     target_integrations: set[str],
     exclude_integrations: list[str],
     reserved_entity_ids: set[str],
+    live_entities: Mapping[str, Entity],
 ) -> list[logic.DeviceInfo]:
     """Walk registries to build ``DeviceInfo`` per device.
 
@@ -663,10 +731,22 @@ def _build_device_inputs(
                 entry = ent_reg.async_get(eid)
                 if entry is None:
                     continue
-                expected_id = _recreated_entity_id(
-                    ent_reg,
+                cached_name_drift = _cached_name_drift(
+                    hass,
                     entry,
-                    reserved_entity_ids,
+                    live_entities,
+                )
+                # Recreate would build a stale-named entity's ID
+                # from the stale name, so it gets no target to
+                # reserve.
+                expected_id = (
+                    eid
+                    if cached_name_drift is not None
+                    else _recreated_entity_id(
+                        ent_reg,
+                        entry,
+                        reserved_entity_ids,
+                    )
                 )
                 has_name_override = entry.name is not None
                 current_name = str(
@@ -692,6 +772,7 @@ def _build_device_inputs(
                             and bool(entry.name)
                             and unprefixed_name != entry.name
                         ),
+                        cached_name_drift=cached_name_drift,
                     ),
                 )
         devices.append(
@@ -727,6 +808,7 @@ def _build_deviceless_inputs(
     domains: frozenset[str],
     target_integrations: set[str] | None,
     reserved_entity_ids: set[str],
+    live_entities: Mapping[str, Entity],
 ) -> list[logic.DevicelessEntityInfo]:
     """Walk registry + state list for deviceless entities.
 
@@ -766,18 +848,26 @@ def _build_deviceless_inputs(
             and entry.platform not in target_integrations
         ):
             continue
-        # HA pins a script's ID to its YAML key, so Recreate
-        # leaves the ID alone when the script is renamed.
-        expected_id = (
-            _named_entity_id(
+        cached_name_drift = _cached_name_drift(hass, entry, live_entities)
+        if dom == _SCRIPT_DOMAIN:
+            # HA pins a script's ID to its YAML key, so Recreate
+            # leaves the ID alone when the script is renamed.
+            expected_id = _named_entity_id(
                 ent_reg,
                 entry.entity_id,
                 str(entry.name or entry.original_name or ""),
                 reserved_entity_ids,
             )
-            if dom == _SCRIPT_DOMAIN
-            else _recreated_entity_id(ent_reg, entry, reserved_entity_ids)
-        )
+        elif cached_name_drift is not None:
+            # Recreate would build the ID from the stale name, so
+            # there is no target to reserve.
+            expected_id = entry.entity_id
+        else:
+            expected_id = _recreated_entity_id(
+                ent_reg,
+                entry,
+                reserved_entity_ids,
+            )
         entities.append(
             logic.DevicelessEntityInfo(
                 entity_id=entry.entity_id,
@@ -789,6 +879,7 @@ def _build_deviceless_inputs(
                 unique_id=entry.unique_id,
                 from_registry=True,
                 config_entry_id=entry.config_entry_id,
+                cached_name_drift=cached_name_drift,
             ),
         )
 

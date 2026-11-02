@@ -20,6 +20,9 @@ resolved.
   `_3`, ...) left over from conflicts that are gone
 - Detect redundant name prefixes (overrides that include the device name when
   HA would add it automatically)
+- Detect stale cached entity names -- entities renamed since Home Assistant
+  last added them, whose default IDs Home Assistant still builds from the old
+  name
 - Detect visible aliased entities -- `switch_as_x` wrappers whose source
   entity is no longer hidden, so both rows show up in dashboards, voice
   assistants, and entity pickers
@@ -107,12 +110,45 @@ These can drift from their expected values over time:
   IDs** would set. That includes an area assigned to the entity itself, which
   HA puts at the front of the ID as it does for a device, so `Main Bath Floor`
   in the Main Bath area gets `input_boolean.main_bath_main_bath_floor`. Take
-  the area out of the name to avoid the repeat.
+  the area out of the name to avoid the repeat. Home Assistant keeps building
+  the ID from the old name until it caches the new one; see **Stale cached
+  entity names** below.
 
   Recreate can't follow a rename of two kinds of entity, so the watchdog
   compares these to their current name instead: scripts, whose ID HA ties to
   their YAML key, and YAML entities with no `unique_id:`, which have no
   registry entry.
+
+### Stale cached entity names
+
+Home Assistant caches an entity's name when it adds the entity -- at startup,
+when the entity's integration reloads, or when the entity's ID changes -- and
+builds the entity's default ID from that cached name. Renaming an entity while
+it stays loaded, such as a helper renamed in its settings, leaves the cached
+name behind until one of those happens.
+
+Until then, the default ID Home Assistant would set comes from the old name,
+so the watchdog doesn't check that entity's ID. It reports the entity instead,
+in one notification per integration, whose attribution header links to the
+integration:
+
+```text
+The Home Assistant cached internal entity name doesn't match the current
+entity name for some entities. This can occur when these entities have been
+renamed. The cached internal entity name is used to generate default entity
+IDs, so that check is disabled for these entities until this drift is
+resolved.
+
+- Cached: "Main Bath Floor" -> Current: "Floor" (Main Bath)
+
+To resolve it, restart Home Assistant, or change each entity's ID to a
+temporary one (for example, add `_tmp` to the end) and then change it back.
+```
+
+The location is the entity's area, or its device's. The check runs with the
+entity ID checks -- `device-entity-id` for device entities and `entity-id` for
+deviceless ones -- and honors the same exclusions. Once the names match, the
+next scan clears the finding and checks the entity's ID again.
 
 ### Two-cycle fix sequence
 
@@ -388,6 +424,7 @@ Tools > States to find it.
 - `script_yaml_key_flagged`: Scripts flagged for YAML-key drift this run (set
   whether or not **Create repairs** is on, even though the finding only
   surfaces as a repair)
+- `cached_name_drift`: Entities whose cached name is stale this run
 - `unmatched_directives`: Include / exclude directives that bound to zero live
   candidates this run (zero unless **Validate include / exclude directives**
   surfaced something)
@@ -404,5 +441,5 @@ Example output for an automation named "Entity Defaults Watchdog":
 [EDW: Entity Defaults Watchdog] integrations=12
   devices=45 entities=320 device_issues=2
   entity_issues=5 deviceless_drift=3
-  unmatched_directives=0
+  cached_name_drift=1 unmatched_directives=0
 ```

@@ -44,6 +44,13 @@ would use today:
   ``unique_id:``), which only the state list shows. Recreate
   can't bring those in line with their names, so their
   target is the ID HA would generate for the name.
+- Cached name drift: HA generates an entity's default ID
+  from a name it cached when it last added the entity, so
+  an entity renamed since then has a stale one. The handler
+  compares it to the name HA would cache today. A stale
+  entity is reported, grouped by integration, and skipped by
+  the entity ID checks, whose target would come from the
+  stale name.
 """
 
 import re
@@ -114,6 +121,21 @@ _SCRIPT_INTEGRATION = "script"
 # makes HA show both names.
 USE_DEVICE_NAME = ""
 
+# What a stale cached name is and what it holds back. Every
+# surface of the cached-name finding opens with it.
+_CACHED_NAME_DRIFT_SUMMARY = (
+    "The Home Assistant cached internal entity name doesn't match the"
+    " current entity name for some entities. This can occur when these"
+    " entities have been renamed. The cached internal entity name is used"
+    " to generate default entity IDs, so that check is disabled for these"
+    " entities until this drift is resolved."
+)
+_CACHED_NAME_DRIFT_GUIDANCE = (
+    "To resolve it, restart Home Assistant, or change each entity's ID to"
+    " a temporary one (for example, add `_tmp` to the end) and then change"
+    " it back."
+)
+
 # Domains eligible for the deviceless entity_id drift
 # check. Limited to user-named domains whose entity_ids
 # are derived from a user-supplied name (and therefore
@@ -179,6 +201,24 @@ class Config:
     target_integrations: frozenset[str] | None = None
 
 
+@dataclass(frozen=True)
+class CachedNameDrift:
+    """A stale name HA cached for an entity.
+
+    HA generates the entity's default ID from the cached
+    name, so until HA caches the current one, that ID is
+    wrong.
+    """
+
+    # The entity's integration, which groups the finding.
+    integration: str
+    cached_name: str
+    # The name HA would cache for the entity today.
+    current_name: str
+    # Name of the entity's area, or of its device's.
+    area: str | None = None
+
+
 @dataclass
 class EntityDriftInfo:
     """Per-entity drift data computed by service wrapper."""
@@ -201,6 +241,8 @@ class EntityDriftInfo:
     # True when HA would strip the device name from the front
     # of a has_entity_name=True entity's stored name.
     has_redundant_prefix: bool
+    # Set when HA's cached name for the entity is stale.
+    cached_name_drift: CachedNameDrift | None = None
 
 
 @dataclass
@@ -403,6 +445,8 @@ class DevicelessEntityInfo:
     # "integration page doesn't show this entity, point
     # the user at the YAML instead".
     config_entry_id: str | None = None
+    # Set when HA's cached name for the entity is stale.
+    cached_name_drift: CachedNameDrift | None = None
 
 
 @dataclass
@@ -435,6 +479,14 @@ class DevicelessResult:
     drifted: list[DevicelessDriftDetail]
     entities_checked: int
     entities_excluded: int
+
+
+@dataclass(frozen=True)
+class CachedNameDriftFinding:
+    """One entity whose cached name is stale."""
+
+    entity_id: str
+    drift: CachedNameDrift
 
 
 @dataclass
@@ -745,6 +797,17 @@ def _is_excluded(
     )
 
 
+def _device_excluded(config: Config, device: DeviceInfo) -> bool:
+    """True if an excluded integration or the device name exclude
+    covers ``device``."""
+    return device.de.integration_excluded or bool(
+        helpers.matches_pattern(
+            device.de.name,
+            config.exclude_device_name_regex,
+        )
+    )
+
+
 def _integration_in_scope(config: Config, integration: str) -> bool:
     """True if the include / exclude integrations keep ``integration``."""
     return (
@@ -799,10 +862,13 @@ def _check_entity_drift(
         name_settable and ha_name is not None and entity.full_name != ha_name
     )
 
-    # ID drift check
+    # ID drift check. A stale cached name makes the expected
+    # ID wrong, so the cached-name finding reports the entity
+    # instead.
     if (
         _check_id_enabled(config)
         and not id_unusable
+        and entity.cached_name_drift is None
         and entity.expected_entity_id is not None
         and entity.entity_id != entity.expected_entity_id
     ):
@@ -1042,11 +1108,7 @@ def _evaluate_device(
     """Evaluate drift for a single device."""
     notification_id = f"{config.notification_prefix}device_{device.de.id}"
 
-    # Skip excluded devices
-    if device.de.integration_excluded or helpers.matches_pattern(
-        device.de.name,
-        config.exclude_device_name_regex,
-    ):
+    if _device_excluded(config, device):
         return DeviceResult(
             device_id=device.de.id,
             device_name=device.de.name,
@@ -1204,6 +1266,11 @@ def _evaluate_deviceless(
             excluded += 1
             continue
 
+        # The cached-name finding reports an entity whose
+        # expected ID comes from a stale cached name.
+        if entity.cached_name_drift is not None:
+            continue
+
         if entity.entity_id == entity.expected_entity_id:
             continue
 
@@ -1235,6 +1302,103 @@ def _evaluate_deviceless(
         entities_checked=len(entities) - excluded,
         entities_excluded=excluded,
     )
+
+
+def _evaluate_cached_name_drift(
+    config: Config,
+    devices: list[DeviceInfo],
+    deviceless_entities: list[DevicelessEntityInfo],
+) -> list[CachedNameDriftFinding]:
+    """Find the entities whose cached name is stale.
+
+    Covers the entities each enabled entity ID check looks
+    at, with the same exclusions, since that check is what
+    the stale name holds back.
+    """
+    findings: list[CachedNameDriftFinding] = []
+    if _check_id_enabled(config):
+        for device in devices:
+            if _device_excluded(config, device):
+                continue
+            for entity in device.entities:
+                drift = entity.cached_name_drift
+                if drift is None or _is_excluded(
+                    config,
+                    entity.entity_id,
+                    entity.friendly_name,
+                ):
+                    continue
+                findings.append(CachedNameDriftFinding(entity.entity_id, drift))
+    if _check_deviceless_enabled(config):
+        for deviceless in deviceless_entities:
+            drift = deviceless.cached_name_drift
+            if drift is None or _is_excluded(
+                config,
+                deviceless.entity_id,
+                deviceless.friendly_name,
+            ):
+                continue
+            findings.append(CachedNameDriftFinding(deviceless.entity_id, drift))
+    return findings
+
+
+def _cached_name_drift_by_integration(
+    findings: list[CachedNameDriftFinding],
+) -> dict[str, list[CachedNameDriftFinding]]:
+    """Group findings by integration, in integration order.
+
+    One finding covers entities from many devices, and HA has
+    no page for a lone deviceless entity, so the integration's
+    page, linked from the attribution header, is the one link
+    that fits every entity in a group.
+    """
+    groups: dict[str, list[CachedNameDriftFinding]] = {}
+    for finding in sorted(findings, key=lambda f: f.drift.integration):
+        groups.setdefault(finding.drift.integration, []).append(finding)
+    return groups
+
+
+def _cached_name_drift_lines(findings: list[CachedNameDriftFinding]) -> str:
+    """One ``Cached -> Current (area)`` bullet per finding."""
+    lines: list[str] = []
+    for f in sorted(
+        findings,
+        key=lambda f: (f.drift.current_name, f.entity_id),
+    ):
+        cached = helpers.md_escape(f.drift.cached_name)
+        current = helpers.md_escape(f.drift.current_name)
+        line = f'- Cached: "{cached}" -> Current: "{current}"'
+        if f.drift.area:
+            line += f" ({helpers.md_escape(f.drift.area)})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _build_cached_name_drift_notifications(
+    config: Config,
+    findings: list[CachedNameDriftFinding],
+) -> list[helpers.PersistentNotification]:
+    """Build one notification per integration with stale
+    cached names."""
+    return [
+        helpers.PersistentNotification(
+            active=True,
+            notification_id=(
+                f"{config.notification_prefix}cached_name_{integration}"
+            ),
+            title=f"Stale cached entity names: {integration}",
+            message=(
+                f"{_CACHED_NAME_DRIFT_SUMMARY}\n\n"
+                f"{_cached_name_drift_lines(group)}\n\n"
+                f"{_CACHED_NAME_DRIFT_GUIDANCE}"
+            ),
+            instance_id=config.instance_id,
+            integrations=(integration,),
+        )
+        for integration, group in _cached_name_drift_by_integration(
+            findings
+        ).items()
+    ]
 
 
 def _build_visible_aliased_notification_message(
@@ -1559,6 +1723,7 @@ class EvaluationResult:
     # only surfaces as a repair, but the count is always a
     # diagnostic-state signal).
     stat_script_yaml_key_flagged: int = 0
+    stat_cached_name_drift: int = 0
     # Per-repair payloads (keyed by notification_id) the
     # handler stashes on instance state so the fix services
     # can recover the exact entity set without re-walking.
@@ -2064,6 +2229,15 @@ def run_evaluation(
             ),
         )
 
+    cached_name_findings = _evaluate_cached_name_drift(
+        config,
+        devices,
+        deviceless_entities,
+    )
+    notifications.extend(
+        _build_cached_name_drift_notifications(config, cached_name_findings),
+    )
+
     if _check_visible_aliased_enabled(config):
         visible_aliased = _evaluate_visible_aliased_entities(
             config,
@@ -2156,6 +2330,7 @@ def run_evaluation(
             visible_aliased.defensive_skipped
         ),
         stat_script_yaml_key_flagged=len(script_findings),
+        stat_cached_name_drift=len(cached_name_findings),
         repairs=repairs,
         unmatched_directives=_validate_edw_directives(
             directive_inputs

@@ -67,6 +67,9 @@ what Home Assistant would give them, including collision suffixes (<code>_2</cod
 <code>_3</code>, ...) left over from conflicts that are gone</li>
 <li>Detect redundant name prefixes (overrides that include the device name when
 HA would add it automatically)</li>
+<li>Detect stale cached entity names -- entities renamed since Home Assistant
+last added them, whose default IDs Home Assistant still builds from the old
+name</li>
 <li>Detect visible aliased entities -- <code>switch_as_x</code> wrappers whose source
 entity is no longer hidden, so both rows show up in dashboards, voice
 assistants, and entity pickers</li>
@@ -198,13 +201,40 @@ creation. Renaming the entity later doesn't update the entity ID, leaving
 IDs</strong> would set. That includes an area assigned to the entity itself, which
 HA puts at the front of the ID as it does for a device, so <code>Main Bath Floor</code>
 in the Main Bath area gets <code>input_boolean.main_bath_main_bath_floor</code>. Take
-the area out of the name to avoid the repeat.</p>
+the area out of the name to avoid the repeat. Home Assistant keeps building
+the ID from the old name until it caches the new one; see <strong>Stale cached
+entity names</strong> below.</p>
 <p>Recreate can't follow a rename of two kinds of entity, so the watchdog
 compares these to their current name instead: scripts, whose ID HA ties to
 their YAML key, and YAML entities with no <code>unique_id:</code>, which have no
 registry entry.</p>
 </li>
 </ul>
+<h3>Stale cached entity names</h3>
+<p>Home Assistant caches an entity's name when it adds the entity -- at startup,
+when the entity's integration reloads, or when the entity's ID changes -- and
+builds the entity's default ID from that cached name. Renaming an entity while
+it stays loaded, such as a helper renamed in its settings, leaves the cached
+name behind until one of those happens.</p>
+<p>Until then, the default ID Home Assistant would set comes from the old name,
+so the watchdog doesn't check that entity's ID. It reports the entity instead,
+in one notification per integration, whose attribution header links to the
+integration:</p>
+<pre><code class="language-text">The Home Assistant cached internal entity name doesn't match the current
+entity name for some entities. This can occur when these entities have been
+renamed. The cached internal entity name is used to generate default entity
+IDs, so that check is disabled for these entities until this drift is
+resolved.
+
+- Cached: &quot;Main Bath Floor&quot; -&gt; Current: &quot;Floor&quot; (Main Bath)
+
+To resolve it, restart Home Assistant, or change each entity's ID to a
+temporary one (for example, add `_tmp` to the end) and then change it back.
+</code></pre>
+<p>The location is the entity's area, or its device's. The check runs with the
+entity ID checks -- <code>device-entity-id</code> for device entities and <code>entity-id</code> for
+deviceless ones -- and honors the same exclusions. Once the names match, the
+next scan clears the finding and checks the entity's ID again.</p>
 <h3>Two-cycle fix sequence</h3>
 <p>When a device has both name overrides and non-default entity IDs, the fix must
 happen in two steps:</p>
@@ -432,6 +462,7 @@ missing, source disabled, source already hidden)</li>
 <li><code>script_yaml_key_flagged</code>: Scripts flagged for YAML-key drift this run (set
 whether or not <strong>Create repairs</strong> is on, even though the finding only
 surfaces as a repair)</li>
+<li><code>cached_name_drift</code>: Entities whose cached name is stale this run</li>
 <li><code>unmatched_directives</code>: Include / exclude directives that bound to zero live
 candidates this run (zero unless <strong>Validate include / exclude directives</strong>
 surfaced something)</li>
@@ -444,7 +475,7 @@ components).</p>
 <pre><code class="language-text">[EDW: Entity Defaults Watchdog] integrations=12
   devices=45 entities=320 device_issues=2
   entity_issues=5 deviceless_drift=3
-  unmatched_directives=0
+  cached_name_drift=1 unmatched_directives=0
 </code></pre>
 </body>
 </html>

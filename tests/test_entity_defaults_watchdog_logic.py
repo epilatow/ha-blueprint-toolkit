@@ -26,9 +26,11 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     CHECK_ALL,
     DRIFT_CHECK_DEVICE_ENTITY_ID,
     DRIFT_CHECK_DEVICE_ENTITY_NAME,
+    DRIFT_CHECK_ENTITY_ID,
     DRIFT_CHECK_SCRIPT_YAML_KEY,
     DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
     USE_DEVICE_NAME,
+    CachedNameDrift,
     Config,
     DeviceEntityNameDriftRepair,
     DeviceEntry,
@@ -96,6 +98,7 @@ def _entity_drift(
     friendly_name: str | None = None,
     uses_device_name: bool = False,
     has_redundant_prefix: bool = False,
+    cached_name_drift: CachedNameDrift | None = None,
 ) -> EntityDriftInfo:
     return EntityDriftInfo(
         entity_id=entity_id,
@@ -108,6 +111,7 @@ def _entity_drift(
         friendly_name=current_name if friendly_name is None else friendly_name,
         uses_device_name=uses_device_name,
         has_redundant_prefix=has_redundant_prefix,
+        cached_name_drift=cached_name_drift,
     )
 
 
@@ -1100,6 +1104,7 @@ def _deviceless(
     from_registry: bool = True,
     config_entry_id: str | None = "ui_entry",
     expected_entity_id: str | None = None,
+    cached_name_drift: CachedNameDrift | None = None,
 ) -> DevicelessEntityInfo:
     """A deviceless entity, drifted unless told what HA expects."""
     domain = entity_id.split(".", 1)[0]
@@ -1111,6 +1116,7 @@ def _deviceless(
         unique_id=unique_id,
         from_registry=from_registry,
         config_entry_id=config_entry_id,
+        cached_name_drift=cached_name_drift,
     )
 
 
@@ -2879,6 +2885,267 @@ class TestScriptYamlKeyDriftCheckConstant:
 
     def test_in_check_all(self) -> None:
         assert DRIFT_CHECK_SCRIPT_YAML_KEY in CHECK_ALL
+
+
+def _stale(
+    integration: str = "input_boolean",
+    cached_name: str = "Main Bath Floor",
+    current_name: str = "Floor",
+    area: str | None = "Main Bath",
+) -> CachedNameDrift:
+    return CachedNameDrift(
+        integration=integration,
+        cached_name=cached_name,
+        current_name=current_name,
+        area=area,
+    )
+
+
+class TestCachedNameDrift:
+    """A stale cached name is reported in place of the ID check
+    it would mislead."""
+
+    _PREFIX = "entity_defaults_watchdog_test__cached_name_"
+
+    def _notifications(
+        self,
+        cfg: Config,
+        devices: list[DeviceInfo] | None = None,
+        deviceless: list[DevicelessEntityInfo] | None = None,
+    ) -> dict[str, helpers.PersistentNotification]:
+        ev = run_evaluation(
+            cfg,
+            devices=devices or [],
+            deviceless_entities=deviceless or [],
+            all_integrations=[],
+            max_notifications=100,
+        )
+        return {
+            n.notification_id.removeprefix(self._PREFIX): n
+            for n in ev.notifications
+            if n.notification_id.startswith(self._PREFIX)
+        }
+
+    def test_stale_device_entity_skips_the_id_check(self) -> None:
+        entity = _entity_drift(
+            entity_id="sensor.old",
+            expected_entity_id="sensor.new",
+            cached_name_drift=_stale(),
+        )
+        device = _device(entities=[entity])
+        assert _check_entity_drift(_config(), entity, device) is None
+
+    def test_stale_device_entity_keeps_the_name_check(self) -> None:
+        entity = _entity_drift(
+            entity_id="sensor.old",
+            expected_entity_id="sensor.new",
+            has_name_override=True,
+            current_name="Old",
+            expected_name="New",
+            cached_name_drift=_stale(),
+        )
+        device = _device(entities=[entity])
+        result = _check_entity_drift(_config(), entity, device)
+        assert result is not None
+        assert result.name_drifted
+        assert not result.id_drifted
+
+    def test_stale_deviceless_entity_skips_the_id_check(self) -> None:
+        entity = _deviceless(
+            "input_boolean.main_bath_floor",
+            friendly_name="Floor",
+            cached_name_drift=_stale(),
+        )
+        assert _evaluate_deviceless(_config(), [entity]).drifted == []
+
+    def test_one_notification_per_integration(self) -> None:
+        device = _device(
+            entities=[
+                _entity_drift(
+                    entity_id="sensor.meter_temperature",
+                    cached_name_drift=_stale(
+                        integration="fake_integration",
+                        cached_name="Temperature",
+                        current_name="Humidity",
+                        area="Garage",
+                    ),
+                ),
+            ],
+        )
+        deviceless = [
+            _deviceless(
+                f"input_boolean.{area}_floor",
+                cached_name_drift=_stale(area=area.title()),
+            )
+            for area in ("guest", "main")
+        ]
+        cfg = _config(instance_id="automation.edw")
+
+        found = self._notifications(cfg, [device], deviceless)
+
+        assert sorted(found) == ["fake_integration", "input_boolean"]
+        helper = found["input_boolean"]
+        assert helper.active
+        assert helper.title == "Stale cached entity names: input_boolean"
+        assert helper.integrations == ("input_boolean",)
+        assert helper.instance_id == "automation.edw"
+        assert helper.repair_callback is None
+        assert '"Floor" (Guest)\n- Cached:' in helper.message
+        assert '"Floor" (Main)' in helper.message
+        assert '"Humidity" (Garage)' in found["fake_integration"].message
+
+    def test_message_explains_lists_and_advises(self) -> None:
+        found = self._notifications(
+            _config(),
+            deviceless=[
+                _deviceless(
+                    "input_boolean.main_bath_floor",
+                    cached_name_drift=_stale(),
+                ),
+            ],
+        )
+        assert found["input_boolean"].message == (
+            "The Home Assistant cached internal entity name doesn't match"
+            " the current entity name for some entities. This can occur"
+            " when these entities have been renamed. The cached internal"
+            " entity name is used to generate default entity IDs, so that"
+            " check is disabled for these entities until this drift is"
+            " resolved.\n\n"
+            '- Cached: "Main Bath Floor" -> Current: "Floor" (Main Bath)\n\n'
+            "To resolve it, restart Home Assistant, or change each entity's"
+            " ID to a temporary one (for example, add `_tmp` to the end)"
+            " and then change it back."
+        )
+
+    def test_lines_sort_escape_and_drop_a_missing_area(self) -> None:
+        found = self._notifications(
+            _config(),
+            deviceless=[
+                _deviceless(
+                    "input_boolean.b",
+                    cached_name_drift=_stale(
+                        cached_name="[old]",
+                        current_name="B",
+                        area=None,
+                    ),
+                ),
+                _deviceless(
+                    "input_boolean.a",
+                    cached_name_drift=_stale(current_name="A", area="[x]"),
+                ),
+            ],
+        )
+        lines = found["input_boolean"].message.split("\n\n")[1]
+        assert lines.splitlines() == [
+            r'- Cached: "Main Bath Floor" -> Current: "A" (\[x\])',
+            r'- Cached: "\[old\]" -> Current: "B"',
+        ]
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            pytest.param(
+                {"exclude_entity_ids": ["sensor.meter_temperature"]},
+                id="entity",
+            ),
+            pytest.param(
+                {"exclude_entity_id_regex": "meter_temp"},
+                id="entity-id",
+            ),
+            pytest.param(
+                {"exclude_entity_name_regex": "Meter Humid"},
+                id="entity-name",
+            ),
+            pytest.param(
+                {"exclude_device_name_regex": "Meter"},
+                id="device-name",
+            ),
+        ],
+    )
+    def test_device_exclusions_drop_the_finding(
+        self,
+        overrides: dict[str, object],
+    ) -> None:
+        device = _device(
+            device_name="Meter",
+            entities=[
+                _entity_drift(
+                    entity_id="sensor.meter_temperature",
+                    current_name="Meter Humidity",
+                    cached_name_drift=_stale(integration="fake_integration"),
+                ),
+            ],
+        )
+        assert self._notifications(_config(**overrides), [device]) == {}
+
+    def test_excluded_integration_on_the_device_drops_it(self) -> None:
+        device = _device(
+            entities=[
+                _entity_drift(
+                    cached_name_drift=_stale(integration="fake_integration"),
+                ),
+            ],
+        )
+        device.de.integration_excluded = True
+        assert self._notifications(_config(), [device]) == {}
+
+    def test_deviceless_exclusions_drop_the_finding(self) -> None:
+        entity = _deviceless(
+            "input_boolean.main_bath_floor",
+            friendly_name="Floor",
+            cached_name_drift=_stale(),
+        )
+        for overrides in (
+            {"exclude_entity_ids": ["input_boolean.main_bath_floor"]},
+            {"exclude_entity_id_regex": "bath_floor"},
+            {"exclude_entity_name_regex": "^Floor$"},
+        ):
+            assert (
+                self._notifications(
+                    _config(**overrides),
+                    deviceless=[entity],
+                )
+                == {}
+            ), overrides
+
+    def test_each_finding_follows_its_id_check(self) -> None:
+        device = _device(
+            entities=[
+                _entity_drift(
+                    cached_name_drift=_stale(integration="fake_integration"),
+                ),
+            ],
+        )
+        deviceless = [
+            _deviceless("input_boolean.a", cached_name_drift=_stale())
+        ]
+
+        device_check = self._notifications(
+            _config(drift_checks=frozenset({DRIFT_CHECK_DEVICE_ENTITY_ID})),
+            [device],
+            deviceless,
+        )
+        deviceless_check = self._notifications(
+            _config(drift_checks=frozenset({DRIFT_CHECK_ENTITY_ID})),
+            [device],
+            deviceless,
+        )
+
+        assert list(device_check) == ["fake_integration"]
+        assert list(deviceless_check) == ["input_boolean"]
+
+    def test_stat_counts_each_entity(self) -> None:
+        ev = run_evaluation(
+            _config(),
+            devices=[],
+            deviceless_entities=[
+                _deviceless(f"input_boolean.{n}", cached_name_drift=_stale())
+                for n in ("a", "b")
+            ],
+            all_integrations=[],
+            max_notifications=100,
+        )
+        assert ev.stat_cached_name_drift == 2
 
 
 if __name__ == "__main__":

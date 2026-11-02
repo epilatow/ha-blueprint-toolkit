@@ -405,6 +405,7 @@ class TestServiceLayerScan:
             "deviceless_entities",
             "deviceless_excluded",
             "deviceless_drift",
+            "cached_name_drift",
         ):
             assert key in attrs, f"missing diagnostic attr: {key}"
         # Trigger label propagates from the payload.
@@ -3397,6 +3398,318 @@ class TestDevicelessIdsFollowRecreate:
         ]
         assert "`input_text.old_id` -> expected `input_text.new_name`" in body
         assert "input_text.nameless" not in body
+
+
+class TestCachedNameDrift:
+    """HA's cached entity name, read off real helpers and entities."""
+
+    _HELPER = "input_boolean.main_bath_floor"
+
+    async def _create_helper(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+        name: str,
+    ) -> str:
+        """Create a UI input_boolean named ``name``; return its item ID."""
+        from homeassistant.setup import async_setup_component
+
+        assert await async_setup_component(hass, "input_boolean", {})
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "input_boolean/create", "name": name},
+        )
+        response = await client.receive_json()
+        assert response["success"], response
+        item_id: str = response["result"]["id"]
+        return item_id
+
+    async def _rename_helper(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+        item_id: str,
+        name: str,
+    ) -> None:
+        """Rename a UI input_boolean the way its settings dialog does."""
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {
+                "type": "input_boolean/update",
+                "input_boolean_id": item_id,
+                "name": name,
+            },
+        )
+        response = await client.receive_json()
+        assert response["success"], response
+        await hass.async_block_till_done()
+
+    async def _renamed_helper(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        """A Main Bath helper renamed from "Main Bath Floor" to "Floor"."""
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import entity_registry as er
+
+        area = ar.async_get(hass).async_create("Main Bath")
+        item_id = await self._create_helper(
+            hass,
+            hass_ws_client,
+            "Main Bath Floor",
+        )
+        er.async_get(hass).async_update_entity(self._HELPER, area_id=area.id)
+        await self._rename_helper(hass, hass_ws_client, item_id, "Floor")
+
+    async def _scan(
+        self,
+        hass: HomeAssistant,
+        *,
+        drift_checks: tuple[str, ...] = ("entity-id",),
+        create_repairs: bool = False,
+    ) -> None:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=list(drift_checks),
+                create_repairs=create_repairs,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    def _notifications(self, hass: HomeAssistant) -> dict[str, str]:
+        """This instance's notification bodies, by notification kind."""
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        prefix = f"{DOMAIN}_{SERVICE}__automation.edw_test__"
+        return {
+            notification_id.removeprefix(prefix): n["message"]
+            for notification_id, n in (
+                _async_get_or_create_notifications(hass).items()
+            )
+            if notification_id.startswith(prefix)
+        }
+
+    async def test_renamed_helper_is_reported_in_place_of_its_id(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+
+        await _setup_integration(hass)
+        await self._renamed_helper(hass, hass_ws_client)
+        # Recreate still builds the ID from the stale name.
+        assert await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            [self._HELPER],
+        ) == {self._HELPER: "input_boolean.main_bath_main_bath_floor"}
+
+        await self._scan(hass)
+
+        notifications = self._notifications(hass)
+        assert list(notifications) == ["cached_name_input_boolean"]
+        body = notifications["cached_name_input_boolean"]
+        assert (
+            "Integrations: [input_boolean]"
+            "(/config/integrations/integration/input_boolean)"
+        ) in body
+        assert (
+            '- Cached: "Main Bath Floor" -> Current: "Floor" (Main Bath)'
+        ) in body
+
+        await self._scan(hass, create_repairs=True)
+        assert edw._instances(hass)["automation.edw_test"].repairs == {}
+
+    async def test_id_round_trip_caches_the_current_name(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        await self._renamed_helper(hass, hass_ws_client)
+        await self._scan(hass)
+        assert list(self._notifications(hass)) == ["cached_name_input_boolean"]
+        ent_reg = er.async_get(hass)
+        temporary = f"{self._HELPER}_tmp"
+
+        ent_reg.async_update_entity(self._HELPER, new_entity_id=temporary)
+        await hass.async_block_till_done()
+        ent_reg.async_update_entity(temporary, new_entity_id=self._HELPER)
+        await hass.async_block_till_done()
+
+        entry = ent_reg.async_get(self._HELPER)
+        assert entry is not None
+        assert entry.object_id_base == "Floor"
+        assert await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            [self._HELPER],
+        ) == {self._HELPER: self._HELPER}
+        await self._scan(hass)
+        assert self._notifications(hass) == {}
+
+    async def test_stored_name_outranks_the_cached_one(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        await self._renamed_helper(hass, hass_ws_client)
+        er.async_get(hass).async_update_entity(self._HELPER, name="Floor")
+        # Recreate builds the ID from the stored name, so the stale
+        # cached one misleads nothing.
+        assert await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            [self._HELPER],
+        ) == {self._HELPER: self._HELPER}
+
+        await self._scan(hass)
+
+        assert self._notifications(hass) == {}
+
+    # ``sun.sun`` polls, and HA's sun integration removes it without
+    # stopping its platform's polling timer.
+    @pytest.mark.parametrize("expected_lingering_timers", [True])
+    async def test_freshly_added_entities_are_not_reported(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.setup import async_setup_component
+
+        hass.config.language = "de"
+        await _setup_integration(hass)
+        await self._create_helper(hass, hass_ws_client, "Floor")
+        assert await async_setup_component(
+            hass,
+            "automation",
+            {
+                "automation": [
+                    {
+                        "id": "lights_on",
+                        "alias": "Lights On",
+                        "triggers": [
+                            {"trigger": "event", "event_type": "test"},
+                        ],
+                        "actions": [],
+                    },
+                ],
+            },
+        )
+        assert await async_setup_component(
+            hass,
+            "template",
+            {
+                "template": [
+                    {
+                        "sensor": [
+                            {
+                                "name": "Grid Power",
+                                "unique_id": "grid_power",
+                                "state": "1",
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+        sun_entry = _mock_config_entry(domain="sun")
+        sun_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(sun_entry.entry_id)
+        await hass.async_block_till_done()
+        # HA caches a translated name in English but shows it in
+        # the user's language, so the two differ here without
+        # anything being stale.
+        assert [
+            entry
+            for entry in er.async_get(hass).entities.values()
+            if entry.platform == "sun"
+            and entry.translation_key is not None
+            and entry.disabled_by is None
+            and entry.object_id_base != entry.original_name
+        ]
+
+        await self._scan(hass, drift_checks=("device-entity-id", "entity-id"))
+
+        state = hass.states.get("blueprint_toolkit.edw_edw_test_state")
+        assert state is not None
+        assert state.attributes["cached_name_drift"] == 0
+        assert not [
+            kind for kind in self._notifications(hass) if "cached_name" in kind
+        ]
+
+    async def test_device_entity_renamed_in_place_is_reported(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+        from pytest_homeassistant_custom_component.common import (
+            MockEntity,
+            MockEntityPlatform,
+        )
+
+        await _setup_integration(hass)
+        fake_entry = _mock_config_entry(
+            domain="fake_integration",
+            title="fake_integration",
+        )
+        fake_entry.add_to_hass(hass)
+        platform = MockEntityPlatform(
+            hass,
+            domain="sensor",
+            platform_name="fake_integration",
+        )
+        platform.config_entry = fake_entry
+        platform.async_prepare()
+        entity = MockEntity(
+            name="Temperature",
+            unique_id="temperature",
+            has_entity_name=True,
+            should_poll=False,
+            device_info={
+                "identifiers": {("fake_integration", "meter")},
+                "name": "Meter",
+            },
+        )
+        await platform.async_add_entities([entity])
+        entry = er.async_get(hass).async_get(entity.entity_id)
+        assert entry is not None
+        assert entry.device_id is not None
+        area = ar.async_get(hass).async_create("Garage")
+        # The rename also leaves the entity's ID behind the one
+        # Recreate would give it.
+        dr.async_get(hass).async_update_device(
+            entry.device_id,
+            area_id=area.id,
+            name_by_user="Gauge",
+        )
+        entity._values["name"] = "Humidity"
+        entity.async_write_ha_state()
+
+        await self._scan(hass, drift_checks=("device-entity-id",))
+
+        notifications = self._notifications(hass)
+        assert list(notifications) == ["cached_name_fake_integration"]
+        assert (
+            '- Cached: "Temperature" -> Current: "Humidity" (Garage)'
+        ) in notifications["cached_name_fake_integration"]
 
 
 class TestFindingLifecycle(WatchdogFindingLifecycleBase):

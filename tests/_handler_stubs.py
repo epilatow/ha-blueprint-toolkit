@@ -66,7 +66,9 @@ class HomeAssistantStubs:
     exceptions: types.ModuleType
     helpers: types.ModuleType
     helpers_cv: types.ModuleType
+    helpers_ar: types.ModuleType
     helpers_dr: types.ModuleType
+    helpers_entity_platform: types.ModuleType
     helpers_er: types.ModuleType
     event: types.ModuleType
     util: types.ModuleType
@@ -172,8 +174,18 @@ def install_homeassistant_stubs(
         list(v) if v else []
     )
 
+    helpers_ar = types.ModuleType("homeassistant.helpers.area_registry")
+    helpers_ar.async_get = lambda _hass: None  # type: ignore[attr-defined]
+
     helpers_dr = types.ModuleType("homeassistant.helpers.device_registry")
     helpers_dr.async_get = lambda _hass: None  # type: ignore[attr-defined]
+
+    helpers_entity_platform = types.ModuleType(
+        "homeassistant.helpers.entity_platform",
+    )
+    helpers_entity_platform.async_get_platforms = (  # type: ignore[attr-defined]
+        lambda _hass, _integration: []
+    )
 
     helpers_er = types.ModuleType(
         "homeassistant.helpers.entity_registry",
@@ -211,7 +223,11 @@ def install_homeassistant_stubs(
     sys.modules["homeassistant.exceptions"] = exceptions
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.config_validation"] = helpers_cv
+    sys.modules["homeassistant.helpers.area_registry"] = helpers_ar
     sys.modules["homeassistant.helpers.device_registry"] = helpers_dr
+    sys.modules["homeassistant.helpers.entity_platform"] = (
+        helpers_entity_platform
+    )
     sys.modules["homeassistant.helpers.entity_registry"] = helpers_er
     sys.modules["homeassistant.helpers.event"] = event
     sys.modules["homeassistant.util"] = util
@@ -226,7 +242,9 @@ def install_homeassistant_stubs(
         exceptions=exceptions,
         helpers=helpers,
         helpers_cv=helpers_cv,
+        helpers_ar=helpers_ar,
         helpers_dr=helpers_dr,
+        helpers_entity_platform=helpers_entity_platform,
         helpers_er=helpers_er,
         event=event,
         util=util,
