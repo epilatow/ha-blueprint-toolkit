@@ -23,6 +23,7 @@ import ast
 import asyncio
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -1737,6 +1738,30 @@ class TestParamManagerFleet:
         ]
         assert zc._last_awake_at(history) == datetime(
             2026, 6, 9, 13, 0, tzinfo=UTC
+        )
+
+    def test_last_awake_at_is_in_the_system_time_zone(
+        self,
+        system_time_zone: Callable[[str], None],
+    ) -> None:
+        system_time_zone("Asia/Kolkata")
+        history: list[zc.HaState] = [
+            {"state": "awake", "last_changed": "2026-06-09T12:00:00+00:00"},
+        ]
+        awake = zc._last_awake_at(history)
+        assert awake is not None
+        assert awake.utcoffset() == timedelta(hours=5, minutes=30)
+
+    def test_last_awake_at_reads_a_time_without_an_offset_as_utc(
+        self,
+        system_time_zone: Callable[[str], None],
+    ) -> None:
+        system_time_zone("Asia/Kolkata")
+        history: list[zc.HaState] = [
+            {"state": "awake", "last_changed": "2026-06-09T12:00:00"},
+        ]
+        assert zc._last_awake_at(history) == datetime(
+            2026, 6, 9, 12, 0, tzinfo=UTC
         )
 
     def test_last_awake_at_none_when_never_awake(self) -> None:

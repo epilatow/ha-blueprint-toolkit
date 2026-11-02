@@ -2468,7 +2468,13 @@ async def fetch_last_awake(
 
 def _last_awake_at(history: list[HaState]) -> datetime | None:
     """The ``last_changed`` of the most recent ``awake`` state in a node-
-    status entity's history, or ``None`` when it never reads ``awake``."""
+    status entity's history, in the system time zone, or ``None`` when it
+    never reads ``awake``.
+
+    The CLI runs in the Terminal & SSH add-on, whose time zone the
+    Supervisor sets to Home Assistant's, so its wake times read the same
+    as the ones Home Assistant shows.
+    """
 
     best: datetime | None = None
     for s in history:
@@ -2481,9 +2487,11 @@ def _last_awake_at(history: list[HaState]) -> datetime | None:
             lc = datetime.fromisoformat(lc_str)
         except ValueError:
             continue
+        if lc.tzinfo is None:
+            lc = lc.replace(tzinfo=UTC)
         if best is None or lc > best:
             best = lc
-    return best
+    return best.astimezone() if best is not None else None
 
 
 async def _read_param_manager_fleet(api_key: str) -> list[NodeRead]:

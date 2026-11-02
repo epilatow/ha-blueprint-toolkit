@@ -6,6 +6,8 @@ import os
 import shutil
 import sys
 import tempfile
+import time
+from collections.abc import Callable, Iterator
 from datetime import UTC
 from pathlib import Path
 from typing import Any, ClassVar
@@ -48,6 +50,27 @@ atexit.register(_cleanup_all_caches)
 def pytest_sessionfinish() -> None:
     """Clean up pycache directories after test session."""
     _cleanup_all_caches()
+
+
+@pytest.fixture
+def system_time_zone() -> Iterator[Callable[[str], None]]:
+    """Set the process's time zone for one test, then restore it.
+
+    Code that converts with a bare ``astimezone()`` reads this zone, so a
+    test can pin it to one no test host runs in.
+    """
+    original = os.environ.get("TZ")
+
+    def _set(zone: str) -> None:
+        os.environ["TZ"] = zone
+        time.tzset()
+
+    yield _set
+    if original is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original
+    time.tzset()
 
 
 def run_tests(
