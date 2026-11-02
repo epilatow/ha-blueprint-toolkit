@@ -512,7 +512,7 @@ def _build_notification_message(
     if is_stale:
         threshold_minutes = config.dead_threshold_seconds // 60
         if newest_timestamp and newest_entity:
-            last_seen = newest_timestamp.isoformat()
+            last_seen = newest_timestamp.strftime("%Y-%m-%d %H:%M:%S")
             lines.append(
                 f"No entity state report within {threshold_minutes}"
                 f" minutes. Most recent update {last_seen}"

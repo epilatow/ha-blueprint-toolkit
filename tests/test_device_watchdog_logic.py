@@ -575,7 +575,7 @@ class TestBuildNotificationMessage:
         )
         assert "No entity state report" in msg
         assert "sensor.old" in msg
-        assert ts.isoformat() in msg
+        assert "Most recent update 2024-01-14 11:00:00 via" in msg
 
     def test_stale_no_prior_updates(self) -> None:
         msg = _build_notification_message(

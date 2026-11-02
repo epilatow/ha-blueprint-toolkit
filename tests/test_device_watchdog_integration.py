@@ -1015,7 +1015,7 @@ class TestStaleNotificationTime:
             n["message"]
             for n in _async_get_or_create_notifications(hass).values()
         ]
-        expected = f"Most recent update {local.isoformat()}"
+        expected = f"Most recent update {local:%Y-%m-%d %H:%M:%S} via"
         assert any(expected in body for body in bodies), bodies
 
 
