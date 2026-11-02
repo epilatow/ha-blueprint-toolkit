@@ -134,9 +134,10 @@ blueprint:
       description: >
         When enabled, findings with a deterministic fix
         (entity-ID drift, entity-name drift, visible
-        aliased sources, and script YAML-key drift)
-        surface as Home Assistant Repairs with a one-click
-        Fix button instead of as persistent notifications.
+        aliased sources, script YAML-key drift, and stale
+        cached entity names) surface as Home Assistant
+        Repairs with a one-click Fix button instead of as
+        persistent notifications.
         Script YAML-key drift is repair-only -- with this
         off it is not reported at all; the other findings
         keep surfacing as notifications.

@@ -591,10 +591,10 @@ as one-click Fix issues instead of as persistent notifications.
 - **Issue ID format.**
   `blueprint_toolkit_{service}__{instance_id}__repair_{fix_service_name}__{target}`,
   built via `helpers.repair_notification_id`. The final `{target}` is the
-  grouping key: a `device_id` for device-grouped repairs, or the `entity_id`
-  for ungrouped ones. The `__repair_` substring is what
-  `repairs.async_create_fix_flow` routes on to pick the `WatchdogFixFlow` over
-  the install-time flows.
+  grouping key: a `device_id` for device-grouped repairs, an integration
+  domain for integration-grouped ones, or the `entity_id` for ungrouped ones.
+  The `__repair_` substring is what `repairs.async_create_fix_flow` routes on
+  to pick the `WatchdogFixFlow` over the install-time flows.
 - **Attribution.** A repair spec carries the same `instance_id` /
   `integrations=` / `device=` as a notification. Every repair's `confirm`
   description in `strings.json` / `translations/en.json` must lead with

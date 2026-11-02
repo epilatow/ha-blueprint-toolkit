@@ -288,6 +288,7 @@ class FixServices(StrEnum):
     DEVICE_ENTITY_NAME_DRIFT = "fix_edw_device_entity_name_drift"
     VISIBLE_ALIASED_ENTITY = "fix_edw_visible_aliased_entity"
     SCRIPT_YAML_KEY_DRIFT = "fix_edw_script_yaml_key"
+    CACHED_NAME_DRIFT = "fix_edw_cached_name_drift"
 
 
 @dataclass(frozen=True)
@@ -360,11 +361,23 @@ class ScriptYamlKeyDriftRepair:
     entity_id: str
 
 
+@dataclass(frozen=True)
+class CachedNameDriftRepair:
+    """Rich per-repair payload for an EDW cached-name fix.
+
+    Carries the entities whose cached names the fix service
+    refreshes, in the order it refreshes them.
+    """
+
+    entity_ids: tuple[str, ...]
+
+
 EdwRepair = (
     EntityIdDriftRepair
     | DeviceEntityNameDriftRepair
     | VisibleAliasedEntityRepair
     | ScriptYamlKeyDriftRepair
+    | CachedNameDriftRepair
 )
 
 
@@ -410,11 +423,22 @@ class EdwScriptYamlKeyDriftIssue(helpers.Issue):
     old_key: str
 
 
+@dataclass(frozen=True)
+class EdwCachedNameDriftIssue(helpers.Issue):
+    KEY: ClassVar[str] = "edw_cached_name_drift"
+    integration: str
+    # The explanation the cached-name notification opens with,
+    # so both surfaces describe the finding in the same words.
+    summary: str
+    entities: str
+
+
 ISSUES: tuple[type[helpers.Issue], ...] = (
     EdwEntityIdDriftIssue,
     EdwDeviceEntityNameDriftIssue,
     EdwVisibleAliasedIssue,
     EdwScriptYamlKeyDriftIssue,
+    EdwCachedNameDriftIssue,
 )
 
 
@@ -1401,6 +1425,58 @@ def _build_cached_name_drift_notifications(
     ]
 
 
+def _build_cached_name_drift_repair_specs(
+    config: Config,
+    findings: list[CachedNameDriftFinding],
+) -> tuple[
+    list[helpers.PersistentNotification],
+    dict[str, EdwRepair],
+]:
+    """Build one cached-name repair per integration.
+
+    Used in place of the per-integration notifications when
+    ``create_repairs`` is on. The confirm dialog carries the
+    same explanation and entity list as the notification;
+    Submit does the refresh the notification only describes.
+    """
+    specs: list[helpers.PersistentNotification] = []
+    repairs: dict[str, EdwRepair] = {}
+    for integration, group in _cached_name_drift_by_integration(
+        findings
+    ).items():
+        nid = helpers.repair_notification_id(
+            config.notification_prefix,
+            FixServices.CACHED_NAME_DRIFT,
+            integration,
+        )
+        specs.append(
+            helpers.PersistentNotification(
+                active=True,
+                notification_id=nid,
+                title="",
+                message="",
+                instance_id=config.instance_id,
+                repair_callback=helpers.FixService(
+                    service_name=FixServices.CACHED_NAME_DRIFT.value,
+                    notification_id=nid,
+                ),
+                translation_key=EdwCachedNameDriftIssue.KEY,
+                translation_placeholders=asdict(
+                    EdwCachedNameDriftIssue(
+                        integration=integration,
+                        summary=_CACHED_NAME_DRIFT_SUMMARY,
+                        entities=_cached_name_drift_lines(group),
+                    )
+                ),
+                integrations=(integration,),
+            ),
+        )
+        repairs[nid] = CachedNameDriftRepair(
+            entity_ids=tuple(sorted(f.entity_id for f in group)),
+        )
+    return specs, repairs
+
+
 def _build_visible_aliased_notification_message(
     findings: list[VisibleAliasedEntityFinding],
 ) -> str:
@@ -2234,9 +2310,21 @@ def run_evaluation(
         devices,
         deviceless_entities,
     )
-    notifications.extend(
-        _build_cached_name_drift_notifications(config, cached_name_findings),
-    )
+    # Same one-surface-per-finding split as device drift above.
+    if config.create_repairs:
+        cn_specs, cn_repairs = _build_cached_name_drift_repair_specs(
+            config,
+            cached_name_findings,
+        )
+        notifications.extend(cn_specs)
+        repairs.update(cn_repairs)
+    else:
+        notifications.extend(
+            _build_cached_name_drift_notifications(
+                config,
+                cached_name_findings,
+            ),
+        )
 
     if _check_visible_aliased_enabled(config):
         visible_aliased = _evaluate_visible_aliased_entities(

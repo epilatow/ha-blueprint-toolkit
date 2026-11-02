@@ -31,6 +31,7 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     DRIFT_CHECK_VISIBLE_ALIASED_ENTITY,
     USE_DEVICE_NAME,
     CachedNameDrift,
+    CachedNameDriftRepair,
     Config,
     DeviceEntityNameDriftRepair,
     DeviceEntry,
@@ -3133,6 +3134,50 @@ class TestCachedNameDrift:
 
         assert list(device_check) == ["fake_integration"]
         assert list(deviceless_check) == ["input_boolean"]
+
+    def test_repairs_on_emits_one_repair_per_integration(self) -> None:
+        cfg = _config(create_repairs=True, instance_id="automation.edw")
+        ev = run_evaluation(
+            cfg,
+            devices=[],
+            deviceless_entities=[
+                _deviceless(f"input_boolean.{n}", cached_name_drift=_stale())
+                for n in ("b", "a")
+            ],
+            all_integrations=[],
+            max_notifications=100,
+        )
+
+        assert not [
+            n
+            for n in ev.notifications
+            if n.notification_id.startswith(self._PREFIX)
+        ]
+        [spec] = [
+            n
+            for n in ev.notifications
+            if n.repair_callback is not None
+            and n.repair_callback.service_name
+            == FixServices.CACHED_NAME_DRIFT.value
+        ]
+        assert spec.notification_id == (
+            "entity_defaults_watchdog_test__"
+            "repair_fix_edw_cached_name_drift__input_boolean"
+        )
+        assert spec.instance_id == "automation.edw"
+        assert spec.integrations == ("input_boolean",)
+        placeholders = spec.translation_placeholders
+        assert placeholders is not None
+        assert placeholders["integration"] == "input_boolean"
+        assert placeholders["summary"].startswith(
+            "The Home Assistant cached internal entity name",
+        )
+        assert placeholders["entities"].count("- Cached:") == 2
+        assert ev.repairs == {
+            spec.notification_id: CachedNameDriftRepair(
+                entity_ids=("input_boolean.a", "input_boolean.b"),
+            ),
+        }
 
     def test_stat_counts_each_entity(self) -> None:
         ev = run_evaluation(

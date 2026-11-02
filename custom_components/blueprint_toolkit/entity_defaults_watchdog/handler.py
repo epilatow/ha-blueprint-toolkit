@@ -27,8 +27,9 @@ pattern):
   capped by ``max_device_notifications`` via
   ``helpers.prepare_notifications``) -- never both.
   Script-yaml-key drift is repair-only: nothing is emitted
-  when ``create_repairs`` is off. Stale cached names render
-  as one notification per integration. The complete
+  when ``create_repairs`` is off. Stale cached names group
+  by integration, as one repair or one notification each,
+  and the repair refreshes them without a restart. The complete
   per-instance batch is sweep-dispatched via
   ``process_repairs_with_sweep`` so prior-run findings no
   longer present this run get cleaned up from both the
@@ -37,6 +38,7 @@ pattern):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -47,13 +49,14 @@ from typing import TYPE_CHECKING, Any
 
 import probatio
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from ..const import DOMAIN
@@ -87,6 +90,7 @@ from ..helpers import (
 from . import logic
 
 if TYPE_CHECKING:
+    from homeassistant.core import Event, EventStateChangedData
     from homeassistant.helpers.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
@@ -1165,6 +1169,63 @@ async def async_unregister(
 
 FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in logic.FixServices)
 
+# How long an entity's temporary ID waits for HA to add the
+# entity back under it. The original ID is restored either
+# way.
+_READD_TIMEOUT_SECONDS = 10
+
+
+async def _refresh_cached_name(hass: HomeAssistant, entity_id: str) -> None:
+    """Have HA cache the current name of ``entity_id``.
+
+    HA caches an entity's name when it adds the entity, and an
+    ID change re-adds it, so the entity moves to a temporary ID
+    and, once HA has added it there, straight back. The restore
+    follows its own entity's move, so an interruption leaves at
+    most one entity on a temporary ID.
+    """
+    ent_reg = er.async_get(hass)
+    if ent_reg.async_get(entity_id) is None:
+        return
+    domain, object_id = entity_id.split(".", 1)
+    temporary_id = str(
+        ent_reg.async_get_available_entity_id(domain, f"{object_id}_tmp"),
+    )
+    readded = asyncio.Event()
+
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
+    def _on_temporary_state(event: Event[EventStateChangedData]) -> None:
+        if event.data["new_state"] is not None:
+            readded.set()
+
+    unsub = async_track_state_change_event(
+        hass,
+        [temporary_id],
+        _on_temporary_state,
+    )
+    try:
+        ent_reg.async_update_entity(entity_id, new_entity_id=temporary_id)
+        try:
+            async with asyncio.timeout(_READD_TIMEOUT_SECONDS):
+                await readded.wait()
+        except TimeoutError:
+            _LOGGER.warning(
+                "%s was not added back as %s within %d seconds;"
+                " restoring its ID anyway",
+                entity_id,
+                temporary_id,
+                _READD_TIMEOUT_SECONDS,
+            )
+        finally:
+            # An entity removed meanwhile has no ID left to restore.
+            if ent_reg.async_get(temporary_id) is not None:
+                ent_reg.async_update_entity(
+                    temporary_id,
+                    new_entity_id=entity_id,
+                )
+    finally:
+        unsub()
+
 
 def _lookup_repair(
     hass: HomeAssistant,
@@ -1286,6 +1347,13 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
         ):
             ent_reg.async_update_entity(new_eid, new_entity_id=target)
 
+    async def _fix_cached_name_drift(notification_id: str) -> None:
+        payload = _lookup_repair(hass, notification_id)
+        if not isinstance(payload, logic.CachedNameDriftRepair):
+            return
+        for entity_id in payload.entity_ids:
+            await _refresh_cached_name(hass, entity_id)
+
     register_fix_service(
         hass,
         logic.FixServices.ENTITY_ID_DRIFT,
@@ -1305,6 +1373,11 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
         hass,
         logic.FixServices.SCRIPT_YAML_KEY_DRIFT,
         _fix_script_yaml_key,
+    )
+    register_fix_service(
+        hass,
+        logic.FixServices.CACHED_NAME_DRIFT,
+        _fix_cached_name_drift,
     )
 
 

@@ -109,6 +109,18 @@
           }
         }
       }
+    },
+    "edw_cached_name_drift": {
+      "title": "Stale cached entity names: {integration}",
+      "description": "{summary}\n\n{entities}\n\nClick Submit to refresh them.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Refresh cached entity names?",
+            "description": "{attribution}\n\n{summary}\n\n{entities}\n\nClick Submit to give each entity a temporary ID and then restore its ID, which makes Home Assistant cache its current name."
+          }
+        }
+      }
     }
   }
 }

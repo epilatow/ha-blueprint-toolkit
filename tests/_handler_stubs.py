@@ -208,6 +208,9 @@ def install_homeassistant_stubs(
     event.async_track_time_interval = (  # type: ignore[attr-defined]
         lambda _h, _c, _i: lambda: None
     )
+    event.async_track_state_change_event = (  # type: ignore[attr-defined]
+        lambda _h, _e, _a: lambda: None
+    )
 
     util = types.ModuleType("homeassistant.util")
     util_dt = types.ModuleType("homeassistant.util.dt")

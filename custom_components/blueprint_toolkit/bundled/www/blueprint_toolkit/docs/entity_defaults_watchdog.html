@@ -145,7 +145,7 @@ device name + ID drift)</li>
 </tr>
 <tr>
 <td>Create repairs for fixable findings</td>
-<td>Default on. Routes entity-ID drift, entity-name drift, visible-aliased, and script YAML-key findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Script YAML-key drift surfaces ONLY when this is on. See <strong>Repairs</strong> below.</td>
+<td>Default on. Routes entity-ID drift, entity-name drift, visible-aliased, script YAML-key, and stale cached name findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Script YAML-key drift surfaces ONLY when this is on. See <strong>Repairs</strong> below.</td>
 </tr>
 <tr>
 <td>Max repairs</td>
@@ -218,8 +218,11 @@ it stays loaded, such as a helper renamed in its settings, leaves the cached
 name behind until one of those happens.</p>
 <p>Until then, the default ID Home Assistant would set comes from the old name,
 so the watchdog doesn't check that entity's ID. It reports the entity instead,
-in one notification per integration, whose attribution header links to the
-integration:</p>
+grouped by integration so the attribution header can link to the integration.
+With <strong>Create repairs</strong> on, each integration's list is a one-click <strong>Refresh
+cached entity names?</strong> Repair: Submit gives each entity a temporary ID and
+restores it before moving on to the next entity, which makes Home Assistant
+cache the current name. With it off, each list is a notification:</p>
 <pre><code class="language-text">The Home Assistant cached internal entity name doesn't match the current
 entity name for some entities. This can occur when these entities have been
 renamed. The cached internal entity name is used to generate default entity
@@ -384,7 +387,7 @@ once the entry is fixed or removed, or when you turn the toggle off.</p>
 <h3>Repairs</h3>
 <p>When <strong>Create repairs for fixable findings</strong> is enabled (default), each drift
 finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
-button instead of as a persistent notification. Four finding categories
+button instead of as a persistent notification. Five finding categories
 convert:</p>
 <ul>
 <li><strong>Entity-ID drift</strong> -- &quot;Regenerate entity IDs?&quot;. Submit calls the entity
@@ -407,6 +410,9 @@ rewrites the block key (with a timestamped backup) and reloads scripts so
 the service name matches the entity id. Unlike the other categories this is
 repair-only: with the toggle off it surfaces on no surface at all (see
 <strong>Script YAML-key drift</strong> above).</li>
+<li><strong>Stale cached entity names</strong> -- &quot;Refresh cached entity names?&quot;. One Repair
+per integration; Submit refreshes each listed entity's cached name (see
+<strong>Stale cached entity names</strong> above).</li>
 </ul>
 <p>Each Fix dialog leads with the same attribution header the notifications carry
 -- always the automation that emitted it, the owning integration(s) when
@@ -414,7 +420,8 @@ known, and a link to the device with its area when it has one for
 device-attached findings. Deviceless findings (deviceless entity-ID drift,
 script YAML-key drift) carry the owning integration but no device line -- the
 script YAML-key fix, for instance, shows the built-in <code>script</code> integration
-linked to the script-list dashboard.</p>
+linked to the script-list dashboard. Stale cached name findings group by
+integration, so they carry their integration and no device line either.</p>
 <p>Each fixable finding surfaces in one place: as a Repair with the toggle on, or
 in a notification with it off (script YAML-key drift has no notification
 form). Unmatched include / exclude directives surface as a notification

@@ -55,21 +55,21 @@ None.
 
 ## Configuration
 
-| Parameter                             | Description                                                                                                                                                                                                                                                      |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), `visible-aliased-entity`, `script-yaml-key`, or any combination. Empty means all.                                                                                       |
-| Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities, registry-backed deviceless entries (e.g. `template`, `rachio`), visible-aliased sources, and scripts. State-only entities have no platform to filter on.              |
-| Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations, and also skips every device they have an entity on.                                                                                                                                |
-| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                                                                           |
-| Exclude entities                      | Specific entities to exclude from all checks.                                                                                                                                                                                                                    |
-| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                                                                                                                            |
-| Entity name exclude regex             | Skip entities whose friendly name matches. One pattern per line.                                                                                                                                                                                                 |
-| Check interval (minutes)              | Minutes between drift evaluations.                                                                                                                                                                                                                               |
-| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                                                                                                                      |
-| Create repairs for fixable findings   | Default on. Routes entity-ID drift, entity-name drift, visible-aliased, and script YAML-key findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Script YAML-key drift surfaces ONLY when this is on. See **Repairs** below. |
-| Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                                                                                                                              |
-| Validate include / exclude directives | Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.                                                                                    |
-| Debug Logging                         | Log debug info to HA logs.                                                                                                                                                                                                                                       |
+| Parameter                             | Description                                                                                                                                                                                                                                                                         |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drift checks                          | Which checks to run: `device-entity-id`, `device-entity-name`, `entity-id` (deviceless), `visible-aliased-entity`, `script-yaml-key`, or any combination. Empty means all.                                                                                                          |
+| Include integrations                  | Integration IDs to check. Empty means all integrations. Applies to device-backed entities, registry-backed deviceless entries (e.g. `template`, `rachio`), visible-aliased sources, and scripts. State-only entities have no platform to filter on.                                 |
+| Exclude integrations                  | Integration IDs to skip even if included. Same scope as Include integrations, and also skips every device they have an entity on.                                                                                                                                                   |
+| Device name exclude regex             | Skip devices whose name matches. One pattern per line.                                                                                                                                                                                                                              |
+| Exclude entities                      | Specific entities to exclude from all checks.                                                                                                                                                                                                                                       |
+| Entity ID exclude regex               | Skip entities whose ID matches. One pattern per line.                                                                                                                                                                                                                               |
+| Entity name exclude regex             | Skip entities whose friendly name matches. One pattern per line.                                                                                                                                                                                                                    |
+| Check interval (minutes)              | Minutes between drift evaluations.                                                                                                                                                                                                                                                  |
+| Max device notifications              | Cap on per-device notifications. Default 10. 0 = unlimited.                                                                                                                                                                                                                         |
+| Create repairs for fixable findings   | Default on. Routes entity-ID drift, entity-name drift, visible-aliased, script YAML-key, and stale cached name findings to HA's Repairs UI as one-click Fix issues instead of persistent notifications. Script YAML-key drift surfaces ONLY when this is on. See **Repairs** below. |
+| Max repairs                           | Cap on per-run repair issues. Default 5. 0 = unlimited. Applies only when **Create repairs** is on.                                                                                                                                                                                 |
+| Validate include / exclude directives | Default on. Surface typo'd integrations, removed entities, or stale regex lines as a single informational notification. See **Unmatched include / exclude directives** below.                                                                                                       |
+| Debug Logging                         | Log debug info to HA logs.                                                                                                                                                                                                                                                          |
 
 See the blueprint UI for default values.
 
@@ -129,8 +129,11 @@ name behind until one of those happens.
 
 Until then, the default ID Home Assistant would set comes from the old name,
 so the watchdog doesn't check that entity's ID. It reports the entity instead,
-in one notification per integration, whose attribution header links to the
-integration:
+grouped by integration so the attribution header can link to the integration.
+With **Create repairs** on, each integration's list is a one-click **Refresh
+cached entity names?** Repair: Submit gives each entity a temporary ID and
+restores it before moving on to the next entity, which makes Home Assistant
+cache the current name. With it off, each list is a notification:
 
 ```text
 The Home Assistant cached internal entity name doesn't match the current
@@ -339,7 +342,7 @@ once the entry is fixed or removed, or when you turn the toggle off.
 
 When **Create repairs for fixable findings** is enabled (default), each drift
 finding with a deterministic fix surfaces as an HA Repair with a one-click Fix
-button instead of as a persistent notification. Four finding categories
+button instead of as a persistent notification. Five finding categories
 convert:
 
 - **Entity-ID drift** -- "Regenerate entity IDs?". Submit calls the entity
@@ -362,6 +365,9 @@ convert:
   the service name matches the entity id. Unlike the other categories this is
   repair-only: with the toggle off it surfaces on no surface at all (see
   **Script YAML-key drift** above).
+- **Stale cached entity names** -- "Refresh cached entity names?". One Repair
+  per integration; Submit refreshes each listed entity's cached name (see
+  **Stale cached entity names** above).
 
 Each Fix dialog leads with the same attribution header the notifications carry
 -- always the automation that emitted it, the owning integration(s) when
@@ -369,7 +375,8 @@ known, and a link to the device with its area when it has one for
 device-attached findings. Deviceless findings (deviceless entity-ID drift,
 script YAML-key drift) carry the owning integration but no device line -- the
 script YAML-key fix, for instance, shows the built-in `script` integration
-linked to the script-list dashboard.
+linked to the script-list dashboard. Stale cached name findings group by
+integration, so they carry their integration and no device line either.
 
 Each fixable finding surfaces in one place: as a Repair with the toggle on, or
 in a notification with it off (script YAML-key drift has no notification

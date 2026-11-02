@@ -3527,7 +3527,210 @@ class TestCachedNameDrift:
         ) in body
 
         await self._scan(hass, create_repairs=True)
-        assert edw._instances(hass)["automation.edw_test"].repairs == {}
+        repairs = edw._instances(hass)["automation.edw_test"].repairs
+        assert [type(r).__name__ for r in repairs.values()] == [
+            "CachedNameDriftRepair",
+        ]
+
+    async def _submit(self, hass: HomeAssistant) -> None:
+        """Submit the published cached-name repair."""
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+
+        [notification_id] = edw._instances(hass)["automation.edw_test"].repairs
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_cached_name_drift",
+            {"notification_id": notification_id},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    async def test_submit_refreshes_the_cached_name(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import issue_registry as ir
+
+        await _setup_integration(hass)
+        await self._renamed_helper(hass, hass_ws_client)
+        await self._scan(hass, create_repairs=True)
+        issue_id = (
+            f"{DOMAIN}_{SERVICE}__automation.edw_test__"
+            "repair_fix_edw_cached_name_drift__input_boolean"
+        )
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_placeholders is not None
+        assert issue.translation_placeholders["entities"] == (
+            '- Cached: "Main Bath Floor" -> Current: "Floor" (Main Bath)'
+        )
+
+        await self._submit(hass)
+
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get(self._HELPER)
+        assert entry is not None
+        assert entry.object_id_base == "Floor"
+        assert hass.states.get(self._HELPER) is not None
+        assert [
+            entity_id for entity_id in ent_reg.entities if "_tmp" in entity_id
+        ] == []
+        assert [
+            state.entity_id
+            for state in hass.states.async_all()
+            if "_tmp" in state.entity_id
+        ] == []
+        await self._scan(hass, create_repairs=True)
+        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+    async def test_submit_steps_around_a_taken_temporary_id(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        await self._create_helper(hass, hass_ws_client, "Main Bath Floor Tmp")
+        await self._renamed_helper(hass, hass_ws_client)
+        await self._scan(hass, create_repairs=True)
+
+        await self._submit(hass)
+
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get(self._HELPER)
+        assert entry is not None
+        assert entry.object_id_base == "Floor"
+        bystander = ent_reg.async_get(f"{self._HELPER}_tmp")
+        assert bystander is not None
+        assert bystander.object_id_base == "Main Bath Floor Tmp"
+        assert ent_reg.async_get(f"{self._HELPER}_tmp_2") is None
+
+    async def test_submit_restores_each_entity_before_the_next(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.core import Event, callback
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        for name in ("Alpha", "Beta"):
+            item_id = await self._create_helper(hass, hass_ws_client, name)
+            await self._rename_helper(
+                hass,
+                hass_ws_client,
+                item_id,
+                f"{name} Renamed",
+            )
+        await self._scan(hass, create_repairs=True)
+        renames: list[tuple[str, str]] = []
+
+        @callback
+        def _record(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+            data = event.data
+            if data["action"] != "update":
+                return
+            old_entity_id = data.get("old_entity_id")
+            if old_entity_id is not None:
+                renames.append((old_entity_id, data["entity_id"]))
+
+        unsub = hass.bus.async_listen(
+            er.EVENT_ENTITY_REGISTRY_UPDATED,
+            _record,
+        )
+        await self._submit(hass)
+        unsub()
+
+        assert renames == [
+            ("input_boolean.alpha", "input_boolean.alpha_tmp"),
+            ("input_boolean.alpha_tmp", "input_boolean.alpha"),
+            ("input_boolean.beta", "input_boolean.beta_tmp"),
+            ("input_boolean.beta_tmp", "input_boolean.beta"),
+        ]
+
+    async def test_entity_that_never_comes_back_is_restored(
+        self,
+        hass: HomeAssistant,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+
+        await _setup_integration(hass)
+        # A registry entry with no loaded entity is never added
+        # back under its temporary ID.
+        er.async_get(hass).async_get_or_create(
+            domain="input_boolean",
+            platform="input_boolean",
+            unique_id="unloaded",
+            suggested_object_id="unloaded",
+        )
+        monkeypatch.setattr(edw, "_READD_TIMEOUT_SECONDS", 0)
+
+        await edw._refresh_cached_name(hass, "input_boolean.unloaded")
+
+        ent_reg = er.async_get(hass)
+        assert ent_reg.async_get("input_boolean.unloaded") is not None
+        assert ent_reg.async_get("input_boolean.unloaded_tmp") is None
+        assert "restoring its ID anyway" in caplog.text
+
+    async def test_entity_removed_while_on_its_temporary_id_is_left_gone(
+        self,
+        hass: HomeAssistant,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio
+
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+
+        await _setup_integration(hass)
+        ent_reg = er.async_get(hass)
+        ent_reg.async_get_or_create(
+            domain="input_boolean",
+            platform="input_boolean",
+            unique_id="removed",
+            suggested_object_id="removed",
+        )
+        monkeypatch.setattr(edw, "_READD_TIMEOUT_SECONDS", 0.1)
+
+        refresh = hass.async_create_task(
+            edw._refresh_cached_name(hass, "input_boolean.removed"),
+        )
+        await asyncio.sleep(0)
+        ent_reg.async_remove("input_boolean.removed_tmp")
+        await refresh
+
+        assert ent_reg.async_get("input_boolean.removed") is None
+        assert ent_reg.async_get("input_boolean.removed_tmp") is None
+
+    async def test_entity_removed_before_submit_is_skipped(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+
+        await _setup_integration(hass)
+
+        await edw._refresh_cached_name(hass, "input_boolean.gone")
+
+        assert er.async_get(hass).async_get("input_boolean.gone_tmp") is None
 
     async def test_id_round_trip_caches_the_current_name(
         self,
@@ -3772,6 +3975,85 @@ class TestFindingLifecycle(WatchdogFindingLifecycleBase):
         entry = er.async_get(hass).async_get(
             f"sensor.lifecycle_drift_{index}",
         )
+        assert entry is not None
+        assert entry.device_id is not None
+        return entry.device_id
+
+
+_LIVE_ENTITIES = "edw_test_live_entities"
+
+
+async def _setup_with_live_entities(hass: HomeAssistant) -> Any:
+    """Set up the integration plus two loaded device entities.
+
+    Each sits on its own integration, so a stale name on each
+    is a separate finding.
+    """
+    from pytest_homeassistant_custom_component.common import (
+        MockEntity,
+        MockEntityPlatform,
+    )
+
+    entry = await _setup_integration(hass)
+    entities: dict[int, MockEntity] = {}
+    for index in (0, 1):
+        integration = f"cached_integration_{index}"
+        fake_entry = _mock_config_entry(domain=integration, title=integration)
+        fake_entry.add_to_hass(hass)
+        platform = MockEntityPlatform(
+            hass,
+            domain="sensor",
+            platform_name=integration,
+        )
+        platform.config_entry = fake_entry
+        platform.async_prepare()
+        entity = MockEntity(
+            name="Temperature",
+            unique_id=f"temperature-{index}",
+            has_entity_name=True,
+            should_poll=False,
+            device_info={
+                "identifiers": {(integration, f"device-{index}")},
+                "name": f"Cached Device {index}",
+            },
+        )
+        await platform.async_add_entities([entity])
+        entities[index] = entity
+    hass.data[_LIVE_ENTITIES] = entities
+    return entry
+
+
+class TestCachedNameFindingLifecycle(WatchdogFindingLifecycleBase):
+    service = SERVICE
+    setup_integration = staticmethod(_setup_with_live_entities)
+    exclusions: ClassVar[dict[str, dict[str, Any]]] = {
+        "integration": {"exclude_integrations": ["cached_integration_0"]},
+        "device": {"exclude_device_name_regex": "Cached Device"},
+        "entity": {"exclude_entities": ["sensor.cached_device_0_temperature"]},
+        "entity id": {"exclude_entity_id_regex": "cached_device_0"},
+        "entity name": {"exclude_entity_name_regex": "Renamed"},
+    }
+
+    def payload(self, **overrides: Any) -> dict[str, Any]:
+        return _valid_payload(drift_checks=["device-entity-id"], **overrides)
+
+    def _rename(self, hass: HomeAssistant, index: int, name: str) -> None:
+        """Rename a live entity in place, as an integration can."""
+        entity = hass.data[_LIVE_ENTITIES][index]
+        entity._values["name"] = name
+        entity.async_write_ha_state()
+
+    def seed_finding(self, hass: HomeAssistant, index: int = 0) -> None:
+        self._rename(hass, index, "Renamed")
+
+    def fix_finding(self, hass: HomeAssistant, index: int = 0) -> None:
+        self._rename(hass, index, "Temperature")
+
+    def finding_device_id(self, hass: HomeAssistant, index: int = 0) -> str:
+        from homeassistant.helpers import entity_registry as er
+
+        entity = hass.data[_LIVE_ENTITIES][index]
+        entry = er.async_get(hass).async_get(entity.entity_id)
         assert entry is not None
         assert entry.device_id is not None
         return entry.device_id
