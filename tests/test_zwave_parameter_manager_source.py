@@ -392,5 +392,33 @@ async def test_read_fleet_last_awake_from_recorder(
     assert reads[0].convergence.last_awake_at is not None
 
 
+@pytest.mark.usefixtures("recorder_mock")
+async def test_read_fleet_last_awake_is_in_ha_time_zone(
+    hass: HomeAssistant,
+) -> None:
+    from datetime import timedelta
+
+    from pytest_homeassistant_custom_component.components.recorder.common import (  # noqa: E501
+        async_wait_recording_done,
+    )
+
+    # A zone no test host runs in, so only HA's setting can produce it.
+    await hass.config.async_set_time_zone("Asia/Kolkata")
+    node = _node()
+    status_entity = _install_fleet(hass, node)
+    hass.states.async_set(status_entity, "awake")
+    await hass.async_block_till_done()
+    await async_wait_recording_done(hass)
+
+    reads = await read_fleet(hass)
+
+    awake = reads[0].convergence.last_awake_at
+    state = hass.states.get(status_entity)
+    assert awake is not None
+    assert state is not None
+    assert awake == state.last_changed
+    assert awake.utcoffset() == timedelta(hours=5, minutes=30)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))

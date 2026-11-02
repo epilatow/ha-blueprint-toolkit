@@ -236,10 +236,11 @@ def _state_device_class(hass: HomeAssistant, entity_id: str) -> str | None:
 
 async def _last_awake(hass: HomeAssistant, device_id: str) -> datetime | None:
     """The node-status entity's last ``awake`` transition from the
-    recorder, or ``None`` when the device has no node-status entity or has
-    not woken inside the lookback window (e.g. a wake interval exceeding
-    recorder retention). Best-effort: the wake context is informational, so
-    an unknown last-wake just drops the expected-next-wake estimate."""
+    recorder, in HA's time zone, or ``None`` when the device has no
+    node-status entity or has not woken inside the lookback window (e.g. a
+    wake interval exceeding recorder retention). Best-effort: the wake
+    context is informational, so an unknown last-wake just drops the
+    expected-next-wake estimate."""
 
     from homeassistant.components.recorder.history import (
         state_changes_during_period,
@@ -271,4 +272,4 @@ async def _last_awake(hass: HomeAssistant, device_id: str) -> datetime | None:
     awakes = [
         s for s in history.get(status.entity_id, []) if s.state == "awake"
     ]
-    return awakes[-1].last_changed if awakes else None
+    return dt_util.as_local(awakes[-1].last_changed) if awakes else None
