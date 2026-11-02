@@ -964,6 +964,61 @@ class TestFindingLifecycle(WatchdogFindingLifecycleBase):
         return entry.device_id
 
 
+class TestStaleNotificationTime:
+    async def test_last_update_shows_in_ha_time_zone(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from datetime import timedelta
+
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.util import dt as dt_util
+
+        await _setup_integration(hass)
+        # A zone no test host runs in, so only HA's setting can produce it.
+        await hass.config.async_set_time_zone("Asia/Kolkata")
+        zwave_entry = _mock_config_entry(domain="zwave_js")
+        zwave_entry.add_to_hass(hass)
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=zwave_entry.entry_id,
+            identifiers={("zwave_js", "freezer")},
+            name="Freezer",
+        )
+        entry = er.async_get(hass).async_get_or_create(
+            domain="sensor",
+            platform="zwave_js",
+            unique_id="freezer-temperature",
+            device_id=device.id,
+        )
+        reported = dt_util.utcnow() - timedelta(days=2)
+        hass.states.async_set(
+            entry.entity_id,
+            "-18",
+            timestamp=reported.timestamp(),
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(enabled_checks=["device-updates"]),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        local = reported.astimezone(dt_util.get_default_time_zone())
+        assert local.utcoffset() == timedelta(hours=5, minutes=30)
+        bodies = [
+            n["message"]
+            for n in _async_get_or_create_notifications(hass).values()
+        ]
+        expected = f"Most recent update {local.isoformat()}"
+        assert any(expected in body for body in bodies), bodies
+
+
 class TestDeviceAreaInHeader:
     def _plant_device(self, hass: HomeAssistant) -> str:
         """Plant a device in an area; return its ID."""

@@ -501,12 +501,14 @@ def _entity_state_snapshot(
     """Read entity state + last_reported timestamp.
 
     Returns ``(state_value, last_reported)`` or ``None``
-    if the entity has no current state.
+    if the entity has no current state. ``last_reported``
+    is in HA's time zone, the one a notification shows it
+    in.
     """
     st = hass.states.get(entity_id)
     if st is None:
         return None
-    return (str(st.state), st.last_reported)
+    return (str(st.state), dt_util.as_local(st.last_reported))
 
 
 def _build_device_inputs(
