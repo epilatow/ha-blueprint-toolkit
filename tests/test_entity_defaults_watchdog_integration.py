@@ -50,6 +50,9 @@ if TYPE_CHECKING:
     from pytest_homeassistant_custom_component.common import (
         MockConfigEntry,
     )
+    from pytest_homeassistant_custom_component.typing import (
+        WebSocketGenerator,
+    )
 
 # pytest-HACC's plugins refuse to load if any
 # homeassistant.components.* module is already in
@@ -113,6 +116,28 @@ async def _setup_integration(hass: Any) -> Any:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry
+
+
+async def _recreate_entity_ids(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    entity_ids: list[str],
+) -> dict[str, str]:
+    """Ask HA what "Recreate entity IDs" would set, as the UI does."""
+    from homeassistant.components.config import entity_registry as config_er
+
+    config_er.async_setup(hass)
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "config/entity_registry/get_automatic_entity_ids",
+            "entity_ids": entity_ids,
+        },
+    )
+    response = await client.receive_json()
+    assert response["success"]
+    result: dict[str, str] = response["result"]
+    return result
 
 
 def _valid_payload(
@@ -2985,6 +3010,89 @@ class TestNameExcludeMatchesFriendlyName:
         await self._scan(hass, "entity-id", "^Shown Name$")
         assert self._repairs(hass) == []
         assert self._unmatched(hass) == ""
+
+
+class TestDeviceIdsFollowRecreate:
+    async def test_entities_bound_for_one_id_get_what_recreate_sets(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        await _setup_integration(hass)
+        fake_entry = _mock_config_entry(
+            domain="fake_integration",
+            title="fake_integration",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_integration", "twins")},
+            name="Old Name",
+        )
+        ent_reg = er.async_get(hass)
+        entity_ids = [
+            ent_reg.async_get_or_create(
+                domain="sensor",
+                platform="fake_integration",
+                unique_id=f"temperature-{index}",
+                device_id=device.id,
+                config_entry=fake_entry,
+                has_entity_name=True,
+                original_name="Temperature",
+                object_id_base="Temperature",
+            ).entity_id
+            for index in range(2)
+        ]
+        dev_reg.async_update_device(device.id, name_by_user="New Name")
+        recreated = await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            entity_ids,
+        )
+        assert sorted(recreated.values()) == [
+            "sensor.new_name_temperature",
+            "sensor.new_name_temperature_2",
+        ]
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=["device-entity-id"],
+                create_repairs=True,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        repairs = edw._instances(hass)["automation.edw_test"].repairs
+        [(notification_id, repair)] = repairs.items()
+        assert isinstance(repair, edw_logic.EntityIdDriftRepair)
+        assert sorted(new for _, new in repair.entity_renames) == sorted(
+            recreated.values(),
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_entity_id_drift",
+            {"notification_id": notification_id},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        for entity_id in recreated.values():
+            assert ent_reg.async_get(entity_id) is not None
 
 
 class TestFindingLifecycle(WatchdogFindingLifecycleBase):

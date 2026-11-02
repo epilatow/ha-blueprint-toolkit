@@ -354,11 +354,13 @@ async def _async_service_layer(
         instance_id=instance_id,
         target_integrations=frozenset(target_integrations),
     )
+    reserved_entity_ids: set[str] = set()
     devices = _build_device_inputs(
         hass,
         all_integrations,
         target_integrations,
         exclude_integrations,
+        reserved_entity_ids,
     )
     deviceless_entities, peers_by_domain = _build_deviceless_inputs(
         hass,
@@ -545,11 +547,32 @@ async def _async_service_layer(
 # --------------------------------------------------------
 
 
+def _recreated_entity_id(
+    ent_reg: er.EntityRegistry,
+    entry: er.RegistryEntry,
+    reserved_entity_ids: set[str],
+) -> str:
+    """The ID HA's "Recreate entity IDs" would set on ``entry``.
+
+    Recreate reserves each ID it hands out, so two entries
+    bound for one free ID don't both claim it.
+    """
+    entity_id = str(
+        ent_reg.async_regenerate_entity_id(
+            entry,
+            reserved_entity_ids=reserved_entity_ids,
+        ),
+    )
+    reserved_entity_ids.add(entity_id)
+    return entity_id
+
+
 def _build_device_inputs(
     hass: HomeAssistant,
     all_integration_ids: list[str],
     target_integrations: set[str],
     exclude_integrations: list[str],
+    reserved_entity_ids: set[str],
 ) -> list[logic.DeviceInfo]:
     """Walk registries to build ``DeviceInfo`` per device.
 
@@ -616,7 +639,11 @@ def _build_device_inputs(
                 entry = ent_reg.async_get(eid)
                 if entry is None:
                     continue
-                expected_id = str(ent_reg.async_regenerate_entity_id(entry))
+                expected_id = _recreated_entity_id(
+                    ent_reg,
+                    entry,
+                    reserved_entity_ids,
+                )
                 has_name_override = entry.name is not None
                 current_name = str(
                     entry.name or entry.original_name or "",
