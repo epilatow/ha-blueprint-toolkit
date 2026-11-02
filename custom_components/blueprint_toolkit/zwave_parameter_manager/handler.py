@@ -26,8 +26,13 @@ anything stays pending it re-publishes on the configured interval (the
 ``pending_report_interval_hours`` input; 0 disables it). Publishing on an
 interval rather than every reconcile keeps the body's per-device wake
 estimates -- which drift as sleeping devices wake -- from churning it to
-the top of the panel. The desired-config report fires only when the policy
-file changes or a newly-configured node appears.
+the top of the panel. The desired-config report fires only on a fresh
+instance (an HA restart or integration reload), when the policy file
+changes, when a newly-configured node appears, or when the report is
+switched back on (the ``report_desired_configuration`` input); switched
+off, it is dismissed. A reconcile that stops early -- on a policy-file
+error, a mapping error, or no Z-Wave JS nodes -- leaves every report as it
+was.
 """
 
 from __future__ import annotations
@@ -106,7 +111,11 @@ class ZpmInstanceState:
 
     instance_id: str
     last_config_mtime: float = 0.0
-    last_configured_nodes: frozenset[int] = frozenset()
+    # The configured nodes the desired report was last rendered for (a
+    # publish, or a dismiss when its body was empty). ``None`` means this
+    # instance has not rendered it (a fresh instance, or the report is
+    # switched off), so the next enabled reconcile does.
+    last_configured_nodes: frozenset[int] | None = None
     # When the pending report was last published, gating its periodic
     # re-publish. ``None`` means nothing is currently published (a fresh
     # instance, or the report was dismissed on convergence / disabled), so the
@@ -157,6 +166,7 @@ _SCHEMA = probatio.Schema(
         probatio.Required("pending_report_interval_hours_raw"): probatio.All(
             probatio.Coerce(int), probatio.Range(min=0, max=8760)
         ),
+        probatio.Required("report_desired_configuration_raw"): cv.boolean,
         probatio.Required("debug_logging_raw"): cv.boolean,
     },
     extra=probatio.ALLOW_EXTRA,
@@ -197,6 +207,7 @@ async def _async_argparse(
         config_file_path=data["config_file_path"],
         reconcile_interval_minutes=data["reconcile_interval_minutes_raw"],
         pending_report_interval_hours=data["pending_report_interval_hours_raw"],
+        report_desired_configuration=data["report_desired_configuration_raw"],
         debug_logging=data["debug_logging_raw"],
     )
 
@@ -215,6 +226,7 @@ async def _async_service_layer(
     config_file_path: str,
     reconcile_interval_minutes: int,
     pending_report_interval_hours: int,
+    report_desired_configuration: bool,
     debug_logging: bool,
 ) -> None:
     """Arm the timer + reconnect hook, then reconcile under the lock."""
@@ -237,6 +249,7 @@ async def _async_service_layer(
             trigger_id=trigger_id,
             config_file_path=config_file_path,
             pending_report_interval_hours=pending_report_interval_hours,
+            report_desired_configuration=report_desired_configuration,
             debug_logging=debug_logging,
         )
 
@@ -249,6 +262,7 @@ async def _do_reconcile(
     trigger_id: str,
     config_file_path: str,
     pending_report_interval_hours: int,
+    report_desired_configuration: bool,
     debug_logging: bool,
 ) -> None:
     from . import source
@@ -376,11 +390,27 @@ async def _do_reconcile(
         active=bool(issues),
     )
 
-    # Desired-config report: only re-fire on a config change or a
-    # newly-configured node, so convergence progress doesn't re-bubble it.
+    # Desired-config report: only fire on a fresh instance, a config change, a
+    # newly-configured node, or the report being switched back on, so
+    # convergence progress doesn't re-bubble it. Switched off, it is dismissed
+    # on every reconcile that gets this far (a no-op when nothing is shown),
+    # so a report published before the switch, or before an entry reload,
+    # still clears.
     configured = frozenset(w.device.node_id for w in plan.writes)
-    if (
-        current_mtime != state.last_config_mtime
+    if not report_desired_configuration:
+        await _dispatch_single(
+            hass,
+            prefix,
+            "desired",
+            instance_id,
+            "Z-Wave Parameter Manager: desired configuration",
+            "",
+            active=False,
+        )
+        state.last_configured_nodes = None
+    elif (
+        state.last_configured_nodes is None
+        or current_mtime != state.last_config_mtime
         or configured != state.last_configured_nodes
     ):
         desired_body = notification.render_report_body(rep, pending_only=False)

@@ -30,8 +30,9 @@ re-sending the same command on every pass.
 - A pending report tracks devices that have not yet applied their writes (with
   each device's wake interval and estimated next wake); it appears as soon as
   something is pending, refreshes on a configurable interval, and clears on
-  full convergence. A desired-config report fires when the policy file changes
-  or a new device becomes configured.
+  full convergence. A desired-config report, which can be turned off, fires
+  when Home Assistant restarts, the policy file changes, or a new device
+  becomes configured.
 - An unused-config report flags policies and settings that match no device --
   a selector typo, a mis-scoped policy, or a setting no matched device
   exposes.
@@ -59,12 +60,13 @@ re-sending the same command on every pass.
 
 ## Configuration
 
-| Input                           | Default                        | Description                                                                                                                               |
-| ------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Policy file path                | `zwave_parameter_manager.yaml` | Path to the policy YAML, relative to `/config` (absolute paths accepted). A missing file means none.                                      |
-| Reconcile interval (minutes)    | `5`                            | How often to re-read the live fleet, pick up newly-joined devices, and re-issue not-yet-applied writes.                                   |
-| Pending report interval (hours) | `24`                           | How often to re-publish the pending-configuration notification while devices are still waiting to apply. `0` disables the pending report. |
-| Debug logging                   | `false`                        | Emit one `WARNING` summary line per reconcile to **Settings > System > Logs**.                                                            |
+| Input                           | Default                        | Description                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Policy file path                | `zwave_parameter_manager.yaml` | Path to the policy YAML, relative to `/config` (absolute paths accepted). A missing file means none.                                                                                                                           |
+| Reconcile interval (minutes)    | `5`                            | How often to re-read the live fleet, pick up newly-joined devices, and re-issue not-yet-applied writes.                                                                                                                        |
+| Pending report interval (hours) | `24`                           | How often to re-publish the pending-configuration notification while devices are still waiting to apply. `0` disables the pending report.                                                                                      |
+| Report desired configuration    | `true`                         | Publish the desired-configuration notification when Home Assistant restarts, the policy file changes, or a device newly becomes configured. Turning it off dismisses any report already shown at the next completed reconcile. |
+| Debug logging                   | `false`                        | Emit one `WARNING` summary line per reconcile to **Settings > System > Logs**.                                                                                                                                                 |
 
 ## Usage notes
 
@@ -178,14 +180,18 @@ annotates each sleeping device with an estimated next wake, and that estimate
 drifts forward every time a device wakes, so publishing on an interval rather
 than every reconcile keeps the notification from bubbling to the top of the
 panel continuously; a longer interval quiets a slow-waking fleet further. The
-desired-config report (`...__desired`) re-fires only when the policy file
-changes or a newly-configured node appears, so convergence progress does not
-re-bubble it. The unused-config report (`...__unused`) lists each policy or
-setting that applied to no device (a selector matching nothing, or a setting
-no matched device exposes). It re-evaluates every reconcile, but its body
-carries no live values, so the notification updates only when the unused set
-actually changes and dismisses when every policy and setting lands somewhere.
-Policy conflicts and unmappable concepts surface as their own notification; a
+desired-config report (`...__desired`) re-fires only after a Home Assistant
+restart or integration reload, when the policy file changes, or when a
+newly-configured node appears, so convergence progress does not re-bubble it.
+Turning **Report desired configuration** off dismisses it, and turning it back
+on republishes it, at the next completed reconcile; one stopped early, such as
+by a policy-file error or an unavailable Z-Wave JS, leaves every report as it
+was. The unused-config report (`...__unused`) lists each policy or setting
+that applied to no device (a selector matching nothing, or a setting no
+matched device exposes). It re-evaluates every reconcile, but its body carries
+no live values, so the notification updates only when the unused set actually
+changes and dismisses when every policy and setting lands somewhere. Policy
+conflicts and unmappable concepts surface as their own notification; a
 config-file parse error and a "Z-Wave JS unavailable" state each have theirs.
 
 ### Diagnostic state entity

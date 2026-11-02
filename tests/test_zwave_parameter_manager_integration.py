@@ -77,6 +77,10 @@ def install_our_integration(
     Depends on ``recorder_mock`` first so the recorder DB is set up before
     ``hass`` -- ``source.read_fleet`` reads the recorder for last-wake, and
     pytest-HACC refuses to attach the recorder once ``hass`` is already up.
+
+    pytest-HACC's config_dir is one directory shared by every test and run,
+    so the state files a reconcile persists there are cleared first: a write
+    an earlier test left pending would otherwise suppress this test's.
     """
     import shutil
 
@@ -95,6 +99,16 @@ def install_our_integration(
     from homeassistant.loader import DATA_CUSTOM_COMPONENTS
 
     hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
+
+    # Importable only once the symlink is in place: ``custom_components``
+    # resolves to pytest-HACC's config_dir package.
+    from custom_components.blueprint_toolkit.zwave import driver_session
+    from custom_components.blueprint_toolkit.zwave_parameter_manager import (
+        pending_store,
+    )
+
+    for rel in (pending_store.PENDING_REL_PATH, driver_session.INFO_REL_PATH):
+        (Path(hass.config.config_dir) / rel).unlink(missing_ok=True)
     yield
     if dst.is_symlink():
         dst.unlink()
@@ -217,6 +231,7 @@ def _payload(
     config_file_path: str = "zwave_parameter_manager.yaml",
     *,
     pending_report_interval_hours: int = 24,
+    report_desired_configuration: bool = True,
 ) -> dict[str, Any]:
     return {
         "instance_id": "automation.zpm_test",
@@ -224,6 +239,7 @@ def _payload(
         "config_file_path": config_file_path,
         "reconcile_interval_minutes_raw": 5,
         "pending_report_interval_hours_raw": pending_report_interval_hours,
+        "report_desired_configuration_raw": report_desired_configuration,
         "debug_logging_raw": False,
     }
 
@@ -363,6 +379,63 @@ async def test_stale_pending_dismissed_after_state_reset(hass: Any) -> None:
     await hass.async_block_till_done()
     notifs = _async_get_or_create_notifications(hass)
     assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
+
+
+def _desired_shown(hass: Any) -> bool:
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    notifs = _async_get_or_create_notifications(hass)
+    return any(nid.endswith("__desired") for nid in notifs)
+
+
+async def test_desired_report_disabled(hass: Any) -> None:
+    # With the desired report switched off, a reconcile that configures a
+    # device still dispatches its write but publishes no desired report.
+    _write_policy(hass, _WAKE_POLICY)
+    _install_zwave_js(hass)
+    calls = _capture_zwave_services(hass)
+    await _setup_integration(hass)
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE,
+        _payload(report_desired_configuration=False),
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert any(service == "set_value" for service, _ in calls), calls
+    assert not _desired_shown(hass)
+
+
+async def test_desired_report_toggle_dismisses_and_republishes(
+    hass: Any,
+) -> None:
+    # Switching the report off dismisses one already shown, and switching it
+    # back on republishes it on the next reconcile -- with no policy-file
+    # change or newly-configured node to otherwise re-fire it.
+    _write_policy(hass, _WAKE_POLICY)
+    _install_zwave_js(hass)
+    _capture_zwave_services(hass)
+    await _setup_integration(hass)
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+    assert _desired_shown(hass)
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE,
+        _payload(report_desired_configuration=False),
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert not _desired_shown(hass)
+
+    await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
+    await hass.async_block_till_done()
+    assert _desired_shown(hass)
 
 
 async def test_invalid_policy_emits_config_error(hass: Any) -> None:

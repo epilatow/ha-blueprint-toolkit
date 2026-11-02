@@ -61,6 +61,20 @@ blueprint:
           mode: box
           unit_of_measurement: hours
 
+    report_desired_configuration:
+      name: Report desired configuration
+      description: >
+        Publish the desired-configuration notification,
+        which lists every setting the policy file applies
+        to each device. It appears when Home Assistant
+        restarts, the policy file changes, or a device
+        newly becomes configured.
+        Disable to turn the report off; any report already
+        shown is dismissed by the next completed reconcile.
+      default: true
+      selector:
+        boolean: {}
+
     debug_logging:
       name: Debug logging
       description: >
@@ -89,6 +103,7 @@ actions:
       config_file_path: !input config_file_path
       reconcile_interval_minutes_raw: !input reconcile_interval_minutes
       pending_report_interval_hours_raw: !input pending_report_interval_hours
+      report_desired_configuration_raw: !input report_desired_configuration
       debug_logging_raw: !input debug_logging
 
 # Periodic reconciles, restart recovery, and reload
