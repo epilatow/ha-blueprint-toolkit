@@ -33,6 +33,10 @@ from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     prepare_notifications,
     resolve_target_integrations,
 )
+from custom_components.blueprint_toolkit.helpers_logic import (  # noqa: E402
+    entity_history_link,
+    entity_history_url,
+)
 
 T0 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
@@ -109,6 +113,19 @@ class TestMatchesPattern:
 
     def test_invalid_regex_no_crash(self) -> None:
         assert not matches_pattern("test", "[invalid")
+
+
+class TestEntityHistoryLink:
+    def test_url_names_the_entity(self) -> None:
+        assert (
+            entity_history_url("sensor.kitchen_window_battery")
+            == "/history?entity_id=sensor.kitchen_window_battery"
+        )
+
+    def test_link_escapes_the_name(self) -> None:
+        assert entity_history_link("[20%]", "sensor.window_battery") == (
+            r"[\[20%\]](/history?entity_id=sensor.window_battery)"
+        )
 
 
 class TestNotificationPrefix:

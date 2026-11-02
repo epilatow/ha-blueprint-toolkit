@@ -634,8 +634,9 @@ Two flavours of helper:
   `file_editor_link(path, ingress_url)` is called for every source-file path
   and returns either a link or a bare code span, so call sites stay agnostic
   of whether the add-on is installed. `deviceless_entity_link` returns prose,
-  because HA's frontend has no entity-id URL filter: a single deviceless
-  entity can't be deep-linked to a one-row view.
+  because HA's entities table has no entity-id URL filter: a single deviceless
+  entity can't be deep-linked to a one-row view. `entity_history_link` does
+  take an entity, but lands on its history, not its settings.
 - **`*_url(...)` raw URL functions** are reserved for call sites that need a
   URL separated from its rendering -- e.g. storing a URL on a dataclass for
   later assembly, or a link whose visible text is a code span.

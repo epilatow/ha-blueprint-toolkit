@@ -203,17 +203,19 @@ def md_escape(s: str) -> str:
 # URL + link helpers
 #
 # HA's frontend exposes a small handful of URL forms that
-# actually navigate the user somewhere useful. None of them
-# accept ``entity_id`` directly -- the only entity-id
-# deep-link in HA's UI is opened via JavaScript (more-info /
-# settings dialog), not URL navigation. See
-# ``AUTOMATIONS.md`` "URL generation" for the full survey.
+# actually navigate the user somewhere useful. Only the
+# history panel accepts ``entity_id``; an entity's settings
+# open only via JavaScript (more-info / settings dialog),
+# not URL navigation. See ``AUTOMATIONS.md`` "URL
+# generation" for the full survey.
 #
 # The verified-working forms used by handlers in this
 # integration:
 #
 # - ``/config/devices/device/<device_id>``
 #       device panel listing the device's entities.
+# - ``/history?entity_id=<entity_id>``
+#       history panel graphing one entity's recent states.
 # - ``/config/entities/?device=<d>&config_entry=<c>``
 #       entities table filtered to one device's entities
 #       from one config entry. The narrowest entity-list
@@ -265,14 +267,21 @@ def md_escape(s: str) -> str:
 # times) is structurally prevented.
 #
 # For deviceless entities -- where no URL form lands the
-# user on a single entity -- ``deviceless_entity_link``
-# returns prose with a link to the bare entities table plus
-# explicit "search for `<eid>` in the list" instructions.
+# user on a single entity's settings (the history panel
+# takes an entity_id, but only shows its states) --
+# ``deviceless_entity_link`` returns prose with a link to
+# the bare entities table plus explicit "search for `<eid>`
+# in the list" instructions.
 
 
 def device_url(device_id: str) -> str:
     """Raw URL for a device's panel."""
     return f"/config/devices/device/{device_id}"
+
+
+def entity_history_url(entity_id: str) -> str:
+    """Raw URL for the history panel showing one entity."""
+    return f"/history?entity_id={entity_id}"
 
 
 def device_entity_url(*, device_id: str, config_entry_id: str) -> str:
@@ -333,6 +342,11 @@ def dashboard_url(slug: str) -> str:
 def device_link(name: str, device_id: str) -> str:
     """Markdown link to a device's panel."""
     return f"[{md_escape(name)}]({device_url(device_id)})"
+
+
+def entity_history_link(name: str, entity_id: str) -> str:
+    """Markdown link to the history panel showing one entity."""
+    return f"[{md_escape(name)}]({entity_history_url(entity_id)})"
 
 
 def device_entity_link(
@@ -568,10 +582,10 @@ def deviceless_entity_link(name: str, entity_id: str) -> str:
     """Prose with a link to the entities dashboard plus
     instructions to search for the entity_id.
 
-    HA's frontend doesn't accept entity_id as a URL filter,
-    and the search box is set via ``history.state`` (not URL
-    params), so a deviceless entity can't be deep-linked to
-    a single-row view. Best we can do: link to
+    HA's entities table doesn't accept entity_id as a URL
+    filter, and the search box is set via ``history.state``
+    (not URL params), so a deviceless entity can't be
+    deep-linked to a single-row view. Best we can do: link to
     ``/config/entities/`` and tell the user to type the
     entity_id into the search box.
     """
