@@ -496,6 +496,37 @@ class TestTimeoutNotification:
         assert "Remove the device from the YAML config" in notif.message
 
 
+class TestCircuitBreakerNotification:
+    def test_resume_time_is_in_ha_time_zone(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        system_time_zone: Callable[[str], None],
+    ) -> None:
+        from datetime import UTC
+        from datetime import datetime as _datetime
+        from zoneinfo import ZoneInfo
+
+        # The process and HA disagree, so only HA's zone gives 17:30.
+        system_time_zone("UTC")
+        monkeypatch.setattr(
+            handler.dt_util,
+            "as_local",
+            lambda when: when.astimezone(ZoneInfo("Asia/Kolkata")),
+            raising=False,
+        )
+        now = _datetime(2026, 4, 22, 11, 30, tzinfo=UTC)
+
+        notif = handler._circuit_breaker_notification(
+            "zwm__",
+            "automation.zrm",
+            now,
+            now + timedelta(minutes=30),
+            3,
+        )
+
+        assert "retry after 30 minutes (at 17:30)" in notif.message
+
+
 # --------------------------------------------------------
 # Schema vs blueprint drift
 # --------------------------------------------------------

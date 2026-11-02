@@ -1027,7 +1027,7 @@ def _circuit_breaker_notification(
         round((open_until - now).total_seconds() / 60),
     )
     try:
-        local_resume = open_until.astimezone().strftime("%H:%M")
+        local_resume = dt_util.as_local(open_until).strftime("%H:%M")
     except OverflowError, ValueError:
         local_resume = open_until.isoformat(timespec="minutes")
     title = "Controller unresponsive"
