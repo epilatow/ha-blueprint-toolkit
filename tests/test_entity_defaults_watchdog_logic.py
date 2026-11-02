@@ -63,7 +63,6 @@ from custom_components.blueprint_toolkit.entity_defaults_watchdog.logic import (
     _evaluate_script_yaml_key_drift,
     _evaluate_visible_aliased_entities,
     _is_excluded,
-    _matches_with_collision_suffix,
     _validate_edw_directives,
     evaluate_devices,
     rename_top_level_yaml_key,
@@ -232,22 +231,11 @@ class TestNameExcludeMatchesFriendlyName:
         cfg = _config(exclude_entity_name_regex="^Shown Name$")
         entity = _deviceless(
             "input_boolean.old_id",
-            effective_name="Stored Name",
             friendly_name="Shown Name",
         )
-        result = _evaluate_deviceless(cfg, [entity], {})
+        result = _evaluate_deviceless(cfg, [entity])
         assert result.has_issue is False
         assert result.entities_excluded == 1
-
-    def test_deviceless_entity_ignores_its_stored_name(self) -> None:
-        cfg = _config(exclude_entity_name_regex="^Stored Name$")
-        entity = _deviceless(
-            "input_boolean.old_id",
-            effective_name="Stored Name",
-            friendly_name="Shown Name",
-        )
-        result = _evaluate_deviceless(cfg, [entity], {})
-        assert result.has_issue is True
 
 
 class TestCheckEntityDrift:
@@ -1104,144 +1092,21 @@ class TestEvaluateDevices:
         assert all(not r.has_issue for r in results)
 
 
-class TestMatchesWithCollisionSuffix:
-    """Validate the collision-suffix matcher.
-
-    Covers exact match, valid ``_N`` suffix (with peer),
-    stale ``_N`` suffix (no peer), and the leading-zero
-    edge cases.
-    """
-
-    def test_exact_match(self) -> None:
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (True, False)
-
-    def test_plain_mismatch(self) -> None:
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "bar",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, False)
-
-    def test_valid_suffix_with_base_peer(self) -> None:
-        peers = {"foo"}
-        ok, stale = _matches_with_collision_suffix(
-            "foo_2",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (True, False)
-
-    def test_stale_suffix(self) -> None:
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo_2",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, True)
-
-    def test_chain_end_flagged(self) -> None:
-        # peers={foo_2, foo_3, foo_4}, no foo. Only the
-        # highest (foo_4) is flagged; renaming it to foo
-        # restores a base peer so the rest become valid.
-        peers = {"foo_2", "foo_3", "foo_4"}
-        ok, stale = _matches_with_collision_suffix(
-            "foo_4",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, True)
-
-    def test_chain_mid_deferred(self) -> None:
-        peers = {"foo_2", "foo_3", "foo_4"}
-        ok, stale = _matches_with_collision_suffix(
-            "foo_3",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (True, False)
-
-    def test_chain_bottom_deferred(self) -> None:
-        peers = {"foo_2", "foo_3", "foo_4"}
-        ok, stale = _matches_with_collision_suffix(
-            "foo_2",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (True, False)
-
-    def test_suffix_zero_rejected(self) -> None:
-        # HA never uses _0; treat as plain mismatch.
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo_0",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, False)
-
-    def test_suffix_one_rejected(self) -> None:
-        # HA never uses _1 either.
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo_1",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, False)
-
-    def test_leading_zero_rejected(self) -> None:
-        # "_02" is not a valid HA suffix.
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo_02",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, False)
-
-    def test_non_numeric_suffix_rejected(self) -> None:
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo_bar",
-            "foo",
-            peers,
-        )
-        assert (ok, stale) == (False, False)
-
-    def test_empty_expected(self) -> None:
-        peers: set[str] = set()
-        ok, stale = _matches_with_collision_suffix(
-            "foo",
-            "",
-            peers,
-        )
-        assert (ok, stale) == (False, False)
-
-
 def _deviceless(
     entity_id: str,
-    effective_name: str = "",
+    friendly_name: str = "",
     platform: str | None = None,
     unique_id: str | None = None,
     from_registry: bool = True,
     config_entry_id: str | None = "ui_entry",
-    friendly_name: str | None = None,
+    expected_entity_id: str | None = None,
 ) -> DevicelessEntityInfo:
+    """A deviceless entity, drifted unless told what HA expects."""
+    domain = entity_id.split(".", 1)[0]
     return DevicelessEntityInfo(
         entity_id=entity_id,
-        effective_name=effective_name,
-        friendly_name=(
-            effective_name if friendly_name is None else friendly_name
-        ),
+        expected_entity_id=expected_entity_id or f"{domain}.expected",
+        friendly_name=friendly_name,
         platform=platform,
         unique_id=unique_id,
         from_registry=from_registry,
@@ -1250,11 +1115,11 @@ def _deviceless(
 
 
 class TestEvaluateDeviceless:
-    """Cover the rule end-to-end, including section split."""
+    """Cover the rule end-to-end."""
 
     def test_no_entities(self) -> None:
         cfg = _config()
-        result = _evaluate_deviceless(cfg, [], {})
+        result = _evaluate_deviceless(cfg, [])
         assert result.has_issue is False
         assert result.drifted == []
         assert result.entities_checked == 0
@@ -1264,13 +1129,13 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "automation.foo",
-                effective_name="Foo",
+                friendly_name="Foo",
                 platform="automation",
                 unique_id="1234",
+                expected_entity_id="automation.foo",
             ),
         ]
-        peers = {"automation": {"foo"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         assert result.has_issue is False
         assert result.drifted == []
 
@@ -1279,32 +1144,34 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "automation.old_name",
-                effective_name="Renamed Foo",
+                friendly_name="Renamed Foo",
                 platform="automation",
                 unique_id="1234",
+                expected_entity_id="automation.renamed_foo",
             ),
         ]
-        peers = {"automation": {"old_name"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         assert result.has_issue is True
         assert len(result.drifted) == 1
         d = result.drifted[0]
         assert d.entity_id == "automation.old_name"
-        assert d.expected_object_id == "renamed_foo"
-        assert d.stale_suffix is False
+        assert d.expected_entity_id == "automation.renamed_foo"
+        assert result.notification_message.startswith(
+            "Non-default entity IDs (1):\n",
+        )
 
     def test_notification_bullet_includes_edit_link(self) -> None:
         cfg = _config()
         entities = [
             _deviceless(
                 "automation.old",
-                effective_name="New Name",
+                friendly_name="New Name",
                 platform="automation",
                 unique_id="1669687974816",
+                expected_entity_id="automation.new_name",
             ),
         ]
-        peers = {"automation": {"old"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # Friendly name is itself the link for automations
         assert (
             "[New Name](/config/automation/edit/1669687974816)"
@@ -1323,13 +1190,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "script.old",
-                effective_name="New Name",
+                friendly_name="New Name",
                 platform="script",
                 unique_id="old",
             ),
         ]
-        peers = {"script": {"old"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # Friendly name is itself the link for scripts
         assert "[New Name](/config/script/edit/old)" in (
             result.notification_message
@@ -1341,13 +1207,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.template_sensor",
-                effective_name="Grid Import Power",
+                friendly_name="Grid Import Power",
                 platform="template",
                 unique_id="grid_import_power",
             ),
         ]
-        peers = {"sensor": {"template_sensor"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # Friendly name plain, integration name links to
         # the integration's config page
         assert (
@@ -1365,14 +1230,13 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.loft_thermostat_hvac_action",
-                effective_name="Loft HVAC Action",
+                friendly_name="Loft HVAC Action",
                 platform="template",
                 unique_id="loft_hvac_action_uid",
                 config_entry_id=None,
             ),
         ]
-        peers = {"sensor": {"loft_thermostat_hvac_action"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         assert (
             "Loft HVAC Action  -  integration template  -  YAML-configuration"
             in result.notification_message
@@ -1390,14 +1254,13 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.template_sensor",
-                effective_name="Grid [Import] Power",
+                friendly_name="Grid [Import] Power",
                 platform="template",
                 unique_id="grid",
                 config_entry_id=None,
             ),
         ]
-        peers = {"sensor": {"template_sensor"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         expected = (
             "Grid \\[Import\\] Power  -  integration template"
             "  -  YAML-configuration"
@@ -1409,14 +1272,13 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.template_sensor",
-                effective_name="Grid Import Power",
+                friendly_name="Grid Import Power",
                 platform=None,
                 unique_id=None,
                 from_registry=False,
             ),
         ]
-        peers = {"sensor": {"template_sensor"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # No quotes, no integration link, no exclusion
         # nudge -- just the name and the unique_id: hint.
         expected = (
@@ -1432,13 +1294,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "automation.old",
-                effective_name="Name [with] brackets",
+                friendly_name="Name [with] brackets",
                 platform="automation",
                 unique_id="1234",
             ),
         ]
-        peers = {"automation": {"old"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # Brackets in the friendly name must be escaped so
         # the surrounding [text](url) markdown isn't
         # broken by unbalanced brackets.
@@ -1452,13 +1313,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.template_sensor",
-                effective_name="Grid [Import] Power",
+                friendly_name="Grid [Import] Power",
                 platform="template",
                 unique_id="grid",
             ),
         ]
-        peers = {"sensor": {"template_sensor"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # Brackets in the friendly name must be escaped
         # even in the non-link branch so they can't pair
         # with the trailing `[template](url)` link text.
@@ -1477,13 +1337,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.x",
-                effective_name="Plain",
+                friendly_name="Plain",
                 platform="bad[plat]",
                 unique_id="x",
             ),
         ]
-        peers = {"sensor": {"x"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         # Link text portion is escaped; URL target keeps the
         # raw platform string (URL targets don't render
         # markdown).
@@ -1497,73 +1356,17 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.template_sensor",
-                effective_name="Grid [Import] Power",
+                friendly_name="Grid [Import] Power",
                 platform=None,
                 unique_id=None,
                 from_registry=False,
             ),
         ]
-        peers = {"sensor": {"template_sensor"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         assert (
             "Grid \\[Import\\] Power  -  add `unique_id:`"
             " to make this entity manageable" in result.notification_message
         )
-
-    def test_stale_suffix_separate_section(self) -> None:
-        cfg = _config()
-        entities = [
-            _deviceless(
-                "automation.foo_2",
-                effective_name="Foo",
-                platform="automation",
-                unique_id="111",
-            ),
-        ]
-        peers = {"automation": {"foo_2"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
-        assert result.has_issue is True
-        assert len(result.drifted) == 1
-        assert result.drifted[0].stale_suffix is True
-        assert "Stale collision suffixes" in (result.notification_message)
-        assert "-> rename to `automation.foo`" in (result.notification_message)
-
-    def test_valid_collision_suffix_not_flagged(self) -> None:
-        cfg = _config()
-        # Two automations both named "Foo"; one has the
-        # plain slug, the other the collision suffix.
-        entities = [
-            _deviceless(
-                "automation.foo",
-                effective_name="Foo",
-                platform="automation",
-                unique_id="111",
-            ),
-            _deviceless(
-                "automation.foo_2",
-                effective_name="Foo",
-                platform="automation",
-                unique_id="222",
-            ),
-        ]
-        peers = {"automation": {"foo", "foo_2"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
-        assert result.has_issue is False
-
-    def test_empty_name_skipped(self) -> None:
-        cfg = _config()
-        entities = [
-            _deviceless(
-                "sensor.x",
-                effective_name="",
-                platform="template",
-                unique_id="x",
-                from_registry=True,
-            ),
-        ]
-        peers = {"sensor": {"x"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
-        assert result.has_issue is False
 
     def test_exclusions_apply(self) -> None:
         cfg = _config(
@@ -1572,13 +1375,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "automation.foo",
-                effective_name="Bar",
+                friendly_name="Bar",
                 platform="automation",
                 unique_id="111",
             ),
         ]
-        peers = {"automation": {"foo"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         assert result.has_issue is False
         assert result.entities_excluded == 1
 
@@ -1587,13 +1389,12 @@ class TestEvaluateDeviceless:
         entities = [
             _deviceless(
                 "sensor.foo",
-                effective_name="Bar",
+                friendly_name="Bar",
                 platform="template",
                 unique_id="foo",
             ),
         ]
-        peers = {"sensor": {"foo"}}
-        result = _evaluate_deviceless(cfg, entities, peers)
+        result = _evaluate_deviceless(cfg, entities)
         assert result.has_issue is False
         assert result.entities_excluded == 1
 
@@ -2385,15 +2186,14 @@ class TestBuildDeviceRepairSpecs:
 
 def _deviceless_detail(
     entity_id: str,
-    expected_object_id: str,
+    expected_entity_id: str,
     *,
     platform: str | None = "automation",
 ) -> DevicelessDriftDetail:
     return DevicelessDriftDetail(
         entity_id=entity_id,
-        expected_object_id=expected_object_id,
+        expected_entity_id=expected_entity_id,
         friendly_name="Friendly",
-        stale_suffix=False,
         platform=platform,
         unique_id="uid",
         from_registry=True,
@@ -2412,8 +2212,14 @@ class TestBuildDevicelessIdDriftRepairSpecs:
     def test_one_repair_per_entity(self) -> None:
         cfg = _config(create_repairs=True)
         details = [
-            _deviceless_detail("automation.stsc_main", "stec_main"),
-            _deviceless_detail("automation.stsc_guest", "stec_guest"),
+            _deviceless_detail(
+                "automation.stsc_main",
+                "automation.stec_main",
+            ),
+            _deviceless_detail(
+                "automation.stsc_guest",
+                "automation.stec_guest",
+            ),
         ]
         specs, repairs = _build_deviceless_id_drift_repair_specs(cfg, details)
         assert len(specs) == 2
@@ -2421,7 +2227,10 @@ class TestBuildDevicelessIdDriftRepairSpecs:
 
     def test_spec_shape(self) -> None:
         cfg = _config(create_repairs=True)
-        detail = _deviceless_detail("automation.stsc_main", "stec_main")
+        detail = _deviceless_detail(
+            "automation.stsc_main",
+            "automation.stec_main",
+        )
         specs, repairs = _build_deviceless_id_drift_repair_specs(cfg, [detail])
         spec = specs[0]
         expected_id = helpers.repair_notification_id(
@@ -2451,7 +2260,7 @@ class TestBuildDevicelessIdDriftRepairSpecs:
 
     def test_no_integration_when_platform_none(self) -> None:
         cfg = _config(create_repairs=True)
-        detail = _deviceless_detail("sensor.x", "y", platform=None)
+        detail = _deviceless_detail("sensor.x", "sensor.y", platform=None)
         specs, _ = _build_deviceless_id_drift_repair_specs(cfg, [detail])
         assert specs[0].integrations == ()
 
@@ -2592,7 +2401,6 @@ class TestVisibleAliasedRepairBranch:
             cfg,
             devices=[],
             deviceless_entities=[],
-            peers_by_domain={},
             all_integrations=[],
             max_notifications=100,
             visible_aliased_candidates=[
@@ -2683,12 +2491,11 @@ class TestDevicelessIdDriftRepairBranch:
             deviceless_entities=[
                 _deviceless(
                     "automation.old",
-                    effective_name="New",
+                    friendly_name="New",
                     platform="automation",
                     unique_id="1",
                 ),
             ],
-            peers_by_domain={"automation": {"old"}},
             all_integrations=[],
             max_notifications=100,
         )
@@ -2969,7 +2776,6 @@ class TestScriptYamlKeyRepairBranch:
             cfg,
             devices=[],
             deviceless_entities=[],
-            peers_by_domain={},
             all_integrations=[],
             max_notifications=100,
             script_infos=[
@@ -3038,7 +2844,6 @@ class TestScriptYamlKeyRepairBranch:
             cfg,
             devices=[],
             deviceless_entities=[],
-            peers_by_domain={},
             all_integrations=[],
             max_notifications=100,
             script_infos=[_script_info(unique_id="bath_fan")],
@@ -3056,7 +2861,6 @@ class TestScriptYamlKeyRepairBranch:
             cfg,
             devices=[],
             deviceless_entities=[],
-            peers_by_domain={},
             all_integrations=[],
             max_notifications=100,
             script_infos=[

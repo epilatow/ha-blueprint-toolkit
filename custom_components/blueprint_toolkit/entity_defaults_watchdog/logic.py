@@ -37,14 +37,13 @@ would use today:
   starts with it is redundant. The handler asks HA whether
   one does.
 - Deviceless entity ID drift: for registry entries with no
-  ``device_id`` in ``DEVICELESS_DOMAINS``, the slug of
-  ``entry.name or entry.original_name`` against the entity
-  ID's object part. The state list is also walked for
-  entities with no registry entry (YAML without
-  ``unique_id:``), which are caught only when an explicit
-  ``name:`` slugs to something else. HA's collision suffix
-  (``_2``, ``_3``, ...) is classified by
-  ``_matches_with_collision_suffix``.
+  ``device_id`` in ``DEVICELESS_DOMAINS``, the entity's ID
+  against the one the handler gets from HA. That is what
+  ``async_regenerate_entity_id`` returns, except for scripts
+  and for entities with no registry entry (YAML without
+  ``unique_id:``), which only the state list shows. Recreate
+  can't bring those in line with their names, so their
+  target is the ID HA would generate for the name.
 """
 
 import re
@@ -382,11 +381,9 @@ class DevicelessEntityInfo:
     """Deviceless entity snapshot for drift evaluation."""
 
     entity_id: str
-    # HA's effective display name for the entity.  For
-    # registry entries, ``entry.name or entry.original_name``;
-    # for state-only entities, ``attributes.friendly_name``.
-    # Empty string when no name is set.
-    effective_name: str
+    # The ID HA would give the entity. Equal to ``entity_id``
+    # when the entity is at its default.
+    expected_entity_id: str
     # The name HA shows, which the entity name exclude matches.
     friendly_name: str
     # Registry ``entry.platform`` -- the integration that
@@ -413,9 +410,8 @@ class DevicelessDriftDetail:
     """One deviceless entity drift finding."""
 
     entity_id: str
-    expected_object_id: str
+    expected_entity_id: str
     friendly_name: str
-    stale_suffix: bool
     platform: str | None
     unique_id: str | None
     from_registry: bool
@@ -729,64 +725,6 @@ def _check_visible_aliased_enabled(config: Config) -> bool:
 def _check_script_yaml_key_enabled(config: Config) -> bool:
     """True if script-yaml-key check is active."""
     return DRIFT_CHECK_SCRIPT_YAML_KEY in config.drift_checks
-
-
-def _matches_with_collision_suffix(
-    obj_id: str,
-    expected: str,
-    peers: set[str],
-) -> tuple[bool, bool]:
-    """Decide whether ``obj_id`` is a match for ``expected``.
-
-    Returns ``(matches, stale_suffix)``:
-
-    - ``obj_id == expected`` -> ``(True, False)``.
-    - ``obj_id`` equals ``<expected>_N`` for integer
-      ``N >= 2`` AND ``expected`` is in ``peers``
-      -> ``(True, False)`` -- a valid HA collision suffix.
-    - ``obj_id`` equals ``<expected>_N`` for ``N >= 2``,
-      ``expected`` is not in ``peers``, but a higher
-      ``<expected>_M`` (``M > N``) is in ``peers``
-      -> ``(True, False)`` -- not flagged; the highest
-      entry in the chain is flagged instead so renaming
-      it to ``expected`` resolves the whole chain.
-    - ``obj_id`` equals ``<expected>_N`` for ``N >= 2``,
-      no base peer, and no higher chain peer
-      -> ``(False, True)`` -- a stale suffix.
-    - Otherwise -> ``(False, False)`` -- plain drift.
-    """
-    if not expected:
-        return (False, False)
-    if obj_id == expected:
-        return (True, False)
-    if not obj_id.startswith(f"{expected}_"):
-        return (False, False)
-    rest = obj_id[len(expected) + 1 :]
-    if not rest.isdigit():
-        return (False, False)
-    # Reject leading-zero forms ("01", "0") so "_0"
-    # and "_01" aren't mistaken for HA suffixes; HA
-    # uses "_2", "_3", ... starting at 2.
-    if rest.startswith("0"):
-        return (False, False)
-    n = int(rest)
-    if n < 2:
-        return (False, False)
-    if expected in peers:
-        return (True, False)
-    # No base peer. Scan for any higher-numbered chain
-    # peer; if present, defer flagging to it so the user
-    # fixes the chain in one rename.
-    prefix = f"{expected}_"
-    for p in peers:
-        if not p.startswith(prefix):
-            continue
-        rest_p = p[len(prefix) :]
-        if not rest_p.isdigit() or rest_p.startswith("0"):
-            continue
-        if int(rest_p) > n:
-            return (True, False)
-    return (False, True)
 
 
 def _is_excluded(
@@ -1223,82 +1161,38 @@ def _deviceless_line_suffix(
 
 
 def _build_deviceless_notification_message(
-    drift_items: list[DevicelessDriftDetail],
-    stale_items: list[DevicelessDriftDetail],
+    drifted: list[DevicelessDriftDetail],
 ) -> str:
     """Build the deviceless-bucket notification body.
 
-    Two sections -- generic drift and stale collision
-    suffixes -- each shown only when non-empty. Bullets
-    carry current/expected entity_id, friendly name, and
-    a per-domain pointer (edit link or integration page).
+    Bullets carry current/expected entity_id, friendly name,
+    and a per-domain pointer (edit link or integration page).
     """
-    sections: list[str] = []
-
-    if drift_items:
-        lines = [
-            f"Entity IDs do not match their names ({len(drift_items)}):",
-        ]
-        sorted_drift = [(d.entity_id, i, d) for i, d in enumerate(drift_items)]
-        sorted_drift.sort()
-        for _, _, d in sorted_drift:
-            dom = d.entity_id.split(".", 1)[0]
-            suffix = _deviceless_line_suffix(
-                d.entity_id,
-                d.friendly_name,
-                d.platform,
-                d.unique_id,
-                d.from_registry,
-                d.config_entry_id,
-            )
-            lines.append(
-                f"- `{d.entity_id}` -> expected `{dom}.{d.expected_object_id}`",
-            )
-            lines.append(f"  {suffix}")
-        sections.append("\n".join(lines))
-
-    if stale_items:
-        lines = [
-            (
-                "Stale collision suffixes"
-                " (original peer removed, rename recommended):"
-            ),
-        ]
-        sorted_stale = [(d.entity_id, i, d) for i, d in enumerate(stale_items)]
-        sorted_stale.sort()
-        for _, _, d in sorted_stale:
-            dom = d.entity_id.split(".", 1)[0]
-            suffix = _deviceless_line_suffix(
-                d.entity_id,
-                d.friendly_name,
-                d.platform,
-                d.unique_id,
-                d.from_registry,
-                d.config_entry_id,
-            )
-            lines.append(
-                f"- `{d.entity_id}` -> rename to"
-                f" `{dom}.{d.expected_object_id}`",
-            )
-            lines.append(f"  {suffix}")
-        sections.append("\n".join(lines))
-
-    return "\n\n".join(sections)
+    lines = [f"Non-default entity IDs ({len(drifted)}):"]
+    for d in sorted(drifted, key=lambda d: d.entity_id):
+        suffix = _deviceless_line_suffix(
+            d.entity_id,
+            d.friendly_name,
+            d.platform,
+            d.unique_id,
+            d.from_registry,
+            d.config_entry_id,
+        )
+        lines.append(f"- `{d.entity_id}` -> expected `{d.expected_entity_id}`")
+        lines.append(f"  {suffix}")
+    return "\n".join(lines)
 
 
 def _evaluate_deviceless(
     config: Config,
     entities: list[DevicelessEntityInfo],
-    peers_by_domain: dict[str, set[str]],
 ) -> DevicelessResult:
     """Evaluate entity_id drift for deviceless entities.
 
-    Classifies each entity into ok, drift, or stale
-    suffix, then builds a single bucket notification
-    covering all flagged entities.
+    Builds a single bucket notification covering every
+    entity not at the ID HA would give it.
     """
-    drift_items: list[DevicelessDriftDetail] = []
-    stale_items: list[DevicelessDriftDetail] = []
+    drifted: list[DevicelessDriftDetail] = []
     excluded = 0
 
     for entity in entities:
@@ -1310,58 +1204,34 @@ def _evaluate_deviceless(
             excluded += 1
             continue
 
-        if not entity.effective_name:
+        if entity.entity_id == entity.expected_entity_id:
             continue
 
-        expected = helpers.slugify(entity.effective_name)
-        if not expected:
-            continue
-
-        dom, obj_id = entity.entity_id.split(".", 1)
-        peers = peers_by_domain.get(dom, set())
-        matches, stale = _matches_with_collision_suffix(
-            obj_id,
-            expected,
-            peers,
+        drifted.append(
+            DevicelessDriftDetail(
+                entity_id=entity.entity_id,
+                expected_entity_id=entity.expected_entity_id,
+                friendly_name=entity.friendly_name,
+                platform=entity.platform,
+                unique_id=entity.unique_id,
+                from_registry=entity.from_registry,
+                config_entry_id=entity.config_entry_id,
+            ),
         )
-        if matches:
-            continue
 
-        detail = DevicelessDriftDetail(
-            entity_id=entity.entity_id,
-            expected_object_id=expected,
-            friendly_name=entity.effective_name,
-            stale_suffix=stale,
-            platform=entity.platform,
-            unique_id=entity.unique_id,
-            from_registry=entity.from_registry,
-            config_entry_id=entity.config_entry_id,
-        )
-        if stale:
-            stale_items.append(detail)
-        else:
-            drift_items.append(detail)
-
-    has_issue = bool(drift_items) or bool(stale_items)
+    has_issue = bool(drifted)
     title = ""
     message = ""
     if has_issue:
         title = "Deviceless entity drift"
-        message = _build_deviceless_notification_message(
-            drift_items,
-            stale_items,
-        )
-
-    all_drifted: list[DevicelessDriftDetail] = []
-    all_drifted.extend(drift_items)
-    all_drifted.extend(stale_items)
+        message = _build_deviceless_notification_message(drifted)
 
     return DevicelessResult(
         has_issue=has_issue,
         notification_id=f"{config.notification_prefix}deviceless",
         notification_title=title,
         notification_message=message,
-        drifted=all_drifted,
+        drifted=drifted,
         entities_checked=len(entities) - excluded,
         entities_excluded=excluded,
     )
@@ -1673,7 +1543,6 @@ class EvaluationResult:
     stat_deviceless_entities: int
     stat_deviceless_excluded: int
     stat_deviceless_drift: int
-    stat_deviceless_stale: int
     # Visible-aliased-entity counters. ``kept`` is the count of
     # candidates that passed the defensive rules and survived
     # user exclusion; ``excluded`` is the count filtered by user
@@ -1864,8 +1733,6 @@ def _build_deviceless_id_drift_repair_specs(
     specs: list[helpers.PersistentNotification] = []
     repairs: dict[str, EdwRepair] = {}
     for d in drifted:
-        domain = d.entity_id.split(".", 1)[0]
-        new_entity_id = f"{domain}.{d.expected_object_id}"
         nid = helpers.repair_notification_id(
             config.notification_prefix,
             FixServices.ENTITY_ID_DRIFT,
@@ -1887,14 +1754,16 @@ def _build_deviceless_id_drift_repair_specs(
                     EdwEntityIdDriftIssue(
                         target=d.entity_id,
                         count="1",
-                        entities=f"- `{d.entity_id}` -> `{new_entity_id}`",
+                        entities=(
+                            f"- `{d.entity_id}` -> `{d.expected_entity_id}`"
+                        ),
                     )
                 ),
                 integrations=(d.platform,) if d.platform else (),
             ),
         )
         repairs[nid] = EntityIdDriftRepair(
-            entity_renames=((d.entity_id, new_entity_id),),
+            entity_renames=((d.entity_id, d.expected_entity_id),),
         )
     return specs, repairs
 
@@ -2117,7 +1986,6 @@ def run_evaluation(
     config: Config,
     devices: list[DeviceInfo],
     deviceless_entities: list[DevicelessEntityInfo],
-    peers_by_domain: dict[str, set[str]],
     all_integrations: list[str],
     max_notifications: int,
     directive_inputs: DirectiveInputs | None = None,
@@ -2161,11 +2029,7 @@ def run_evaluation(
         )
 
     if _check_deviceless_enabled(config):
-        deviceless = _evaluate_deviceless(
-            config,
-            deviceless_entities,
-            peers_by_domain,
-        )
+        deviceless = _evaluate_deviceless(config, deviceless_entities)
     else:
         deviceless = DevicelessResult(
             has_issue=False,
@@ -2260,10 +2124,6 @@ def run_evaluation(
         repairs.update(sk_repairs)
 
     issues = [r for r in results if r.has_issue]
-    stat_deviceless_stale = sum(
-        [1 for d in deviceless.drifted if d.stale_suffix]
-    )
-    stat_deviceless_drift = len(deviceless.drifted) - stat_deviceless_stale
 
     return EvaluationResult(
         results=results,
@@ -2288,8 +2148,7 @@ def run_evaluation(
         ),
         stat_deviceless_entities=deviceless.entities_checked,
         stat_deviceless_excluded=deviceless.entities_excluded,
-        stat_deviceless_drift=stat_deviceless_drift,
-        stat_deviceless_stale=stat_deviceless_stale,
+        stat_deviceless_drift=len(deviceless.drifted),
         stat_visible_aliased_kept=visible_aliased.entries_kept,
         stat_visible_aliased_excluded=visible_aliased.entries_excluded,
         stat_visible_aliased_flagged=len(visible_aliased.findings),

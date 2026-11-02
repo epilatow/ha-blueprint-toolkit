@@ -198,7 +198,6 @@ Notification + formatting:
 - `format_timestamp` / `format_notification` -- `YYYY/MM/DD/HH/mm/ss` token
   expansion, and wrapping a body with a formatted prefix + suffix.
 - `md_escape` -- escape a user-controlled string for a notification body.
-- `slugify` -- derive an HA-safe slug from arbitrary text.
 - `matches_pattern` -- case-insensitive substring or regex test, safe on a bad
   regex.
 

@@ -405,7 +405,6 @@ class TestServiceLayerScan:
             "deviceless_entities",
             "deviceless_excluded",
             "deviceless_drift",
-            "deviceless_stale",
         ):
             assert key in attrs, f"missing diagnostic attr: {key}"
         # Trigger label propagates from the payload.
@@ -425,9 +424,9 @@ class TestServiceLayerScan:
 
         Trigger a deviceless finding by pre-seeding a state-
         only entity in a ``DEVICELESS_DOMAINS`` whose
-        ``friendly_name`` doesn't match its slugified
-        ``object_id`` -- ``EDW``'s state-only safety net
-        path picks it up without needing a registry entry.
+        ``friendly_name`` doesn't match its ``object_id`` --
+        ``EDW``'s state-only safety net path picks it up
+        without needing a registry entry.
         """
         await _setup_integration(hass)
         # Register the automation entity so the dispatcher
@@ -438,11 +437,10 @@ class TestServiceLayerScan:
             "on",
             {"friendly_name": "EDW: Finding", "id": "9999"},
         )
-        # Plant a state-only entity whose effective name's
-        # slugified form doesn't match its object_id. The
-        # logic module's deviceless evaluator flags this as
-        # drift and emits the deviceless aggregate
-        # notification.
+        # Plant a state-only entity whose name doesn't match
+        # its object_id. The logic module's deviceless
+        # evaluator flags this as drift and emits the
+        # deviceless aggregate notification.
         hass.states.async_set(
             "input_text.legacy_object_id",
             "value",
@@ -2991,12 +2989,17 @@ class TestNameExcludeMatchesFriendlyName:
         from homeassistant.helpers import entity_registry as er
 
         await _setup_integration(hass)
-        er.async_get(hass).async_get_or_create(
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
             domain="input_boolean",
             platform="input_boolean",
             unique_id="old_id",
-            suggested_object_id="old_id",
             original_name="Stored Name",
+            object_id_base="Stored Name",
+        )
+        ent_reg.async_update_entity(
+            entry.entity_id,
+            new_entity_id="input_boolean.old_id",
         )
         hass.states.async_set(
             "input_boolean.old_id",
@@ -3005,6 +3008,9 @@ class TestNameExcludeMatchesFriendlyName:
         )
 
         await self._scan(hass, "entity-id")
+        assert len(self._repairs(hass)) == 1
+
+        await self._scan(hass, "entity-id", "^Stored Name$")
         assert len(self._repairs(hass)) == 1
 
         await self._scan(hass, "entity-id", "^Shown Name$")
@@ -3093,6 +3099,304 @@ class TestDeviceIdsFollowRecreate:
 
         for entity_id in recreated.values():
             assert ent_reg.async_get(entity_id) is not None
+
+
+class TestDevicelessIdsFollowRecreate:
+    def _plant(
+        self,
+        hass: HomeAssistant,
+        entity_id: str,
+        name: str,
+        *,
+        area_id: str | None = None,
+    ) -> None:
+        """Register a deviceless entity named ``name`` at ``entity_id``."""
+        from homeassistant.helpers import entity_registry as er
+
+        domain, object_id = entity_id.split(".", 1)
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get_or_create(
+            domain=domain,
+            platform=domain,
+            unique_id=object_id,
+            original_name=name,
+            object_id_base=name,
+        )
+        ent_reg.async_update_entity(
+            entry.entity_id,
+            new_entity_id=entity_id,
+            area_id=area_id,
+        )
+
+    def _plant_script(
+        self,
+        hass: HomeAssistant,
+        yaml_key: str,
+        name: str,
+    ) -> None:
+        """Register a script the way HA does, pinned to its YAML key."""
+        from homeassistant.helpers import entity_registry as er
+
+        er.async_get(hass).async_get_or_create(
+            domain="script",
+            platform="script",
+            unique_id=yaml_key,
+            suggested_object_id=yaml_key,
+            original_name=name,
+        )
+
+    async def _scan(
+        self,
+        hass: HomeAssistant,
+        *,
+        drift_checks: tuple[str, ...] = ("entity-id",),
+        create_repairs: bool = True,
+    ) -> None:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE,
+            _valid_payload(
+                drift_checks=list(drift_checks),
+                create_repairs=create_repairs,
+            ),
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    def _renames(self, hass: HomeAssistant) -> dict[str, str]:
+        """Every rename the published repairs would apply."""
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            logic as edw_logic,
+        )
+
+        repairs = edw._instances(hass)["automation.edw_test"].repairs
+        return {
+            old: new
+            for repair in repairs.values()
+            if isinstance(repair, edw_logic.EntityIdDriftRepair)
+            for old, new in repair.entity_renames
+        }
+
+    @pytest.mark.parametrize(
+        ("entity_id", "name", "area", "expected"),
+        [
+            pytest.param(
+                "automation.old_name",
+                "New Name",
+                None,
+                "automation.new_name",
+                id="renamed",
+            ),
+            pytest.param(
+                "input_boolean.main_bath_floor",
+                "Main Bath Floor",
+                "Main Bath",
+                "input_boolean.main_bath_main_bath_floor",
+                id="own-area",
+            ),
+            pytest.param(
+                "input_boolean.foo_2",
+                "Foo",
+                None,
+                "input_boolean.foo",
+                id="stale-suffix",
+            ),
+        ],
+    )
+    async def test_flagged_with_what_recreate_sets(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+        entity_id: str,
+        name: str,
+        area: str | None,
+        expected: str,
+    ) -> None:
+        from homeassistant.helpers import area_registry as ar
+
+        await _setup_integration(hass)
+        area_id = ar.async_get(hass).async_create(area).id if area else None
+        self._plant(hass, entity_id, name, area_id=area_id)
+
+        recreated = await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            [entity_id],
+        )
+        assert recreated == {entity_id: expected}
+
+        await self._scan(hass)
+        assert self._renames(hass) == recreated
+
+    async def test_valid_collision_suffix_is_not_flagged(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        await _setup_integration(hass)
+        self._plant(hass, "input_boolean.foo", "Foo")
+        self._plant(hass, "input_boolean.foo_2", "Foo")
+
+        await self._scan(hass)
+        assert self._renames(hass) == {}
+
+    async def test_suffix_chain_gets_what_recreate_sets(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        await _setup_integration(hass)
+        entity_ids = ["input_boolean.foo_2", "input_boolean.foo_3"]
+        for entity_id in entity_ids:
+            self._plant(hass, entity_id, "Foo")
+        recreated = await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            entity_ids,
+        )
+
+        await self._scan(hass)
+        assert self._renames(hass) == {
+            old: new for old, new in recreated.items() if old != new
+        }
+
+    async def test_device_entities_and_deviceless_share_reservations(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        fake_entry = _mock_config_entry(
+            domain="fake_integration",
+            title="fake_integration",
+        )
+        fake_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=fake_entry.entry_id,
+            identifiers={("fake_integration", "meter")},
+            name="Old Name",
+        )
+        entry = er.async_get(hass).async_get_or_create(
+            domain="sensor",
+            platform="fake_integration",
+            unique_id="temperature",
+            device_id=device.id,
+            config_entry=fake_entry,
+            has_entity_name=True,
+            original_name="Temperature",
+            object_id_base="Temperature",
+        )
+        dev_reg.async_update_device(device.id, name_by_user="New Name")
+        self._plant(hass, "sensor.stray", "New Name Temperature")
+        recreated = await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            [entry.entity_id, "sensor.stray"],
+        )
+        assert len(set(recreated.values())) == 2
+
+        await self._scan(
+            hass,
+            drift_checks=("device-entity-id", "entity-id"),
+        )
+        assert self._renames(hass) == recreated
+
+    async def test_submit_brings_the_entity_to_its_default(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
+            handler as edw,
+        )
+
+        await _setup_integration(hass)
+        self._plant(hass, "automation.old_name", "New Name")
+        await self._scan(hass)
+
+        [notification_id] = edw._instances(hass)["automation.edw_test"].repairs
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_entity_id_drift",
+            {"notification_id": notification_id},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        await self._scan(hass)
+
+        assert er.async_get(hass).async_get("automation.new_name") is not None
+        assert self._renames(hass) == {}
+
+    async def test_renamed_script_follows_its_name(
+        self,
+        hass: HomeAssistant,
+        hass_ws_client: WebSocketGenerator,
+    ) -> None:
+        await _setup_integration(hass)
+        self._plant_script(hass, "old_key", "New Name")
+        recreated = await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            ["script.old_key"],
+        )
+        assert recreated == {"script.old_key": "script.old_key"}
+
+        await self._scan(hass)
+        assert self._renames(hass) == {"script.old_key": "script.new_name"}
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            pytest.param("Свет", "script.svet", id="non-ascii"),
+            pytest.param("Taken", "script.taken_2", id="taken-target"),
+        ],
+    )
+    async def test_script_target_comes_from_ha(
+        self,
+        hass: HomeAssistant,
+        name: str,
+        expected: str,
+    ) -> None:
+        await _setup_integration(hass)
+        self._plant_script(hass, "taken", "Taken")
+        self._plant_script(hass, "old_key", name)
+
+        await self._scan(hass)
+        assert self._renames(hass) == {"script.old_key": expected}
+
+    async def test_state_only_entity_follows_its_name(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        from homeassistant.components.persistent_notification import (
+            _async_get_or_create_notifications,
+        )
+
+        await _setup_integration(hass)
+        hass.states.async_set(
+            "input_text.old_id",
+            "value",
+            {"friendly_name": "New Name"},
+        )
+        hass.states.async_set("input_text.nameless", "value")
+
+        await self._scan(hass, create_repairs=False)
+
+        notifications = _async_get_or_create_notifications(hass)
+        [body] = [
+            n["message"]
+            for notification_id, n in notifications.items()
+            if notification_id.endswith("__deviceless")
+        ]
+        assert "`input_text.old_id` -> expected `input_text.new_name`" in body
+        assert "input_text.nameless" not in body
 
 
 class TestFindingLifecycle(WatchdogFindingLifecycleBase):

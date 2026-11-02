@@ -2273,40 +2273,12 @@ def pytest_collection_modifyitems(items: list[Any]) -> None:
 
 
 # --------------------------------------------------------
-# Pure helpers (slugify + matches_pattern)
+# Pure helpers (matches_pattern)
 # --------------------------------------------------------
 #
 # Coverage parity with ``test_helpers.py`` for the same
 # helpers lifted into
 # ``custom_components/blueprint_toolkit/helpers.py``.
-
-
-class TestSlugify:
-    def test_basic(self) -> None:
-        assert helpers.slugify("Hello World") == "hello_world"
-
-    def test_collapses_runs_of_non_alphanum(self) -> None:
-        assert helpers.slugify("a---b   c") == "a_b_c"
-
-    def test_strips_leading_trailing_underscores(self) -> None:
-        assert helpers.slugify("  __foo__  ") == "foo"
-
-    def test_drops_non_ascii(self) -> None:
-        # NFKD-decomposed accented chars get stripped.
-        assert helpers.slugify("Café") == "cafe"
-        assert helpers.slugify("naive") == "naive"
-
-    def test_empty_returns_empty(self) -> None:
-        assert helpers.slugify("") == ""
-
-    def test_collapses_to_unknown(self) -> None:
-        # Punctuation-only / emoji-only collapse to the
-        # HA-fallback sentinel.
-        assert helpers.slugify("!!!") == "unknown"
-        assert helpers.slugify("\U0001f600") == "unknown"
-
-    def test_lowercase(self) -> None:
-        assert helpers.slugify("ABC") == "abc"
 
 
 class TestMatchesPattern:

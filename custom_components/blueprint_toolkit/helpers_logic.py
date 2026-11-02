@@ -581,28 +581,6 @@ def deviceless_entity_link(name: str, entity_id: str) -> str:
     )
 
 
-def slugify(text: str) -> str:
-    """Return a Home Assistant-compatible slug from ``text``.
-
-    Mirrors ``homeassistant.util.slugify(text, separator="_")``
-    for the ASCII-only common case: NFKD decomposition,
-    drop non-ASCII characters, lowercase, collapse runs of
-    non-alphanumeric characters into a single underscore,
-    and strip leading and trailing underscores. Empty input
-    returns ``""``; non-empty input that collapses to an
-    empty slug (e.g. emoji-only, punctuation-only) returns
-    ``"unknown"``, matching HA's fallback.
-    """
-    import unicodedata
-
-    if not text:
-        return ""
-    normalized = unicodedata.normalize("NFKD", text)
-    ascii_text = normalized.encode("ascii", "ignore").decode("ascii").lower()
-    slug = re.sub(r"[^a-z0-9]+", "_", ascii_text).strip("_")
-    return slug or "unknown"
-
-
 def matches_pattern(text: str, pattern: str) -> bool:
     """Return True if ``text`` matches the case-insensitive regex ``pattern``.
 
@@ -991,8 +969,7 @@ class PersistentNotification:
 def _config_error_notification_id(service: str, instance_id: str) -> str:
     # ``__`` is reserved as the field separator. HA entity_ids
     # (which is what ``instance_id`` always is) cannot contain
-    # ``__`` -- ``slugify`` collapses repeated underscores --
-    # so the resulting ID stays unambiguously parseable
+    # ``__``, so the resulting ID stays unambiguously parseable
     # ``blueprint_toolkit_{service}__{instance_id}__{kind}``.
     return f"blueprint_toolkit_{service}__{instance_id}__config_error"
 
@@ -1577,7 +1554,6 @@ __all__ = [
     "script_dashboard_link",
     "script_edit_link",
     "script_edit_url",
-    "slugify",
     "spec_bucket",
     "validate_and_join_regex_patterns",
     "validate_controlled_entity_domains",

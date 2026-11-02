@@ -15,10 +15,9 @@ resolved.
 - Detect device name-override drift (stale name overrides left behind when an
   integration's naming conventions change)
 - Detect deviceless entity ID drift -- automations, scripts, helpers, template
-  sensors, scenes, groups, and other user-named entities whose IDs no longer
-  match their current names
-- Detect stale HA collision suffixes (`_2`, `_3`, ...) left over from naming
-  conflicts whose original peers were removed
+  sensors, scenes, groups, and other user-named entities whose IDs differ from
+  what Home Assistant would give them, including collision suffixes (`_2`,
+  `_3`, ...) left over from conflicts that are gone
 - Detect redundant name prefixes (overrides that include the device name when
   HA would add it automatically)
 - Detect visible aliased entities -- `switch_as_x` wrappers whose source
@@ -83,10 +82,12 @@ These can drift from their expected values over time:
   example, renaming "Kitchen Multisensor" to "Kitchen Sensor" leaves
   `sensor.kitchen_multisensor_temperature` instead of
   `sensor.kitchen_sensor_temperature`.
+
 - **Device entity name drift** -- when an integration changes its naming
   conventions (e.g., during an upgrade), HA preserves the old name as a "name
   override" to avoid breaking automations. The override becomes stale when the
   integration's new name is what you actually want.
+
 - **Legacy entity name drift** -- some integrations (Lutron Caseta, for
   example) build each entity's name from the device's name. When you rename
   such a device, HA stores a matching name on the entity. Without it, HA shows
@@ -97,11 +98,21 @@ These can drift from their expected values over time:
   watchdog wants **Use device name** on instead. An entity with **Use device
   name** on is never flagged for its name, because HA leaves you no name to
   change.
+
 - **Deviceless ID drift** -- automations, scripts, helpers, template sensors,
   and similar user-named entities have entity IDs derived from their name at
   creation. Renaming the entity later doesn't update the entity ID, leaving
   (for example) `automation.foo` still running after you renamed its alias to
-  "Bar".
+  "Bar". The watchdog flags any ID that differs from what **Recreate entity
+  IDs** would set. That includes an area assigned to the entity itself, which
+  HA puts at the front of the ID as it does for a device, so `Main Bath Floor`
+  in the Main Bath area gets `input_boolean.main_bath_main_bath_floor`. Take
+  the area out of the name to avoid the repeat.
+
+  Recreate can't follow a rename of two kinds of entity, so the watchdog
+  compares these to their current name instead: scripts, whose ID HA ties to
+  their YAML key, and YAML entities with no `unique_id:`, which have no
+  registry entry.
 
 ### Two-cycle fix sequence
 
@@ -173,21 +184,21 @@ assign today:
 ```
 
 Deviceless drift is reported as a single aggregate notification (when **Create
-repairs** is off) with up to two sections. When **Create repairs** is on, each
-drifted deviceless entity instead surfaces as its own one-click **Regenerate
-entity IDs?** Repair (see **Repairs** below) -- one per entity, since
-deviceless entities have no device to group under.
+repairs** is off). When **Create repairs** is on, each drifted deviceless
+entity instead surfaces as its own one-click **Regenerate entity IDs?** Repair
+(see **Repairs** below) -- one per entity, since deviceless entities have no
+device to group under.
 
-**Entity IDs do not match their names** -- one bullet per drifted entity, with
-a pointer to the most useful edit surface:
+**Non-default entity IDs** -- one bullet per drifted entity, with a pointer to
+the most useful edit surface:
 
 ```text
 - `automation.driveway_lights_on_at_sunset` -> expected `automation.auto_on_sunset_lights_sunset_to_8pm`
   [Auto-On: Sunset Lights: Sunset to 8pm](/config/automation/edit/1669687974816)
 - `sensor.template_sensor` -> expected `sensor.grid_import_power`
   Grid Import Power  -  integration [template](/config/integrations/integration/template)
-- `sensor.old_yaml_thing` -> expected `sensor.grid_import_power`
-  Grid Import Power  -  add `unique_id:` to make this entity manageable
+- `sensor.old_yaml_thing` -> expected `sensor.grid_export_power`
+  Grid Export Power  -  add `unique_id:` to make this entity manageable
 ```
 
 For automations and scripts the friendly name itself is the link to that
@@ -199,25 +210,16 @@ flagged entities share a single source (e.g. five rows all tagged
 integrations**. State-only entities (YAML blocks without `unique_id:`) have no
 owning integration, so they show a nudge to add one instead.
 
-**Stale collision suffixes** -- entities whose ID ends in `_N` (N >= 2) with
-no un-suffixed peer. In a chain of suffixes, only the highest is flagged:
-
-```text
-- `automation.front_porch_light_2` -> rename to `automation.front_porch_light`
-  [Front Porch Light](/config/automation/edit/1234567890)
-```
-
 ### Recommendation: add `unique_id:` to YAML entities
 
-The deviceless check only catches YAML-defined entities that have an
-`entry.name` + entity registry entry, which only exists when the block has a
+A YAML-defined entity has an entity registry entry only when its block has a
 `unique_id:` set. For `template:`, `rest:`, `mqtt:`, `command_line:`, etc.,
 adding `unique_id:` on every block has two benefits:
 
 - The entity is persisted in the registry, so renames, customizations, and
   cross-restart stability just work.
-- The watchdog can compare names to entity IDs and flag drift -- without a
-  registry entry, it has no authoritative name to compare against.
+- **Recreate entity IDs** and a Repair can act on the entity -- without a
+  registry entry, the watchdog can only compare the ID to the entity's name.
 
 ### Visible aliased entities
 
@@ -377,9 +379,7 @@ Tools > States to find it.
 - `entity_id_issues`: Entities with ID drift
 - `deviceless_entities`: Deviceless entities scanned
 - `deviceless_excluded`: Deviceless entities skipped by exclusion filters
-- `deviceless_drift`: Deviceless entities flagged as drifted (excludes
-  stale-suffix cases)
-- `deviceless_stale`: Deviceless entities with stale collision suffixes
+- `deviceless_drift`: Deviceless entities flagged as drifted
 - `visible_aliased_total`: Total `switch_as_x` config entries walked
 - `visible_aliased_excluded`: Visible-aliased entries skipped via exclusions
   or defensive checks (entry disabled, malformed options, wrapper entity
@@ -403,6 +403,6 @@ Example output for an automation named "Entity Defaults Watchdog":
 ```text
 [EDW: Entity Defaults Watchdog] integrations=12
   devices=45 entities=320 device_issues=2
-  entity_issues=5 deviceless_drift=3 deviceless_stale=0
+  entity_issues=5 deviceless_drift=3
   unmatched_directives=0
 ```

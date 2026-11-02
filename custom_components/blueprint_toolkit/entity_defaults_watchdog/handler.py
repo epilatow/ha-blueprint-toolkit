@@ -11,11 +11,10 @@ pattern):
   don't hammer the registries simultaneously on shared
   intervals.
 - Truth set (entity registry, device registry, target-
-  integration filter, deviceless peers) is built on the
-  event loop because HA registries are loop-only. Heavy
-  work (per-device drift classification, deviceless
-  collision-suffix scan, notification body assembly)
-  runs in the executor via
+  integration filter, the IDs HA would generate) is built
+  on the event loop because HA registries are loop-only.
+  Heavy work (per-device drift classification, notification
+  body assembly) runs in the executor via
   ``hass.async_add_executor_job(logic.run_evaluation, ...)``.
 - Finding streams: per-device drift, deviceless id-drift,
   visible-aliased entities, and script-yaml-key drift. With
@@ -90,6 +89,8 @@ _SERVICE = "entity_defaults_watchdog"
 _SERVICE_TAG = "EDW"
 _SERVICE_NAME = "Entity Defaults Watchdog"
 BLUEPRINT_PATH = "blueprint_toolkit/entity_defaults_watchdog.yaml"
+
+_SCRIPT_DOMAIN = "script"
 
 
 # --------------------------------------------------------
@@ -362,10 +363,11 @@ async def _async_service_layer(
         exclude_integrations,
         reserved_entity_ids,
     )
-    deviceless_entities, peers_by_domain = _build_deviceless_inputs(
+    deviceless_entities = _build_deviceless_inputs(
         hass,
         logic.DEVICELESS_DOMAINS,
         target_integrations,
+        reserved_entity_ids,
     )
     # Visible-aliased candidates come from the switch_as_x
     # config entries, not the entity registry walk -- the
@@ -431,15 +433,14 @@ async def _async_service_layer(
     )
 
     # Heavy work (per-device drift classification,
-    # deviceless collision-suffix scan, notification body
-    # assembly, directive validation) runs in HA's
-    # executor pool so the event loop stays responsive.
+    # notification body assembly, directive validation)
+    # runs in HA's executor pool so the event loop stays
+    # responsive.
     ev = await hass.async_add_executor_job(
         logic.run_evaluation,
         config,
         devices,
         deviceless_entities,
-        peers_by_domain,
         all_integrations,
         max_notifications,
         directive_inputs,
@@ -503,7 +504,6 @@ async def _async_service_layer(
             "deviceless_entities": ev.stat_deviceless_entities,
             "deviceless_excluded": ev.stat_deviceless_excluded,
             "deviceless_drift": ev.stat_deviceless_drift,
-            "deviceless_stale": ev.stat_deviceless_stale,
             # ``kept + excluded + defensive_skipped`` is every
             # switch_as_x entry the extractor walked. The logic
             # layer owns all three counts; the excluded total
@@ -528,7 +528,7 @@ async def _async_service_layer(
         _LOGGER.warning(
             "%s integrations=%d devices=%d entities=%d"
             " device_issues=%d entity_issues=%d"
-            " deviceless_drift=%d deviceless_stale=%d"
+            " deviceless_drift=%d"
             " unmatched_directives=%d",
             tag,
             ev.all_integrations_count,
@@ -537,7 +537,6 @@ async def _async_service_layer(
             ev.issues_count,
             ev.stat_entity_issues,
             ev.stat_deviceless_drift,
-            ev.stat_deviceless_stale,
             len(ev.unmatched_directives),
         )
 
@@ -565,6 +564,31 @@ def _recreated_entity_id(
     )
     reserved_entity_ids.add(entity_id)
     return entity_id
+
+
+def _named_entity_id(
+    ent_reg: er.EntityRegistry,
+    entity_id: str,
+    name: str,
+    reserved_entity_ids: set[str],
+) -> str:
+    """The ID HA would generate for ``name``.
+
+    For entities Recreate can't bring in line with their
+    name. An entity with no name keeps ``entity_id``.
+    """
+    if not name:
+        return entity_id
+    expected_id = str(
+        ent_reg.async_get_available_entity_id(
+            entity_id.split(".", 1)[0],
+            name,
+            current_entity_id=entity_id,
+            reserved_entity_ids=reserved_entity_ids,
+        ),
+    )
+    reserved_entity_ids.add(expected_id)
+    return expected_id
 
 
 def _build_device_inputs(
@@ -693,9 +717,7 @@ def _default_friendly_name(obj_id: str) -> str:
 
     Mirrors what HA shows for an entity lacking a
     ``friendly_name`` attribute: underscores become spaces
-    and the result is title-cased. ``slugify`` round-trips
-    this back to ``obj_id`` so a deviceless entity with no
-    explicit name is classified as non-drifting by default.
+    and the result is title-cased.
     """
     return obj_id.replace("_", " ").title()
 
@@ -704,7 +726,8 @@ def _build_deviceless_inputs(
     hass: HomeAssistant,
     domains: frozenset[str],
     target_integrations: set[str] | None,
-) -> tuple[list[logic.DevicelessEntityInfo], dict[str, set[str]]]:
+    reserved_entity_ids: set[str],
+) -> list[logic.DevicelessEntityInfo]:
     """Walk registry + state list for deviceless entities.
 
     Primary source: entity registry entries where
@@ -719,15 +742,8 @@ def _build_deviceless_inputs(
     in the set. State-only entries have no platform and
     are unaffected by this filter; ``None`` means no
     filtering.
-
-    Returns ``(entities, peers_by_domain)``. ``peers`` is
-    the union of registry and state-only object_ids per
-    domain and is NOT integration-filtered, so the logic
-    module's collision-suffix classifier still sees every
-    peer that could justify a ``_N`` suffix.
     """
     entities: list[logic.DevicelessEntityInfo] = []
-    peers: dict[str, set[str]] = {}
     # Track every registry entity_id (including device-
     # attached and disabled entries) so the state-list
     # safety net only picks up entities that truly have
@@ -744,26 +760,31 @@ def _build_deviceless_inputs(
         dom, obj = entry.entity_id.split(".", 1)
         if dom not in domains:
             continue
-        # Add to peers BEFORE the integration filter so
-        # collision-suffix detection still sees filtered
-        # peers (otherwise a ``foo_2`` whose ``foo`` peer
-        # was filtered out would be falsely flagged as
-        # stale).
-        peers.setdefault(dom, set()).add(obj)
         if (
             target_integrations is not None
             and entry.platform
             and entry.platform not in target_integrations
         ):
             continue
-        effective = str(
-            entry.name or entry.original_name or _default_friendly_name(obj),
+        # HA pins a script's ID to its YAML key, so Recreate
+        # leaves the ID alone when the script is renamed.
+        expected_id = (
+            _named_entity_id(
+                ent_reg,
+                entry.entity_id,
+                str(entry.name or entry.original_name or ""),
+                reserved_entity_ids,
+            )
+            if dom == _SCRIPT_DOMAIN
+            else _recreated_entity_id(ent_reg, entry, reserved_entity_ids)
         )
         entities.append(
             logic.DevicelessEntityInfo(
                 entity_id=entry.entity_id,
-                effective_name=effective,
-                friendly_name=_friendly_name(hass, entry) or effective,
+                expected_entity_id=expected_id,
+                friendly_name=(
+                    _friendly_name(hass, entry) or _default_friendly_name(obj)
+                ),
                 platform=entry.platform,
                 unique_id=entry.unique_id,
                 from_registry=True,
@@ -772,10 +793,9 @@ def _build_deviceless_inputs(
         )
 
     # State-only safety net -- YAML entities without a
-    # unique_id don't appear in the registry but do have
-    # state. friendly_name comparison: when it equals HA's
-    # default (title-cased obj_id) slugify will match
-    # obj_id exactly and the logic module won't flag it.
+    # unique_id have state but no registry entry for
+    # Recreate to work from, so only their name says what
+    # their ID should be.
     for st in hass.states.async_all():
         eid = st.entity_id
         if eid in seen_eids:
@@ -787,21 +807,23 @@ def _build_deviceless_inputs(
             fn = str(st.attributes.get("friendly_name", "") or "")
         except AttributeError, TypeError:
             continue
-        if not fn:
-            fn = _default_friendly_name(obj)
         entities.append(
             logic.DevicelessEntityInfo(
                 entity_id=eid,
-                effective_name=fn,
-                friendly_name=fn,
+                expected_entity_id=_named_entity_id(
+                    ent_reg,
+                    eid,
+                    fn,
+                    reserved_entity_ids,
+                ),
+                friendly_name=fn or _default_friendly_name(obj),
                 platform=None,
                 unique_id=None,
                 from_registry=False,
             ),
         )
-        peers.setdefault(dom, set()).add(obj)
 
-    return (entities, peers)
+    return entities
 
 
 # --------------------------------------------------------
