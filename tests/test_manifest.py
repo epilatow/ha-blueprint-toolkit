@@ -5,6 +5,7 @@
 #     "pytest",
 #     "pytest-cov",
 #     "packaging",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -34,7 +35,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -145,4 +145,6 @@ class TestManifestFormatting:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, REPO_ROOT / MANIFEST_REL, REPO_ROOT)

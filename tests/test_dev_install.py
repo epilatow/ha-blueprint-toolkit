@@ -23,10 +23,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 INTEGRATION_SRC = REPO_ROOT / "custom_components" / "blueprint_toolkit"
@@ -322,4 +319,6 @@ class TestArgErrors:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, INTEGRATION_SRC / DEV_INSTALL_REL, REPO_ROOT)

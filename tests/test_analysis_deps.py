@@ -4,6 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -93,7 +94,6 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -637,4 +637,6 @@ class TestShippedCodeTakesTheFallback:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, PYPROJECT, REPO_ROOT)

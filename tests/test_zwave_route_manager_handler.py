@@ -38,6 +38,13 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT
+    / "custom_components"
+    / "blueprint_toolkit"
+    / "zwave_route_manager"
+    / "handler.py"
+)
 sys.path.insert(0, str(REPO_ROOT))
 
 import pytest  # noqa: E402
@@ -561,9 +568,14 @@ class TestArgparseGuards(HandlerArgparseGuardsBase):
 
 
 if __name__ == "__main__":
+    from conftest import run_tests
+
     # ``-p no:homeassistant`` disables pytest-HACC's plugin,
     # which fails to import against this file's stubbed
     # ``homeassistant`` modules; HACC is a mypy-only dep here.
-    sys.exit(
-        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    run_tests(
+        __file__,
+        _SCRIPT_PATH,
+        REPO_ROOT,
+        pytest_args=["-p", "no:homeassistant"],
     )

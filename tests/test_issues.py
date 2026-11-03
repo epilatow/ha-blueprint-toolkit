@@ -40,6 +40,9 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT / "custom_components" / "blueprint_toolkit" / "strings.json"
+)
 sys.path.insert(0, str(REPO_ROOT))
 
 from custom_components.blueprint_toolkit import (  # noqa: E402
@@ -170,4 +173,6 @@ def test_strings_and_en_issue_keys_match() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

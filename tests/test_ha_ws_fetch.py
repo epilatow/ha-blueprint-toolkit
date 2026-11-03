@@ -4,6 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -26,6 +27,7 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = REPO_ROOT / "scripts" / "ha_ws_fetch.py"
 
 # ha_ws_fetch is a bare script, imported off a runtime sys.path entry
 # the way the other script tests reach render_docs / zwavectl.
@@ -222,4 +224,6 @@ def test_main_missing_token_returns_one(
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

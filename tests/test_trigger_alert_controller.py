@@ -3,6 +3,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #     "pytest",
+#     "pytest-cov",
 #     "PyYAML",
 #     "types-PyYAML",
 # ]
@@ -22,12 +23,10 @@ off. See ``AUTOMATIONS.md`` ("Standalone blueprints").
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -191,4 +190,6 @@ class TestBlueprintStructure:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, BLUEPRINT_PATH, REPO_ROOT)

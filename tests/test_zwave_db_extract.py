@@ -4,6 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
+#     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
@@ -16,7 +17,6 @@ grouping under each label across an in-repo synthetic device DB.
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -143,6 +143,6 @@ def test_output_is_deterministic(tmp_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    import pytest
+    from conftest import run_tests
 
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    run_tests(__file__, SCRIPT, REPO_ROOT)

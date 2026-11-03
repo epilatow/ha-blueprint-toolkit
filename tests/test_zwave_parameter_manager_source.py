@@ -52,6 +52,15 @@ from custom_components.blueprint_toolkit.zwave_parameter_manager.source import (
     read_fleet,
 )
 
+REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT
+    / "custom_components"
+    / "blueprint_toolkit"
+    / "zwave_parameter_manager"
+    / "source.py"
+)
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
@@ -421,4 +430,6 @@ async def test_read_fleet_last_awake_is_in_ha_time_zone(
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

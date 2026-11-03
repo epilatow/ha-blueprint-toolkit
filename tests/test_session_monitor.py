@@ -30,6 +30,9 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT / "custom_components" / "blueprint_toolkit" / "session_monitor.py"
+)
 sys.path.insert(0, str(REPO_ROOT))
 
 from _handler_stubs import install_homeassistant_stubs  # noqa: E402
@@ -141,10 +144,13 @@ class TestStart:
 
 
 if __name__ == "__main__":
-    import pytest
+    from conftest import run_tests
 
     # ``-p no:homeassistant`` disables pytest-HACC's plugin, which conflicts
     # with the homeassistant-module stubs this file installs.
-    sys.exit(
-        pytest.main([__file__, "-v", "-p", "no:homeassistant", *sys.argv[1:]])
+    run_tests(
+        __file__,
+        _SCRIPT_PATH,
+        REPO_ROOT,
+        pytest_args=["-p", "no:homeassistant"],
     )

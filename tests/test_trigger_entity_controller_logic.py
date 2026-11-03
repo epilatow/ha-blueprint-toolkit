@@ -16,6 +16,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT
+    / "custom_components"
+    / "blueprint_toolkit"
+    / "trigger_entity_controller"
+    / "logic.py"
+)
 
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -1364,4 +1371,6 @@ class TestEndToEndScenarios:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

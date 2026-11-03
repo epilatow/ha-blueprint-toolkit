@@ -29,12 +29,16 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest
 from homeassistant.auth.models import (
     TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN,
 )
 
 from custom_components.blueprint_toolkit import cli_token
+
+REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT / "custom_components" / "blueprint_toolkit" / "cli_token.py"
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -199,4 +203,6 @@ def test_no_owner_is_a_safe_noop(tmp_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    from conftest import run_tests
+
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

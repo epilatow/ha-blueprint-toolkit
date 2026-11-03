@@ -22,6 +22,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT
+    / "custom_components"
+    / "blueprint_toolkit"
+    / "zwave_parameter_manager"
+    / "apply.py"
+)
 
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -139,6 +146,6 @@ def test_unread_actual_is_issued() -> None:
 
 
 if __name__ == "__main__":
-    import pytest
+    from conftest import run_tests
 
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

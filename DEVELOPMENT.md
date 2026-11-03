@@ -78,11 +78,25 @@ them at the standard discovery path. A new skill only needs its directory +
 
 ### Test files
 
-- Must be executable (`chmod +x`) with a `__main__` entry point calling
-  `conftest.run_tests()`.
-- `tests/docker/test_dev_workflow.py` is the exception: its standalone entry
-  point calls `pytest.main()` directly so it can force the otherwise excluded
-  `docker` marker and select the Docker test path.
+`tests/run_all.py` runs each `tests/test_*.py` as a subprocess and passes it
+`--verbose` / `--coverage`, so every test file is executable (`chmod +x`) and
+ends with the block that hands those flags to pytest:
+
+```python
+if __name__ == "__main__":
+    from conftest import run_tests
+
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)
+```
+
+`_SCRIPT_PATH` names the code under test, which `--coverage` measures. A file
+that always needs a pytest option passes it as `pytest_args=`, as the files
+that stub the `homeassistant` modules do with `-p no:homeassistant`.
+`tests/test_run_all.py` gates that every discovered file ends with this call.
+
+`tests/docker/test_dev_workflow.py` is the exception: its standalone entry
+point calls `pytest.main()` directly so it can force the otherwise excluded
+`docker` marker and select the Docker test path.
 
 ## Doc-sync rule
 

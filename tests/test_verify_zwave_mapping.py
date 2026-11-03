@@ -19,7 +19,6 @@ AMBIGUOUS.
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import yaml
@@ -218,6 +217,6 @@ def test_unmapped_params_summary(tmp_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    import pytest
+    from conftest import run_tests
 
-    sys.exit(pytest.main([__file__, "-v", *sys.argv[1:]]))
+    run_tests(__file__, SCRIPT, REPO_ROOT)

@@ -17,6 +17,7 @@ run_all.py runs each discovered test file as a subprocess, passing
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import run_all as ra
 from conftest import coverage_source, run_tests
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -170,6 +172,53 @@ class TestRunTests:
         assert "--cov=conftest" in cmd
         env = run.call_args.kwargs["env"]
         assert env["COVERAGE_FILE"].endswith("test_example.coverage")
+
+
+class TestEveryFileEndsByCallingRunTests:
+    """Each file run_all.py discovers hands its run to ``run_tests``.
+
+    run_all.py passes ``--verbose`` / ``--coverage`` to every file it
+    runs, so a file that calls pytest itself rejects or ignores them.
+    The call also ends the file: a class added below it still runs,
+    since pytest imports the module to collect it, but the end of the
+    source then no longer reads as the end of the tests.
+    """
+
+    @staticmethod
+    def _ends_with_run_tests(path: Path) -> bool:
+        body = ast.parse(path.read_text(encoding="utf-8")).body
+        if not body or not isinstance(body[-1], ast.If):
+            return False
+        block = body[-1]
+        if ast.unparse(block.test) != "__name__ == '__main__'":
+            return False
+        last = block.body[-1]
+        if not (
+            isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
+        ):
+            return False
+        call = last.value
+        return (
+            ast.unparse(call.func) == "run_tests"
+            and bool(call.args)
+            and ast.unparse(call.args[0]) == "__file__"
+        )
+
+    def test_discovers_test_files(self) -> None:
+        # The gate below passes vacuously on an empty discovery.
+        discovered = ra.discover_test_files(ra.TESTS_DIR)
+        assert Path(__file__).resolve() in discovered
+
+    def test_every_discovered_file_ends_by_calling_run_tests(self) -> None:
+        wrong = [
+            path.name
+            for path in ra.discover_test_files(ra.TESTS_DIR)
+            if not self._ends_with_run_tests(path)
+        ]
+        assert wrong == [], (
+            f"test files not ending in a __main__ block whose last "
+            f"statement is run_tests(__file__, ...): {wrong}"
+        )
 
 
 if __name__ == "__main__":
