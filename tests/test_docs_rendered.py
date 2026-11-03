@@ -202,7 +202,4 @@ class TestCheckDriftDetects:
 if __name__ == "__main__":
     from conftest import run_tests
 
-    run_tests(
-        test_file=__file__,
-        script_path=RENDER_SCRIPT,
-    )
+    run_tests(__file__, RENDER_SCRIPT, REPO_ROOT)

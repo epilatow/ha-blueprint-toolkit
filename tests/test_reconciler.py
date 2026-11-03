@@ -37,6 +37,11 @@ from custom_components.blueprint_toolkit.reconciler import (
     plan,
 )
 
+REPO_ROOT = Path(__file__).parent.parent
+_SCRIPT_PATH = (
+    REPO_ROOT / "custom_components" / "blueprint_toolkit" / "reconciler.py"
+)
+
 
 def _make_bundled(root: Path) -> Path:
     """Build a minimal bundled/ tree with one file per subdir."""
@@ -662,12 +667,4 @@ class TestDataclassShapes:
 if __name__ == "__main__":
     from conftest import run_tests
 
-    run_tests(
-        test_file=__file__,
-        script_path=(
-            Path(__file__).parent.parent
-            / "custom_components"
-            / "blueprint_toolkit"
-            / "reconciler.py"
-        ),
-    )
+    run_tests(__file__, _SCRIPT_PATH, REPO_ROOT)

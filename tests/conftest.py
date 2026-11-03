@@ -1,16 +1,18 @@
 """Pytest configuration - runs before test collection."""
 # This is AI generated code
 
+import argparse
 import atexit
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NoReturn
 
 import pytest
 
@@ -73,24 +75,58 @@ def system_time_zone() -> Iterator[Callable[[str], None]]:
     time.tzset()
 
 
+def coverage_source(script_path: Path, repo_root: Path) -> str:
+    """The ``--cov`` source that measures ``script_path``.
+
+    A directory is measured by its path. A module inside a package
+    is measured by its dotted name from ``repo_root``, the root the
+    tests import ``custom_components`` from. Any other file is
+    measured by its stem, with ``-`` read as ``_``, which collects
+    data only when the tests import it under that name. Coverage
+    reports no data for a script the tests run as a subprocess or
+    load under another name, or for a file that is not Python.
+    """
+    if script_path.is_dir():
+        return str(script_path)
+    if (script_path.parent / "__init__.py").is_file():
+        parts = script_path.relative_to(repo_root).with_suffix("").parts
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        return ".".join(parts)
+    return script_path.stem.replace("-", "_")
+
+
 def run_tests(
     test_file: str,
     script_path: Path,
-) -> None:
+    repo_root: Path,
+    *,
+    pytest_args: Sequence[str] = (),
+) -> NoReturn:
     """Entry point for running a test file directly.
 
-    Handles ``--verbose`` and ``--coverage`` flags, then
-    invokes ``pytest.main()``.  Called from each test
-    file's ``__main__`` block.
+    Handles ``--verbose`` and ``--coverage``, passes every other
+    argument through to pytest, and exits with pytest's status.
+    Called from each test file's ``__main__`` block.
 
     Args:
         test_file: The test file's ``__file__`` path.
-        script_path: Path to the script under test
-            (used to derive the coverage module name).
+        script_path: The code under test: a module, a package
+            directory, or the file the tests check. It must exist,
+            and ``--coverage`` measures it (see ``coverage_source``).
+        repo_root: Repository root directory.
+        pytest_args: Arguments the file always runs pytest with,
+            e.g. ``-p no:<plugin>`` for a plugin it cannot load.
     """
-    import argparse
-
-    parser = argparse.ArgumentParser()
+    # No abbreviations, so a passed-through ``--cov=...`` is not
+    # taken for ``--coverage``.
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run this file's tests. Arguments not listed here pass "
+            "through to pytest."
+        ),
+        allow_abbrev=False,
+    )
     parser.add_argument(
         "-v",
         "--verbose",
@@ -102,46 +138,40 @@ def run_tests(
         action="store_true",
         help="Run with coverage report",
     )
-    args = parser.parse_args()
+    args, passthrough = parser.parse_known_args()
+    # Checked on every run, not just --coverage, so a mistyped path
+    # fails the plain run rather than a coverage report that comes
+    # back empty.
+    if not script_path.exists():
+        parser.error(f"the code under test does not exist: {script_path}")
+
+    argv = [test_file, "-p", "no:cacheprovider", *pytest_args]
+    if args.verbose:
+        argv.append("-v")
+    argv.extend(passthrough)
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
     if args.coverage:
         # Run as subprocess so coverage tracks from the
         # start, including import-time lines (class defs,
         # function signatures, etc.) that are missed when
         # using pytest.main() in-process.
-        import subprocess
-
-        module = script_path.stem.replace("-", "_")
+        label = Path(test_file).stem
         cov_dir = Path(tempfile.gettempdir())
         cmd = [
             sys.executable,
             "-m",
             "pytest",
-            test_file,
-            "-p",
-            "no:cacheprovider",
-            f"--cov={module}",
+            *argv,
+            f"--cov={coverage_source(script_path, repo_root)}",
             "--cov-report=term-missing",
-            f"--cov-report=html:{cov_dir / (module + '_htmlcov')}",
+            f"--cov-report=html:{cov_dir / f'{label}_htmlcov'}",
         ]
-        if args.verbose:
-            cmd.append("-v")
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(script_path.parent)
-        env["COVERAGE_FILE"] = str(cov_dir / f"{module}.coverage")
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        result = subprocess.run(cmd, check=False)
-        # Clean up .coverage file left by subprocess
-        cov_file = Path.cwd() / ".coverage"
-        if cov_file.exists():
-            cov_file.unlink()
+        env = os.environ | {"COVERAGE_FILE": str(cov_dir / f"{label}.coverage")}
+        result = subprocess.run(cmd, env=env, check=False)
         raise SystemExit(result.returncode)
 
-    pytest_args = [test_file, "-p", "no:cacheprovider"]
-    if args.verbose:
-        pytest_args.append("-v")
-    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
-    raise SystemExit(pytest.main(pytest_args))
+    raise SystemExit(pytest.main(argv))
 
 
 # --------------------------------------------------------

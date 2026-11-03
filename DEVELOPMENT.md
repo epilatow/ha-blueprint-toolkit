@@ -168,9 +168,10 @@ The shared bases under `_repo_shared/tests/` gate `mdformat` and
 ./tests/run_all.py --verbose
 ./tests/run_all.py --coverage
 
-# Single test file
+# Single test file; other arguments pass through to pytest
 ./tests/test_<service>_logic.py
 ./tests/test_<service>_logic.py --verbose
+./tests/test_<service>_logic.py -k <pattern>
 
 # Shared suite only
 uv run pytest _repo_shared/tests

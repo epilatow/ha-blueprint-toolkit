@@ -36,11 +36,10 @@ def _load_dev_deploy() -> object:
 
     The hyphen in the filename is not a legal identifier, so the
     file cannot be imported by name; everything it does at import
-    time sits behind a ``__main__`` guard.
+    time sits behind a ``__main__`` guard. ``dev_deploy`` is the
+    name ``run_tests --coverage`` measures.
     """
-    spec = importlib.util.spec_from_file_location(
-        "dev_deploy_under_test", DEV_DEPLOY
-    )
+    spec = importlib.util.spec_from_file_location("dev_deploy", DEV_DEPLOY)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -140,10 +139,6 @@ class TestShippingArchive:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).parent))
     from conftest import run_tests
 
-    run_tests(
-        test_file=__file__,
-        script_path=DEV_DEPLOY,
-    )
+    run_tests(__file__, DEV_DEPLOY, REPO_ROOT)
