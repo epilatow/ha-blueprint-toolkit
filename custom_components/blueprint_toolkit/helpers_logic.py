@@ -1550,6 +1550,8 @@ __all__ = [
     "domain_entities_link",
     "domain_entities_url",
     "entities_dashboard_url",
+    "entity_history_link",
+    "entity_history_url",
     "file_editor_link",
     "format_notification",
     "format_timestamp",

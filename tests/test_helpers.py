@@ -26,16 +26,14 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
     PersistentNotification,
+    entity_history_link,
+    entity_history_url,
     format_notification,
     format_timestamp,
     matches_pattern,
     notification_prefix,
     prepare_notifications,
     resolve_target_integrations,
-)
-from custom_components.blueprint_toolkit.helpers_logic import (  # noqa: E402
-    entity_history_link,
-    entity_history_url,
 )
 
 T0 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
