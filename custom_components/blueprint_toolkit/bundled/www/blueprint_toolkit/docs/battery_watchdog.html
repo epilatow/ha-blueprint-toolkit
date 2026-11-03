@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battery Watchdog</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  max-width: 760px;
+  margin: 2em auto;
+  padding: 0 1em;
+  line-height: 1.55;
+  color: #222;
+}
+h1, h2, h3, h4 { line-height: 1.25; }
+h1 { border-bottom: 1px solid #ddd; padding-bottom: .2em; }
+h2 { border-bottom: 1px solid #eee; padding-bottom: .15em; }
+code {
+  background: #f2f2f2;
+  padding: .1em .3em;
+  border-radius: 3px;
+  font-size: .92em;
+}
+pre {
+  background: #f6f6f6;
+  padding: .8em 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: .9em; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td {
+  border: 1px solid #ccc;
+  padding: .4em .7em;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #f2f2f2; }
+blockquote {
+  border-left: 3px solid #ccc;
+  margin: 1em 0;
+  padding: .2em 1em;
+  color: #555;
+}
+a { color: #0366d6; }
+</style>
+</head>
+<body>
+<h1>Battery Watchdog</h1>
+<h2>Summary</h2>
+<p>Watches every battery Home Assistant knows about and raises one persistent
+notification listing the low ones. Each line names the battery's area, links
+to its device, and links to the battery's history, so you can find it and see
+how fast it is draining. The notification clears automatically once no battery
+is low.</p>
+<h2>Features</h2>
+<ul>
+<li>Finds batteries by their <code>battery</code> device class, on both numeric battery
+sensors (a percentage) and binary battery sensors (low or normal)</li>
+<li>One notification for every low battery, sorted by area and then device</li>
+<li>Device and battery-history links on every line</li>
+<li>Include/exclude integration filtering (empty include means all
+integrations); excluding an integration skips every device it has an entity
+on</li>
+<li>Regex-based device name, entity ID, and entity name exclusion filters</li>
+<li>Exclude specific batteries, or watch only a chosen few</li>
+<li>Optional validation that flags include / exclude entries matching no battery</li>
+<li>Optional debug logging</li>
+</ul>
+<h2>Requirements</h2>
+<p>None.</p>
+<h2>Usage</h2>
+<ol>
+<li>Install the automation (see main README)</li>
+<li>Go to <strong>Settings &gt; Automations &amp; Scenes &gt; Blueprints</strong></li>
+<li>Click <strong>Battery Watchdog</strong></li>
+<li>Set the warning level and exclude batteries you don't want reported, such
+as phones and tablets</li>
+<li>Save and enable</li>
+</ol>
+<h2>Configuration</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Battery warning level</td>
+<td><code>25</code></td>
+<td>A battery at or below this percentage is low.</td>
+</tr>
+<tr>
+<td>Include integrations</td>
+<td>empty</td>
+<td>Integrations whose batteries to watch. Empty means all.</td>
+</tr>
+<tr>
+<td>Exclude integrations</td>
+<td>empty</td>
+<td>Integrations whose batteries to skip even if included. Also skips every device they have an entity on, including batteries another integration adds.</td>
+</tr>
+<tr>
+<td>Device name exclude regex</td>
+<td>empty</td>
+<td>Skip batteries on a device whose name matches. One pattern per line.</td>
+</tr>
+<tr>
+<td>Include entities</td>
+<td>empty</td>
+<td>Watch only these batteries. When set, every other include / exclude input must be empty.</td>
+</tr>
+<tr>
+<td>Exclude entities</td>
+<td>empty</td>
+<td>Batteries to skip, such as phones and tablets.</td>
+</tr>
+<tr>
+<td>Entity ID exclude regex</td>
+<td>empty</td>
+<td>Skip batteries whose entity ID matches. One pattern per line.</td>
+</tr>
+<tr>
+<td>Entity name exclude regex</td>
+<td>empty</td>
+<td>Skip batteries whose friendly name matches. One pattern per line.</td>
+</tr>
+<tr>
+<td>Check interval (minutes)</td>
+<td><code>5</code></td>
+<td>Minutes between battery checks.</td>
+</tr>
+<tr>
+<td>Validate include / exclude directives</td>
+<td><code>true</code></td>
+<td>Surface include / exclude entries that match no battery as a single informational notification. See <strong>Unmatched include / exclude directives</strong> below.</td>
+</tr>
+<tr>
+<td>Debug logging</td>
+<td><code>false</code></td>
+<td>Log a summary line per check to HA's logs.</td>
+</tr>
+</tbody>
+</table>
+<h2>Usage notes</h2>
+<h3>What counts as low</h3>
+<p>A numeric battery sensor is low when its level is at or below the warning
+level. A binary battery sensor is low whenever it reads low (<code>on</code>). A battery
+that is unavailable, unknown, or not reporting a number is not listed; Device
+Watchdog reports unavailable entities.</p>
+<h3>The notification</h3>
+<p>All low batteries share one notification, one line per battery, sorted by area
+and then device:</p>
+<pre><code class="language-text">- Kitchen -&gt; Window, Left: 20%
+- Office -&gt; Motion Sensor: low
+- Spare Remote: 15%
+</code></pre>
+<p>The device name links to the device's page, and the level links to the
+battery's history. A battery with no area leaves the area out and is listed
+after the rest. A battery with no device shows its own name, unlinked. When
+one device has more than one low battery, each line also names the battery.</p>
+<p>The notification updates whenever a listed level changes, which moves it back
+to the top of the notification list. Once no battery is low it is dismissed.
+Dismissing it while batteries are still low doesn't stick: the next check
+brings it back. To stop reporting a battery, exclude it.</p>
+<h3>Include entities</h3>
+<p><strong>Include entities</strong> turns the watchdog into a watch list: only those
+batteries are checked. Because the list already says exactly which batteries
+to watch, combining it with any other include / exclude input is a
+configuration error.</p>
+<h3>Unmatched include / exclude directives</h3>
+<p>With <strong>Validate include / exclude directives</strong> on (default), any include /
+exclude entry that matches no battery -- a typo'd integration, an entity that
+isn't a battery, or a regex line that catches no battery -- appears in a
+single informational notification. Each entry is checked against every
+battery, so an entry another filter happens to shadow is not flagged. It
+clears on the next check once the entry is fixed or removed, or when you turn
+the toggle off.</p>
+<h2>Developer notes</h2>
+<h3>Entity attributes</h3>
+<p>After each check, attributes are written to
+<code>blueprint_toolkit.bw_&lt;slug&gt;_state</code> where <code>&lt;slug&gt;</code> derives from the automation
+entity_id.</p>
+<ul>
+<li><code>last_run</code>: ISO timestamp of the last check</li>
+<li><code>runtime</code>: Check time in seconds</li>
+<li><code>last_trigger</code>: <code>periodic</code> for a scheduled check, otherwise <code>manual</code></li>
+<li><code>batteries</code>: Battery entities seen</li>
+<li><code>batteries_excluded</code>: Batteries the include / exclude inputs skipped</li>
+<li><code>low_batteries</code>: Batteries reported as low</li>
+<li><code>low_battery_entities</code>: Entity IDs of the low batteries</li>
+<li><code>unmatched_directives</code>: Include / exclude directives that matched no battery</li>
+</ul>
+<h3>Debug logging</h3>
+<p>Enable the <strong>Debug logging</strong> toggle in the blueprint. Output appears in
+<strong>Settings &gt; System &gt; Logs</strong> at WARNING level (HA's default for custom
+components).</p>
+<p>Example output for an automation named &quot;Battery Watchdog&quot;:</p>
+<pre><code class="language-text">[BW: Battery Watchdog] batteries=136 excluded=7 low=5 unmatched_directives=0
+</code></pre>
+</body>
+</html>

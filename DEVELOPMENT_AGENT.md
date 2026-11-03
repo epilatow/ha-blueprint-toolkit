@@ -118,7 +118,7 @@ are user-visible-behavior validation against the pre-deploy baselines.
    `blueprint_toolkit.<service_tag>_<slug>_state` entity has a `last_run`
    post-restart and a valid `state`:
 
-   - Watchdog handlers (DW, EDW, RW, ZRM, ZPM): `state="ok"` with non-zero
+   - Watchdog handlers (BW, DW, EDW, RW, ZRM, ZPM): `state="ok"` with non-zero
      `runtime`.
    - Trigger-driven handlers (STEC, TEC): `state` is one of the handler's
      `Action` enum values (`NONE`, `TURN_ON`, `TURN_OFF`, ...); `runtime` may
@@ -153,7 +153,7 @@ are user-visible-behavior validation against the pre-deploy baselines.
    `tmp/dev-deploy-state-baseline.json`. Any change should be explainable by
    the deploy:
 
-   - **For watchdogs** (DW, EDW, RW, ZRM, ZPM): per-handler stat counters
+   - **For watchdogs** (BW, DW, EDW, RW, ZRM, ZPM): per-handler stat counters
      should be unchanged unless the deploy modified detection / scan /
      reconcile logic. Concrete examples of expected drift:
      - DW's `device_issues` drops by 1 -> a deploy that changed a check, OR a
@@ -185,6 +185,10 @@ deploy carries, for the components it actually changed:
   for DW; rename an entity to drift it for EDW; introduce a broken reference
   in a YAML file for RW), then verify the expected notification fires with the
   right ID and body.
+- **BW**: confirm the low-battery notification lists every in-scope battery at
+  or below the warning level, then open one device link and one battery link
+  in a browser signed in to HA and confirm each lands on that device's page or
+  that battery's history.
 - **STEC / TEC**: trigger the sensor or state change that should fire the
   controller, then verify the right action (`turn_on` / `turn_off` / no-op)
   ran and the diagnostic state entity reflects the decision.

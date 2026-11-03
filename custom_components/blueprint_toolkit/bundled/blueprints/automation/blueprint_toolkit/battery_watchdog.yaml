@@ -1,0 +1,190 @@
+blueprint:
+  name: Battery Watchdog
+  description: >
+    Watch every battery Home Assistant knows about and raise one
+    persistent notification listing the low ones, each with its
+    area, a link to its device, and a link to the battery's
+    history. A battery is low when its level is at or below the
+    warning level, or when a binary battery sensor reports low.
+    The notification clears automatically once no battery is
+    low.
+    [Full documentation](/local/blueprint_toolkit/docs/battery_watchdog.html).
+  domain: automation
+  author: epilatow
+
+  input:
+    battery_warning_level:
+      name: Battery warning level
+      description: >
+        A battery whose level is at or below this
+        percentage is reported as low. Binary battery
+        sensors are reported whenever they read low.
+      default: 25
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: box
+
+    include_integrations:
+      name: Include integrations
+      description: >
+        Integrations whose batteries to watch. Leave empty
+        to watch batteries from every integration.
+      default: []
+      selector:
+        select:
+          multiple: true
+          custom_value: true
+          options: []
+
+    exclude_integrations:
+      name: Exclude integrations
+      description: >
+        Integrations whose batteries to skip, even if they
+        match the include list. A device with an entity from
+        an excluded integration is skipped entirely.
+      default: []
+      selector:
+        select:
+          multiple: true
+          custom_value: true
+          options: []
+
+    exclude_device_name_regex:
+      name: Device name exclude regex
+      description: >
+        Batteries on a device whose name matches any of
+        these regular expressions are ignored. Enter one
+        pattern per line. A partial match is sufficient
+        (use ^...$ to require a full match).
+      default: ""
+      selector:
+        text:
+          multiline: true
+
+    include_entities:
+      name: Include entities
+      description: >
+        Watch only these batteries. When set, every other
+        include / exclude input must be left empty.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+              device_class: battery
+            - domain: binary_sensor
+              device_class: battery
+
+    exclude_entities:
+      name: Exclude entities
+      description: >
+        Batteries to ignore, such as phones and tablets.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+              device_class: battery
+            - domain: binary_sensor
+              device_class: battery
+
+    exclude_entity_id_regex:
+      name: Entity ID exclude regex
+      description: >
+        Batteries whose entity ID matches any of these
+        regular expressions are ignored. Enter one pattern
+        per line. A partial match is sufficient (use ^...$
+        to require a full match).
+      default: ""
+      selector:
+        text:
+          multiline: true
+
+    exclude_entity_name_regex:
+      name: Entity name exclude regex
+      description: >
+        Batteries whose friendly name matches any of these
+        regular expressions are ignored. Enter one pattern
+        per line. A partial match is sufficient (use ^...$
+        to require a full match).
+      default: ""
+      selector:
+        text:
+          multiline: true
+
+    check_interval_minutes:
+      name: Check interval (minutes)
+      description: Minutes between battery checks.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 10080
+          unit_of_measurement: minutes
+          mode: box
+
+    validate_includes_excludes:
+      name: Validate include / exclude directives
+      description: >
+        When enabled, each include / exclude directive is
+        checked against the batteries Home Assistant knows
+        about after every check. If a directive matches no
+        battery (a typo'd integration name, a removed or
+        non-battery entity, a regex line that catches
+        nothing), an informational persistent notification
+        surfaces the offending entries so you can clean
+        them up. The notification clears automatically once
+        the entry is fixed or removed. Disable to skip the
+        check entirely; any prior unmatched-directives
+        notification dismisses on the next check.
+      default: true
+      selector:
+        boolean: {}
+
+    debug_logging:
+      name: Debug logging
+      description: >
+        Log a WARNING line per check summarising the
+        batteries seen, excluded, and low. Check Settings >
+        System > Logs to view output.
+      default: false
+      selector:
+        boolean: {}
+
+triggers: []
+
+actions:
+  - action: blueprint_toolkit.battery_watchdog
+    # Periodic scheduling lives in the integration handler
+    # (``schedule_periodic_with_jitter``); the blueprint has
+    # no triggers of its own. Manual UI runs land here with
+    # ``trigger_id`` undefined, which collapses to
+    # ``"manual"``; integration-fired ticks pass
+    # ``trigger_id: "periodic"`` as a flat top-level variable
+    # (HA's automation.trigger service clobbers
+    # ``variables.trigger``, so ``trigger.*`` overrides are
+    # silently dropped -- pass flat keys instead).
+    data:
+      instance_id: "{{ this.entity_id }}"
+      trigger_id: "{{ trigger_id | default('manual', true) }}"
+      battery_warning_level_raw: !input battery_warning_level
+      include_integrations_raw: !input include_integrations
+      exclude_integrations_raw: !input exclude_integrations
+      exclude_device_name_regex_raw: !input exclude_device_name_regex
+      include_entities_raw: !input include_entities
+      exclude_entities_raw: !input exclude_entities
+      exclude_entity_id_regex_raw: !input exclude_entity_id_regex
+      exclude_entity_name_regex_raw: !input exclude_entity_name_regex
+      check_interval_minutes_raw: !input check_interval_minutes
+      validate_includes_excludes_raw: !input validate_includes_excludes
+      debug_logging_raw: !input debug_logging
+
+# A single in-flight check at a time per instance: if a
+# manual trigger arrives while a periodic tick is still
+# running, drop it.
+mode: single

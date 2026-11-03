@@ -15,6 +15,10 @@ are standalone -- self-contained YAML blueprints with no service handler.
   integrations, flagging unavailable or stale devices and offering one-click
   Repairs for disabled diagnostic entities.
 
+- [Battery Watchdog](docs/battery_watchdog.md) - Lists every low battery in
+  one notification, with its area, a link to its device, and a link to the
+  battery's history.
+
 - [Entity Defaults Watchdog](docs/entity_defaults_watchdog.md) - Detects
   entity IDs, entity names, and script keys that have drifted from their
   defaults, plus `switch_as_x` sources left visible, with one-click Repairs

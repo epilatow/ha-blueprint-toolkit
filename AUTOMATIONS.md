@@ -378,7 +378,7 @@ as a top-level variable so each step can reference `{{ message }}`.
 That leaves the choice of endpoint (`notify.*`, a notify group, a script, any
 combination) to the blueprint UI's action picker. The state save runs before
 the handler returns, so a notify-action failure cannot lose controller state.
-Watchdog handlers (DW, EDW, RW, ZRM, ZPM) don't use this: their surface is
+Watchdog handlers (BW, DW, EDW, RW, ZRM, ZPM) don't use this: their surface is
 `persistent_notification`, an HA-side render, and is therefore handler-owned.
 
 ### Async tasks must be entry-scoped
@@ -388,8 +388,8 @@ Use `entry.async_create_background_task(hass, coro, name)` so HA cancels
 in-flight work on entry unload; never `hass.async_create_task(coro)` (which
 leaves work running detached against a torn-down service registration).
 
-Every handler with a periodic timer (DW, EDW, RW, STEC, ZRM, ZPM) arms it via
-`helpers.schedule_periodic_with_jitter`, which wraps each tick in that
+Every handler with a periodic timer (BW, DW, EDW, RW, STEC, ZRM, ZPM) arms it
+via `helpers.schedule_periodic_with_jitter`, which wraps each tick in that
 entry-scoped task and adds per-instance jitter. TEC has no periodic timer --
 only a one-shot `async_call_later` auto-off wakeup. Raw
 `async_track_time_interval` is **not** the canonical pattern in a handler. If

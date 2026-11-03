@@ -282,6 +282,7 @@ class TestSetupEntry:
             "reference_watchdog",
             "entity_defaults_watchdog",
             "device_watchdog",
+            "battery_watchdog",
             "sensor_threshold_entity_controller",
             # Repair fix services. Listed explicitly so a
             # future refactor that drops one from
