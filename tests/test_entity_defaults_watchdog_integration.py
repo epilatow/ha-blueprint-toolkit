@@ -4152,6 +4152,78 @@ class TestExcludedIntegrationCoversTheDevice:
         assert await self._id_repairs(hass, ["lutron_caseta"]) == []
 
 
+class TestEntityAreaName:
+    """The shared area lookup EDW's cached-name lines use."""
+
+    def _plant(self, hass: HomeAssistant) -> str:
+        """Plant an entity on a device in the Kitchen; return its ID."""
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        config_entry = _mock_config_entry(domain="zwave_js")
+        config_entry.add_to_hass(hass)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=config_entry.entry_id,
+            identifiers={("zwave_js", "remote")},
+            name="Remote",
+        )
+        kitchen = ar.async_get(hass).async_get_or_create("Kitchen")
+        dev_reg.async_update_device(device.id, area_id=kitchen.id)
+        return (
+            er.async_get(hass)
+            .async_get_or_create(
+                domain="sensor",
+                platform="zwave_js",
+                unique_id="remote-battery",
+                device_id=device.id,
+                config_entry=config_entry,
+            )
+            .entity_id
+        )
+
+    async def test_entity_takes_its_device_area(
+        self, hass: HomeAssistant
+    ) -> None:
+        from custom_components.blueprint_toolkit.helpers import (
+            entity_area_name,
+        )
+
+        assert entity_area_name(hass, self._plant(hass)) == "Kitchen"
+
+    async def test_entity_area_overrides_its_device_area(
+        self, hass: HomeAssistant
+    ) -> None:
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.blueprint_toolkit.helpers import (
+            entity_area_name,
+        )
+
+        entity_id = self._plant(hass)
+        den = ar.async_get(hass).async_get_or_create("Den")
+        # HA only lets an entity with a name of its own take an
+        # area of its own.
+        er.async_get(hass).async_update_entity(
+            entity_id, name="Remote Battery", area_id=den.id
+        )
+
+        assert entity_area_name(hass, entity_id) == "Den"
+
+    async def test_unregistered_entity_has_no_area(
+        self, hass: HomeAssistant
+    ) -> None:
+        from custom_components.blueprint_toolkit.helpers import (
+            entity_area_name,
+        )
+
+        hass.states.async_set("sensor.yaml_only", "1")
+
+        assert entity_area_name(hass, "sensor.yaml_only") is None
+
+
 class TestRecoveryEvents(RecoveryEventsIntegrationBase):
     service_tag = "EDW"
     setup_integration = staticmethod(_setup_integration)

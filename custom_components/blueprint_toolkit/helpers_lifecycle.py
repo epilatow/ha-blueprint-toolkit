@@ -133,6 +133,25 @@ def device_area_name(hass: HomeAssistant, device_id: str) -> str | None:
     return area.name if area is not None else None
 
 
+def entity_area_name(hass: HomeAssistant, entity_id: str) -> str | None:
+    """Name of the area HA places ``entity_id`` in, if any.
+
+    That is the entity's own area, or else its device's. An
+    entity with no registry entry has none.
+    """
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import entity_registry as er
+
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return None
+    area_id = er.async_get_effective_area_id(hass, entry)
+    if area_id is None:
+        return None
+    area = ar.async_get(hass).async_get_area(area_id)
+    return area.name if area is not None else None
+
+
 def voice_exposed_entity_ids(hass: HomeAssistant) -> frozenset[str]:
     """Entities HA exposes to at least one voice assistant."""
     from homeassistant.components.homeassistant.exposed_entities import (
@@ -1095,6 +1114,7 @@ __all__ = [
     "all_integration_ids",
     "cv_ha_domain_list",
     "device_area_name",
+    "entity_area_name",
     "file_editor_addon_ingress_url",
     "integration_device_ids",
     "integration_entity_ids",

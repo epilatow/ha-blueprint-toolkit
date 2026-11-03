@@ -51,7 +51,6 @@ import probatio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_platform
@@ -67,6 +66,7 @@ from ..helpers import (
     automation_friendly_name,
     cv_ha_domain_list,
     device_area_name,
+    entity_area_name,
     entity_friendly_names,
     entry_for_domain,
     integration_device_ids,
@@ -619,18 +619,6 @@ def _live_entities(
     }
 
 
-def _entity_area_name(
-    hass: HomeAssistant,
-    entry: er.RegistryEntry,
-) -> str | None:
-    """Name of the area HA places ``entry`` in, if any."""
-    area_id = er.async_get_effective_area_id(hass, entry)
-    if area_id is None:
-        return None
-    area = ar.async_get(hass).async_get_area(area_id)
-    return area.name if area is not None else None
-
-
 def _cached_name_drift(
     hass: HomeAssistant,
     entry: er.RegistryEntry,
@@ -658,7 +646,7 @@ def _cached_name_drift(
         integration=entry.platform,
         cached_name=entry.object_id_base or "",
         current_name=current_name or "",
-        area=_entity_area_name(hass, entry),
+        area=entity_area_name(hass, entry.entity_id),
     )
 
 
