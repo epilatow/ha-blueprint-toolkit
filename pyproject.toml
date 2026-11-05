@@ -54,13 +54,13 @@ wrap = 78
 # ``entity_registry.integration_entities``). The pin says what the
 # code is validated against, not what users run -- ``hacs.json``
 # declares the supported HA floor. ``scripts/hacc_upgrade.py`` owns
-# bumping it: don't move the pin by hand. Run weekly by a scheduler,
-# it rewrites every pin site to the newest release, runs the suite
-# against it, and lands the bump only when that suite passes, so the
-# pin follows the newest HACC the suite passes against. The literal
-# below is the single source of truth for which version that is --
-# never restate it in prose here or in docs, because automation
-# moves it and the prose would not follow.
+# bumping it: don't move the pin by hand. It rewrites every pin site
+# to the newest release, runs the suite against it, and with
+# ``--push`` lands the bump only when that suite passes, so when run
+# on a schedule it keeps the pin on the newest HACC the suite passes
+# against. The literal below is the single source of truth for which
+# version that is -- never restate it in prose here or in docs,
+# because automation moves it and the prose would not follow.
 # ``zwave-js-server-python`` is the Z-Wave JS client the ZPM and ZRM
 # modules import types from. HA does not install it as a package
 # dependency -- its ``zwave_js`` component declares it as a component

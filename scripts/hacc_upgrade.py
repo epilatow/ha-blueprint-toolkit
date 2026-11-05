@@ -13,10 +13,10 @@ against. This tool moves that pin to the newest release and proves
 the suite still passes before the change reaches the default
 branch.
 
-Run weekly from a scheduler. The whole point is that a green bump
-lands unattended: a bump that only ever opens a proposal is a bump
-nobody merges, and the pin then sits still while the HA surface it
-claims to validate against moves on.
+Built to run unattended from a scheduler. The whole point is that a
+green bump lands without a human: a bump that only ever opens a
+proposal is a bump nobody merges, and the pin then sits still while
+the HA surface it claims to validate against moves on.
 
 The flow mirrors ``repo-shared upgrade``:
 
@@ -52,8 +52,8 @@ the release's own component manifest, which is read as a file rather
 than imported -- importing ``zwave_js`` requires the very library whose
 version is being resolved. If a future Home Assistant release relaxes
 that requirement to a range there is nothing exact to read, and the
-bump stops instead of guessing; note that this halts the whole weekly
-bump, not just its Z-Wave part.
+bump stops instead of guessing; note that this halts the whole bump,
+not just its Z-Wave part.
 
 The manifest version is bumped only when a rewrite actually touched
 ``custom_components/``. ``tests/test_manifest.py`` enforces that
@@ -349,9 +349,9 @@ def current_branch() -> str:
 def sweep_stale_worktrees(keep: str | None = None) -> None:
     """Remove worktrees this tool left behind on earlier attempts.
 
-    A red suite keeps its worktree for inspection, and next week's
+    A red suite keeps its worktree for inspection, and a later
     attempt targets a different version and so a different path.
-    Without a sweep every failed week leaks another worktree and
+    Without a sweep every failed attempt leaks another worktree and
     its test venv.
 
     ``keep`` is a commit the caller is building on. The branch in
@@ -624,7 +624,7 @@ def run(args: argparse.Namespace) -> Exit:
 
     # The published pin is the one that matters. Reading it from the
     # local checkout would let a checkout sitting ahead of the remote
-    # report "already current" every week while the published pin
+    # report "already current" on every run while the published pin
     # never moved -- the exact silent-success failure this tool
     # exists to remove.
     try:
@@ -846,13 +846,13 @@ def run(args: argparse.Namespace) -> Exit:
                 Exit.ERROR,
             )
 
-    # The body states how this run was driven, because it is
-    # permanent history on the default branch and the three modes are
-    # not interchangeable: only the unattended one can claim the pin
-    # followed the newest release on its own.
+    # The body states how this run chose its target and base, because
+    # it is permanent history on the default branch and the modes are
+    # not interchangeable: only a run without ``--to`` can claim the
+    # pin followed the newest release.
     if args.to is None:
         provenance = (
-            "Automated weekly bump. The pin decides which Home\n"
+            "Bumped to the newest release. The pin decides which Home\n"
             "Assistant API surface the suite validates against, so it\n"
             "tracks the newest release rather than a version chosen by\n"
             "hand.\n"

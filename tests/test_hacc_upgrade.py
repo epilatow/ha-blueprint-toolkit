@@ -1059,8 +1059,8 @@ class TestBaseRef:
     ) -> None:
         """The body lands on the default branch as permanent history.
 
-        Only the unattended run can claim the pin followed the newest
-        release on its own, so a hand-driven one must not say so.
+        Only a run without ``--to`` can claim the pin followed the
+        newest release, so one given a target must not say so.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         _branch_with_pin(clone, "feature", "2.0.0")
@@ -1075,7 +1075,7 @@ class TestBaseRef:
             cwd=clone,
             text=True,
         )
-        assert "Automated weekly" not in body
+        assert "Bumped to the newest release" not in body
         assert "deliberately" in body
         assert "chosen base" in body
 

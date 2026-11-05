@@ -246,25 +246,23 @@ merged by hand. Two things to know about the handoff:
   namespace is swept either way. A base that *is* the branch the next run
   rebuilds is refused rather than clobbered; merge or rename it first.
 
-Scheduling is a host-side setup step, not something the repo carries: a
-`crony` drop-in bundle at `~/.config/crony/config/` runs the `--push` form
-weekly. Check it with `crony status ha-blueprint-toolkit.hacc-upgrade`; a job
-that reports as masked is defined but never fires.
+The `--push` form is built to run unattended, so it can be run from a
+scheduler. The repo carries no schedule of its own. A scheduled run has a few
+requirements and consequences:
 
-- The job runs the whole suite, so the host needs `uv` and, for the markdown
-  gate's `markdownlint-cli2`, `npx`. A scheduler's environment is not a login
-  shell, so the job definition has to put them on `PATH` itself (sourcing
-  `nvm.sh` for `npx`, as the repo-shared jobs do). Missing tooling blocks the
-  bump identically every week, with nothing pointing at the host.
-- Silence is ambiguous: "no drift this week" and "the machine was off" look
-  identical from the repo. A pin that stops moving for a long stretch is worth
-  checking against PyPI by hand.
-- The bump is verified on the scheduler's host, not across the `test.yml`
-  matrix. `test.yml` runs on push, so the landed bump gets the full matrix
+- It runs the whole suite, so the host needs `uv` and, for the markdown gate's
+  `markdownlint-cli2`, `npx`. A scheduler's environment is not a login shell,
+  so the job has to put them on `PATH` itself. Missing tooling blocks every
+  bump the same way, with nothing pointing at the host.
+- Silence is ambiguous: "no drift" and "the job never ran" look identical from
+  the repo. A pin that stops moving for a long stretch is worth checking
+  against PyPI by hand.
+- The bump is verified on the host that runs it, not across the `test.yml`
+  matrix. `test.yml` runs on push, so a landed bump gets the full matrix
   immediately afterward.
-- This is the one push in the repo not gated on a human. The shared "never
-  push without approval" rule addresses agent sessions, which must still ask;
-  it does not govern this job.
+- A scheduled `--push` is the one push in the repo not gated on a human. The
+  shared "never push without approval" rule addresses agent sessions, which
+  must still ask; it does not govern such a job.
 
 ### The interpreter is pinned too
 
