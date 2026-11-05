@@ -2,6 +2,7 @@
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
+#     "markdown-it-py",
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
@@ -36,6 +37,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).parent.parent
 _SCRIPT_PATH = (
@@ -59,10 +61,12 @@ from conftest import (  # noqa: E402
     BlueprintSchemaDriftBase,
     HandlerArgparseGuardsBase,
 )
+from markdown_it import MarkdownIt  # noqa: E402
 
 install_homeassistant_stubs(frozen_now=FrozenNow.value)
 
 from custom_components.blueprint_toolkit.helpers import (  # noqa: E402
+    PersistentNotification,
     make_config_error_notification,
 )
 from custom_components.blueprint_toolkit.zwave_route_manager import (  # noqa: E402
@@ -309,14 +313,10 @@ class TestConfigErrorBullet:
                 "configured to use Z-Wave Long Range (vs Mesh)"
             ),
         )
-        # ``[``/``]`` in the YAML location are md-escaped --
-        # they're rendered inside backticks so the escaping is
-        # cosmetic-only, but ``_format_config_error`` runs
-        # ``md_escape`` on every interpolated string regardless.
         assert handler._format_config_error(err) == (
             "[`binary_sensor.window_front_left`]"
             "(/config/devices/device/abc123) "
-            "(`routes\\[0\\].clients\\[2\\]`): "
+            "(`routes[0].clients[2]`): "
             "Device does not support routing: "
             "configured to use Z-Wave Long Range (vs Mesh)"
         )
@@ -333,9 +333,7 @@ class TestConfigErrorBullet:
             reason="entity not found",
         )
         bullet = handler._format_config_error(err)
-        expected = (
-            "`lock.missing` (`routes\\[1\\].clients\\[0\\]`): entity not found"
-        )
+        expected = "`lock.missing` (`routes[1].clients[0]`): entity not found"
         assert bullet == expected
         assert "/config/devices/device/" not in bullet
 
@@ -353,12 +351,13 @@ class TestConfigErrorNotification:
         self,
         errors: list[logic.ConfigError],
         instance_id: str = "automation.zrm_test",
-    ) -> Any:
+    ) -> PersistentNotification:
         bullets = [handler._format_config_error(e) for e in errors]
         return make_config_error_notification(
             service=handler._SERVICE,
             instance_id=instance_id,
             errors=bullets,
+            errors_are_markdown=True,
         )
 
     def test_inactive_when_no_errors(self) -> None:
@@ -394,9 +393,170 @@ class TestConfigErrorNotification:
         ]
         notif = self._build(errors)
         for i in range(3):
-            assert f"binary_sensor.lr{i}" in notif.message
-            assert f"/config/devices/device/dev{i}" in notif.message
+            assert (
+                f"- [`binary_sensor.lr{i}`](/config/devices/device/dev{i}) "
+                f"(`routes[0].clients[{i}]`): Device does not support routing:"
+                " configured to use Z-Wave Long Range (vs Mesh)"
+            ) in notif.message
         assert notif.message.count("- ") == 3
+
+    def test_missing_entity_and_reason_are_escaped_once(self) -> None:
+        notif = self._build(
+            [
+                logic.ConfigError(
+                    location="routes[0].clients[0]",
+                    entity_id="binary_sensor.main_bath_window",
+                    reason=r"invalid [value] at C:\config",
+                ),
+            ],
+        )
+        assert notif.message == (
+            "- `binary_sensor.main_bath_window` (`routes[0].clients[0]`): "
+            r"invalid \[value\] at C:\\config"
+        )
+
+    @pytest.mark.parametrize("device_id", [None, "dev0"])
+    def test_rendered_markdown_preserves_code_and_links(
+        self, device_id: str | None
+    ) -> None:
+        notif = self._build(
+            [
+                logic.ConfigError(
+                    location="routes[0].clients[0]",
+                    entity_id="binary_sensor.window",
+                    device_id=device_id,
+                    reason="invalid [value]",
+                ),
+            ],
+        )
+        entity_html = "<code>binary_sensor.window</code>"
+        if device_id:
+            entity_html = (
+                f'<a href="/config/devices/device/dev0">{entity_html}</a>'
+            )
+        assert MarkdownIt().render(notif.message) == (
+            f"<ul>\n<li>{entity_html} "
+            "(<code>routes[0].clients[0]</code>): invalid [value]</li>\n"
+            "</ul>\n"
+        )
+
+
+class _ReconcileHass:
+    async def async_add_executor_job[**P, T](
+        self, target: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ) -> T:
+        return target(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("config_text", "expected_message"),
+    [
+        (
+            "routes:\n  - []\n",
+            "- `routes[0]`: route entry must be a mapping; got list",
+        ),
+        (
+            (
+                "routes:\n  - repeater: switch.repeater\n"
+                "    clients: [binary_sensor.main_bath_window]\n"
+            ),
+            (
+                "- `binary_sensor.main_bath_window` (`routes[0].clients[0]`): "
+                "entity not found, is disabled, or is not on a Z-Wave device"
+            ),
+        ),
+    ],
+)
+async def test_reconcile_config_error_markdown(
+    config_text: str, expected_message: str
+) -> None:
+    hass = _ReconcileHass()
+    state = _make_state()
+    repeater = logic.DeviceResolution(
+        entity_id="switch.repeater",
+        device_id="repeater",
+        node_id=bridge.NodeID(2),
+        is_routing=True,
+        is_listening=True,
+        is_frequent_listening=False,
+        failed=False,
+        is_long_range=False,
+        max_data_rate_bps=100000,
+    )
+    with (
+        patch.object(
+            handler, "_read_config_mtime", autospec=True, return_value=1.0
+        ),
+        patch.object(
+            handler,
+            "_read_config_text",
+            autospec=True,
+            return_value=(config_text, None),
+        ),
+        patch.object(
+            handler,
+            "automation_friendly_name",
+            autospec=True,
+            return_value="Route Manager",
+        ),
+        patch.object(
+            handler,
+            "_bridge_get_nodes",
+            autospec=True,
+            return_value=handler._GetNodesResult(
+                api_result=bridge.ApiResult(
+                    success=True,
+                    message="",
+                    api_echo=bridge.API_GET_NODES,
+                    result=None,
+                ),
+                nodes=[],
+                error="",
+            ),
+        ),
+        patch.object(
+            handler,
+            "_build_entity_to_resolution",
+            autospec=True,
+            return_value=({"switch.repeater": repeater}, repeater),
+        ),
+        patch.object(handler, "_persist_diagnostic", autospec=True),
+        patch.object(
+            handler, "_dispatch_terminal_notifications", autospec=True
+        ) as dispatch,
+    ):
+        await handler._do_reconcile(
+            hass,  # type: ignore[arg-type]
+            state,
+            now=FrozenNow.value,
+            trigger_id="manual",
+            config_file_path="/config/routes.yaml",
+            host="localhost",
+            port=3000,
+            token="",
+            clear_unmanaged_routes=False,
+            reconcile_interval_minutes=5,
+            pending_timeout_hours=24,
+            default_route_speed=None,
+            max_notifications=10,
+            debug_logging=False,
+        )
+        dispatch.assert_awaited_once_with(
+            hass,
+            [
+                PersistentNotification(
+                    active=True,
+                    notification_id=(
+                        "blueprint_toolkit_zwave_route_manager__"
+                        "automation.zrm_test__config_error"
+                    ),
+                    title="Config Error",
+                    message=expected_message,
+                    instance_id="automation.zrm_test",
+                ),
+            ],
+            "blueprint_toolkit_zwave_route_manager__automation.zrm_test__",
+        )
 
 
 def _make_action(

@@ -993,6 +993,7 @@ def make_config_error_notification(
     service: str,
     instance_id: str,
     errors: list[str],
+    errors_are_markdown: bool = False,
 ) -> PersistentNotification:
     """Build a config-error spec with the standard wire format.
 
@@ -1011,11 +1012,16 @@ def make_config_error_notification(
     ``<friendly_name>: `` to the title, so this builder
     only sets the bare ``"Config Error"`` category.
 
-    Every interpolated user-controlled string -- each
-    entry of ``errors`` -- is ``md_escape``-d here.
+    By default, each entry of ``errors`` is plain text
+    and is ``md_escape``-d here.
     ``probatio.Invalid`` messages can include the offending
     input value, which could otherwise smuggle stray
     ``[`` / ``]`` / ``\\`` into the rendered markdown.
+
+    With ``errors_are_markdown=True``, entries are already
+    formatted Markdown and are preserved verbatim. The caller
+    must escape user-controlled prose before composing them;
+    values in code spans do not need Markdown escaping.
     """
     notif_id = _config_error_notification_id(service, instance_id)
     if not errors:
@@ -1026,7 +1032,9 @@ def make_config_error_notification(
             message="",
             instance_id=instance_id,
         )
-    message = "\n".join(f"- {md_escape(e)}" for e in errors)
+    message = "\n".join(
+        f"- {e if errors_are_markdown else md_escape(e)}" for e in errors
+    )
     return PersistentNotification(
         active=True,
         notification_id=notif_id,

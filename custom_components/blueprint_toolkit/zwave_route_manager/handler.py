@@ -308,14 +308,13 @@ async def _async_argparse(
 
 def _format_config_error(err: logic.ConfigError) -> str:
     """Render one logic.ConfigError as a notification bullet."""
-    location = md_escape(err.location)
+    location = err.location
     reason = md_escape(err.reason)
     if err.entity_id:
         if err.device_id:
             link = device_link(f"`{err.entity_id}`", err.device_id)
             return f"{link} (`{location}`): {reason}"
-        ref = md_escape(err.entity_id)
-        return f"`{ref}` (`{location}`): {reason}"
+        return f"`{err.entity_id}` (`{location}`): {reason}"
     return f"`{location}`: {reason}"
 
 
@@ -442,6 +441,7 @@ async def _do_reconcile(
             service=_SERVICE,
             instance_id=instance_id,
             errors=[_format_config_error(e) for e in config_errors],
+            errors_are_markdown=True,
         )
         await _dispatch_terminal_notifications(
             hass,
@@ -636,6 +636,7 @@ async def _do_reconcile(
             service=_SERVICE,
             instance_id=instance_id,
             errors=[_format_config_error(e) for e in resolve_errors],
+            errors_are_markdown=True,
         )
         await _dispatch_terminal_notifications(
             hass,

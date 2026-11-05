@@ -577,6 +577,23 @@ _EXPECTED_CFG_ERR_ID = (
 
 
 class TestMakeConfigErrorNotification:
+    def test_formatted_errors_preserve_markdown(self) -> None:
+        n = helpers.make_config_error_notification(
+            service="zwave_route_manager",
+            instance_id="automation.x",
+            errors=[
+                (
+                    "[`lock.front`](/config/devices/device/abc) "
+                    "(`routes[0].clients[1]`): invalid \\[value\\]"
+                ),
+            ],
+            errors_are_markdown=True,
+        )
+        assert n.message == (
+            "- [`lock.front`](/config/devices/device/abc) "
+            "(`routes[0].clients[1]`): invalid \\[value\\]"
+        )
+
     def test_with_errors_is_active(self) -> None:
         n = helpers.make_config_error_notification(
             service="trigger_entity_controller",
