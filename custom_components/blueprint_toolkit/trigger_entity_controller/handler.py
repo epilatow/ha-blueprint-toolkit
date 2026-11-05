@@ -35,10 +35,10 @@ Three-layer dispatch:
    failure inside the blueprint runner can't lose the
    pending auto-off timestamp.
 
-Discovery + restart recovery: the integration walks
-``hass.data[DATA_COMPONENT].entities`` (filtered by
-``referenced_blueprint``) at HA-started time and kicks
-each automation with a synthetic TIMER variables
+Discovery + restart recovery: at HA-started time the
+integration asks HA's ``automations_with_blueprint``
+for every automation using this blueprint and kicks
+each one with a synthetic TIMER variables
 payload via ``automation.trigger`` -- the catch-up
 branch in ``logic._handle_timer`` then arms the timer
 based on current observable state. Live updates

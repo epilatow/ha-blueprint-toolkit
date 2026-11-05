@@ -72,7 +72,20 @@ _ha_components_automation = types.ModuleType(
     "homeassistant.components.automation",
 )
 _ha_components_automation.EVENT_AUTOMATION_RELOADED = "automation_reloaded"  # type: ignore[attr-defined]
-_ha_components_automation.DATA_COMPONENT = "automation_data_component"  # type: ignore[attr-defined]
+
+# A test lists the automations each blueprint path has under
+# this ``hass.data`` key; ``automations_with_blueprint`` reads it.
+_BLUEPRINT_AUTOMATIONS = "blueprint_automations"
+
+
+def _automations_with_blueprint(hass: Any, blueprint_path: str) -> list[str]:
+    by_path: dict[str, list[str]] = hass.data.get(_BLUEPRINT_AUTOMATIONS, {})
+    return list(by_path.get(blueprint_path, []))
+
+
+_ha_components_automation.automations_with_blueprint = (  # type: ignore[attr-defined]
+    _automations_with_blueprint
+)
 _ha_const = types.ModuleType("homeassistant.const")
 _ha_const.EVENT_HOMEASSISTANT_STARTED = "homeassistant_started"  # type: ignore[attr-defined]
 _ha_core = types.ModuleType("homeassistant.core")
@@ -1739,25 +1752,6 @@ class TestRegisterBlueprintHandler:
 
 
 @dataclass
-class _FakeAutoEntity:
-    """Stand-in for an automation entity in the component list."""
-
-    entity_id: str
-    referenced_blueprint: str | None
-
-
-@dataclass
-class _FakeAutoComponent:
-    """Stand-in for ``hass.data[DATA_COMPONENT]``.
-
-    ``discover_automations_using_blueprint`` walks ``.entities``
-    and matches ``referenced_blueprint``.
-    """
-
-    entities: list[_FakeAutoEntity] = field(default_factory=list)
-
-
-@dataclass
 class _FakeEvent:
     """Stand-in for a state-change ``Event``; only ``.data`` is read."""
 
@@ -1869,13 +1863,10 @@ class TestRecoverAtStartupSkipsDisabled:
     @pytest.mark.asyncio
     async def test_disabled_automations_not_kicked(self) -> None:
         hass = _MockHass()
-        hass.data["automation_data_component"] = _FakeAutoComponent(
-            [
-                _FakeAutoEntity("automation.on_one", "bp/x.yaml"),
-                _FakeAutoEntity("automation.off_one", "bp/x.yaml"),
-                _FakeAutoEntity("automation.other_bp", "bp/other.yaml"),
-            ],
-        )
+        hass.data[_BLUEPRINT_AUTOMATIONS] = {
+            "bp/x.yaml": ["automation.on_one", "automation.off_one"],
+            "bp/other.yaml": ["automation.other_bp"],
+        }
         hass.states.stub_state("automation.on_one", "on")
         hass.states.stub_state("automation.off_one", "off")
         kicked: list[str] = []
@@ -1903,9 +1894,9 @@ class TestReEnableTracker:
     @pytest.mark.asyncio
     async def test_off_to_on_transition_kicks(self) -> None:
         hass = _MockHass(is_running=True)
-        hass.data["automation_data_component"] = _FakeAutoComponent(
-            [_FakeAutoEntity("automation.dw", "blueprint_toolkit/foo.yaml")],
-        )
+        hass.data[_BLUEPRINT_AUTOMATIONS] = {
+            "blueprint_toolkit/foo.yaml": ["automation.dw"],
+        }
         entry = _MockEntry()
         spec = _make_spec(kick_variables={"trigger_id": "manual"})
 
@@ -1935,9 +1926,9 @@ class TestReEnableTracker:
     @pytest.mark.asyncio
     async def test_non_enable_transition_does_not_kick(self) -> None:
         hass = _MockHass(is_running=True)
-        hass.data["automation_data_component"] = _FakeAutoComponent(
-            [_FakeAutoEntity("automation.dw", "blueprint_toolkit/foo.yaml")],
-        )
+        hass.data[_BLUEPRINT_AUTOMATIONS] = {
+            "blueprint_toolkit/foo.yaml": ["automation.dw"],
+        }
         entry = _MockEntry()
         spec = _make_spec(kick_variables={"trigger_id": "manual"})
         await helpers.register_blueprint_handler(

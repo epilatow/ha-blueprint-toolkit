@@ -255,32 +255,6 @@ def cv_ha_domain_list(value: object) -> list[str]:
     return items
 
 
-def discover_automations_using_blueprint(
-    hass: HomeAssistant,
-    blueprint_path: str,
-) -> list[str]:
-    """Return entity_ids of automations using ``blueprint_path``.
-
-    Walks ``hass.data[DATA_COMPONENT].entities`` and
-    matches ``BaseAutomationEntity.referenced_blueprint``
-    (HA core's ``homeassistant/components/automation/__init__.py``).
-    Returns an empty list when the automation component
-    isn't loaded yet (early in HA startup).
-    """
-    from homeassistant.components.automation import (
-        DATA_COMPONENT,
-    )
-
-    component = hass.data.get(DATA_COMPONENT)
-    if component is None:
-        return []
-    return [
-        ent.entity_id
-        for ent in component.entities
-        if getattr(ent, "referenced_blueprint", None) == blueprint_path
-    ]
-
-
 async def recover_at_startup(
     hass: HomeAssistant,
     *,
@@ -298,7 +272,11 @@ async def recover_at_startup(
     for catch-up" INFO log lines so all subpackages surface
     the same diagnostic shape.
     """
-    discovered = discover_automations_using_blueprint(hass, blueprint_path)
+    from homeassistant.components.automation import (
+        automations_with_blueprint,
+    )
+
+    discovered = automations_with_blueprint(hass, blueprint_path)
     if not discovered:
         _LOGGER.info(
             "[%s] no automations using %s discovered at startup",
@@ -918,6 +896,9 @@ async def register_blueprint_handler(
                 )
 
         def _refresh_enable_tracker() -> None:
+            from homeassistant.components.automation import (
+                automations_with_blueprint,
+            )
             from homeassistant.helpers.event import (
                 async_track_state_change_event,
             )
@@ -926,10 +907,7 @@ async def register_blueprint_handler(
             if prev is not None:
                 prev()
                 enable_tracker["current"] = None
-            ids = discover_automations_using_blueprint(
-                hass,
-                spec.blueprint_path,
-            )
+            ids = automations_with_blueprint(hass, spec.blueprint_path)
             if not ids:
                 return
             enable_tracker["current"] = async_track_state_change_event(

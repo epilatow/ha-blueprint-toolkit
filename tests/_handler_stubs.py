@@ -79,6 +79,10 @@ def _noop_decorator(f: Any) -> Any:
     return f
 
 
+def _no_automations(_hass: Any, _blueprint_path: str) -> list[str]:
+    return []
+
+
 def install_homeassistant_stubs(
     *,
     frozen_now: datetime,
@@ -106,8 +110,8 @@ def install_homeassistant_stubs(
     components_automation.EVENT_AUTOMATION_RELOADED = (  # type: ignore[attr-defined]
         "automation_reloaded"
     )
-    components_automation.DATA_COMPONENT = (  # type: ignore[attr-defined]
-        "automation_data_component"
+    components_automation.automations_with_blueprint = (  # type: ignore[attr-defined]
+        _no_automations
     )
 
     config_entries = types.ModuleType("homeassistant.config_entries")
