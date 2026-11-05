@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -21,8 +21,8 @@ the entity + device registries (truth-set assembly +
 executor offload of ``run_evaluation`` + sweep dispatch +
 ``update_instance_state``), and the
 automation-link-prefix-on-notification-body invariant the
-plan flags as a P1 regression. Same pytest-HACC harness
-as ``test_integration.py``.
+plan flags as a P1 regression. Same pytest-homeassistant
+harness as ``test_integration.py``.
 """
 
 from __future__ import annotations
@@ -51,58 +51,25 @@ _SCRIPT_PATH = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers import entity_registry as er
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
-    from pytest_homeassistant_custom_component.typing import (
+    from pytest_homeassistant.typing import (
         WebSocketGenerator,
     )
 
-# pytest-HACC's plugins refuse to load if any
-# homeassistant.components.* module is already in
+# pytest-homeassistant's patch_recorder plugin refuses to
+# load if Home Assistant's recorder modules are already in
 # sys.modules. Defer imports until inside the tests.
 DOMAIN = "blueprint_toolkit"
 SERVICE = "entity_defaults_watchdog"
 
 
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    hass: HomeAssistant,
-    # Requested for its side effect; pytest resolves fixtures by name
-    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
-    # on a fixture function.
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Symlink our integration into pytest-HACC's config_dir."""
-    import shutil
-
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-    yield
-    if dst.is_symlink():
-        dst.unlink()
-
-
 def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
@@ -114,7 +81,7 @@ async def _setup_integration(hass: Any) -> Any:
 
     Also explicitly sets up ``persistent_notification`` so
     the argparse-error code path can dispatch to it. The
-    pytest-HACC harness doesn't auto-load it.
+    pytest-homeassistant harness doesn't auto-load it.
     """
     from homeassistant.setup import async_setup_component
 
@@ -204,7 +171,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -229,7 +196,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -258,7 +225,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -287,7 +254,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -320,7 +287,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -355,7 +322,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -464,7 +431,7 @@ class TestServiceLayerScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -580,7 +547,7 @@ class TestUnmatchedDirectives:
         """An exclude that clears a state-only finding did match
         something, though the entity has no registry row.
         """
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import issue_registry as ir
@@ -641,7 +608,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -673,7 +640,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -721,7 +688,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -817,7 +784,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -867,7 +834,7 @@ class TestUnmatchedDirectives:
 
         # Plant a registry entry on integration "plant_other".
         ent_reg = er.async_get(hass)
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             MockConfigEntry,
         )
 
@@ -896,7 +863,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1054,7 +1021,7 @@ class TestVisibleAliasedScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1080,7 +1047,7 @@ class TestVisibleAliasedScan:
         as one re-hide repair (not the aggregate notification);
         calling the fix service sets ``hidden_by=integration``.
         """
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import entity_registry as er
@@ -1251,7 +1218,7 @@ class TestVisibleAliasedScan:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1389,7 +1356,7 @@ class TestVisibleAliasedScan:
         """With ``create_repairs=false`` the visible source stays
         on the aggregate notification surface; no repair issues.
         """
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import issue_registry as ir
@@ -1485,7 +1452,7 @@ class TestVisibleAliasedScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1588,7 +1555,7 @@ class TestVisibleAliasedScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1635,7 +1602,7 @@ class TestVisibleAliasedScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1687,7 +1654,7 @@ class TestVisibleAliasedScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1873,7 +1840,7 @@ class TestScriptYamlKeyScan:
         surfaces on no surface at all -- no repair issue and
         no persistent notification (repair-only by design).
         """
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import issue_registry as ir
@@ -2279,7 +2246,7 @@ class TestLegacyNamesFollowHomeAssistant:
     registry code, so ``_compute_recommended_override`` is a
     copy of that rule. These tests run the real rename: a Home
     Assistant release that changes the rule turns them red,
-    which blocks the HACC bump bringing it in.
+    which blocks the pytest-homeassistant bump bringing it in.
     """
 
     def _plant(
@@ -2823,7 +2790,7 @@ class TestRedundantPrefixComesFromHomeAssistant:
         own_area: bool,
         section: str,
     ) -> None:
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import area_registry as ar
@@ -2902,7 +2869,7 @@ class TestNameExcludeMatchesFriendlyName:
         ]
 
     def _unmatched(self, hass: HomeAssistant) -> str:
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -3384,7 +3351,7 @@ class TestDevicelessIdsFollowRecreate:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -3490,7 +3457,7 @@ class TestCachedNameDrift:
 
     def _notifications(self, hass: HomeAssistant) -> dict[str, str]:
         """This instance's notification bodies, by notification kind."""
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -3871,7 +3838,7 @@ class TestCachedNameDrift:
         from homeassistant.helpers import area_registry as ar
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             MockEntity,
             MockEntityPlatform,
         )
@@ -3997,7 +3964,7 @@ async def _setup_with_live_entities(hass: HomeAssistant) -> Any:
     Each sits on its own integration, so a stale name on each
     is a separate finding.
     """
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockEntity,
         MockEntityPlatform,
     )

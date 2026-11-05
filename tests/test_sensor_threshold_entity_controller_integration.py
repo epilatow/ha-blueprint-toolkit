@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 # Make custom_components/ importable as a top-level package.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest
 from conftest import (
     RecoveryEventsIntegrationBase,
 )
@@ -44,10 +43,8 @@ _SCRIPT_PATH = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
@@ -55,39 +52,8 @@ DOMAIN = "blueprint_toolkit"
 SERVICE = "sensor_threshold_entity_controller"
 
 
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    hass: HomeAssistant,
-    # Requested for its side effect; pytest resolves fixtures by name
-    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
-    # on a fixture function.
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Symlink our integration into pytest-HACC's config_dir."""
-    import shutil
-
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-    yield
-    if dst.is_symlink():
-        dst.unlink()
-
-
 def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
@@ -176,7 +142,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -204,7 +170,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -232,7 +198,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -264,7 +230,7 @@ class TestArgparseEmitsConfigErrorNotification:
         # Existing entity, wrong domain (sensors don't
         # respond to homeassistant.turn_on/off).
         hass.states.async_set("sensor.humidity", "55.0")
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -277,7 +243,7 @@ class TestArgparseEmitsConfigErrorNotification:
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -312,7 +278,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -349,7 +315,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -511,7 +477,7 @@ class TestActionDispatch:
         automation.
         """
         from homeassistant.core import Context
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -561,7 +527,7 @@ class TestActionDispatch:
         """A sensor reading at baseline should leave the
         switch alone -- no turn_on / turn_off dispatch.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -597,7 +563,7 @@ class TestMultiEntityDispatch:
     ) -> None:
         """A spike on a two-entity controller dispatches one
         ``turn_on`` whose ``entity_id`` is both entities."""
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -649,7 +615,7 @@ class TestMultiEntityDispatch:
         """
         import json
 
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -719,7 +685,7 @@ class TestServiceResponseShape:
         Locks down the slot name + the non-empty body
         contract on emit paths.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -766,7 +732,7 @@ class TestServiceResponseShape:
         The blueprint's ``choose`` short-circuits on that
         and the user's notify action does not fire.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -824,7 +790,7 @@ class TestStateSavedBeforeResponseReturned:
         future refactor that moves the state save below
         the return.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -901,7 +867,7 @@ class TestLoadStateBlobMalformed:
         have written a different blob shape, so this is
         a real upgrade-path concern.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -957,7 +923,7 @@ class TestLoadStateBlobMalformed:
         upgrade or hand-edit could plant something else and
         the bootstrap path must absorb it cleanly.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 

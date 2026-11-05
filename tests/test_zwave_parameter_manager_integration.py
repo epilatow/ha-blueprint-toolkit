@@ -4,8 +4,8 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
-#     "zwave-js-server-python==0.73.1",
+#     "pytest-homeassistant==2026.11.0",
+#     "zwave-js-server-python==0.74.0",
 #     "pyyaml",
 #     "types-PyYAML",
 # ]
@@ -13,7 +13,7 @@
 # This is AI generated code
 """Integration-level tests for the ZPM handler.
 
-Boots the integration in-process (pytest-HACC) and drives the
+Boots the integration in-process (pytest-homeassistant) and drives the
 ``blueprint_toolkit.zwave_parameter_manager`` service against a fake
 ``zwave_js`` config entry whose driver exposes one battery node. Covers
 the full reconcile path the unit tests skip: argparse, the policy-file
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -43,10 +43,11 @@ _SCRIPT_PATH = (
     / "zwave_parameter_manager"
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
-    from homeassistant.core import HomeAssistant
+# ``source.read_fleet`` reads the recorder for last-wake, and
+# pytest-homeassistant refuses to set up the recorder's database once
+# ``hass`` is up. A ``usefixtures`` mark is set up ahead of a test's own
+# arguments, so this puts the recorder first.
+pytestmark = pytest.mark.usefixtures("recorder_mock")
 
 DOMAIN = "blueprint_toolkit"
 SERVICE = "zwave_parameter_manager"
@@ -71,59 +72,8 @@ policies:
 """
 
 
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    # Both requested for their side effect; pytest resolves fixtures by name
-    # so they can't be ``_``-prefixed, and ``usefixtures`` has no effect on a
-    # fixture function.
-    recorder_mock: object,  # noqa: ARG001
-    hass: HomeAssistant,
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Symlink our integration into pytest-HACC's config_dir.
-
-    Depends on ``recorder_mock`` first so the recorder DB is set up before
-    ``hass`` -- ``source.read_fleet`` reads the recorder for last-wake, and
-    pytest-HACC refuses to attach the recorder once ``hass`` is already up.
-
-    pytest-HACC's config_dir is one directory shared by every test and run,
-    so the state files a reconcile persists there are cleared first: a write
-    an earlier test left pending would otherwise suppress this test's.
-    """
-    import shutil
-
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-
-    # Importable only once the symlink is in place: ``custom_components``
-    # resolves to pytest-HACC's config_dir package.
-    from custom_components.blueprint_toolkit.zwave import driver_session
-    from custom_components.blueprint_toolkit.zwave_parameter_manager import (
-        pending_store,
-    )
-
-    for rel in (pending_store.PENDING_REL_PATH, driver_session.INFO_REL_PATH):
-        (Path(hass.config.config_dir) / rel).unlink(missing_ok=True)
-    yield
-    if dst.is_symlink():
-        dst.unlink()
-
-
 def _mock_config_entry(**kwargs: Any) -> Any:
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     return MockConfigEntry(**kwargs)
 
@@ -190,7 +140,7 @@ def _install_zwave_js(hass: Any) -> str:
     from homeassistant.components.zwave_js.helpers import get_device_id
     from homeassistant.config_entries import ConfigEntryState
     from homeassistant.helpers import device_registry as dr
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     node = _node(1800)
     driver = MagicMock()
@@ -301,7 +251,7 @@ async def test_pending_notification_dismisses_on_convergence(
     _capture_zwave_services(hass)
     await _setup_integration(hass)
 
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 
@@ -333,7 +283,7 @@ async def test_pending_report_disabled_when_interval_zero(hass: Any) -> None:
     _capture_zwave_services(hass)
     await _setup_integration(hass)
 
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 
@@ -364,7 +314,7 @@ async def test_stale_pending_dismissed_after_state_reset(hass: Any) -> None:
     _capture_zwave_services(hass)
     await _setup_integration(hass)
 
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 
@@ -390,7 +340,7 @@ async def test_stale_pending_dismissed_after_state_reset(hass: Any) -> None:
 
 
 def _desired_shown(hass: Any) -> bool:
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 
@@ -454,7 +404,7 @@ async def test_invalid_policy_emits_config_error(hass: Any) -> None:
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
 
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 
@@ -473,7 +423,7 @@ async def test_unused_policy_emits_notification(hass: Any) -> None:
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
 
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 
@@ -489,7 +439,7 @@ async def test_no_zwave_js_emits_unavailable(hass: Any) -> None:
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
 
-    from homeassistant.components.persistent_notification import (
+    from homeassistant.components.persistent_notification.helpers import (
         _async_get_or_create_notifications,
     )
 

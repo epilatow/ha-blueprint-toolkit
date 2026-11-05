@@ -4,14 +4,14 @@
 # dependencies = []
 # ///
 # This is AI generated code
-"""Bump the pinned HACC version, verify it, and land it.
+"""Bump the pinned Home Assistant release, verify it, and land it.
 
-``pytest-homeassistant-custom-component`` (HACC) ships Home
-Assistant core as a transitive dependency, so its pin decides which
-HA API surface ``mypy --strict`` and the integration tests validate
-against. This tool moves that pin to the newest release and proves
-the suite still passes before the change reaches the default
-branch.
+``pytest-homeassistant`` is Home Assistant's own test harness. Each
+release of it requires the matching Home Assistant release exactly,
+so its pin decides which HA API surface ``mypy --strict`` and the
+integration tests validate against. This tool moves that pin to the
+newest release and proves the suite still passes before the change
+reaches the default branch.
 
 Built to run unattended from a scheduler. The whole point is that a
 green bump lands without a human: a bump that only ever opens a
@@ -32,7 +32,7 @@ The flow mirrors ``repo-shared upgrade``:
   branch that lacks the migration. Such a run verifies only, and the
   verified result is left for a hand merge.
 - Rewrite every site declaring the version being replaced. There
-  are many: each HACC-coupled test file repeats the pin in its own
+  are many: each HA-coupled test file repeats the pin in its own
   PEP 723 block, and a block that disagrees with ``pyproject.toml``
   would silently type-check against a different HA version. A site
   that has already drifted to some third version is not found by
@@ -45,7 +45,7 @@ The flow mirrors ``repo-shared upgrade``:
   ``--push``. Without it the bump stays on its branch.
 
 The Z-Wave client pin rides along. It is pinned exactly too, but its
-value is dictated by the Home Assistant release the HACC pin selects,
+value is dictated by the Home Assistant release the harness pin selects,
 so the bump reads it out of that release and rewrites it in the same
 commit rather than leaving a coupled pin behind. That value comes from
 the release's own component manifest, which is read as a file rather
@@ -80,7 +80,7 @@ from enum import IntEnum
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PACKAGE = "pytest-homeassistant-custom-component"
+PACKAGE = "pytest-homeassistant"
 # The Z-Wave client library is pinned exactly too, but its value is not
 # a choice: it has to be whatever the pinned Home Assistant release's
 # zwave_js component requires. See ``companion_requirement``.
@@ -95,7 +95,7 @@ NETWORK_TIMEOUT_SECONDS = 30
 # unrewritten would go stale the moment the pin moved.
 PIN_SUFFIXES = (".py", ".toml", ".md")
 
-WORKTREE_PREFIX = "hacc-upgrade"
+WORKTREE_PREFIX = "deps-upgrade"
 
 # tests/run_all.py reserves this for "the run could not complete",
 # as distinct from its exit 1 for a real test failure.
@@ -151,7 +151,7 @@ def git_ok(*args: str, cwd: Path | None = None, quiet: bool = False) -> bool:
 
 
 def pinned_version(pyproject_text: str) -> str:
-    """Return the HACC version pinned in ``mypy-extra-deps``."""
+    """Return the harness version pinned in ``mypy-extra-deps``."""
     cfg = tomllib.loads(pyproject_text)
     deps = cfg["tool"]["repo-shared"]["code-quality"]["mypy-extra-deps"]
     if not isinstance(deps, list):
@@ -163,7 +163,7 @@ def pinned_version(pyproject_text: str) -> str:
 
 
 def latest_version() -> str:
-    """Return the newest HACC version published to PyPI."""
+    """Return the newest harness version published to PyPI."""
     with urllib.request.urlopen(
         PYPI_URL, timeout=NETWORK_TIMEOUT_SECONDS
     ) as response:
@@ -238,8 +238,8 @@ def declared_versions(root: Path, package: str) -> set[str]:
     return {version for _, version in declared_sites(root, package)}
 
 
-def companion_requirement(root: Path, hacc_version: str) -> str:
-    """Return the Z-Wave client version the target HACC release needs.
+def companion_requirement(root: Path, version: str) -> str:
+    """Return the Z-Wave client version the target release needs.
 
     Home Assistant's own ``zwave_js`` component pins one exact
     ``zwave-js-server-python`` and imports from it, so the version this
@@ -268,7 +268,7 @@ def companion_requirement(root: Path, hacc_version: str) -> str:
             "--quiet",
             "--no-project",
             "--with",
-            f"{PACKAGE}=={hacc_version}",
+            f"{PACKAGE}=={version}",
             "python",
             "-c",
             code,
@@ -281,7 +281,7 @@ def companion_requirement(root: Path, hacc_version: str) -> str:
     if result.returncode != 0:
         raise ValueError(
             f"cannot read Home Assistant's zwave_js requirements at "
-            f"{PACKAGE}=={hacc_version}: {result.stderr.strip()[:400]}"
+            f"{PACKAGE}=={version}: {result.stderr.strip()[:400]}"
         )
     needle = re.compile(re.escape(f"{COMPANION}==") + r"(\d+(?:\.\d+)*)")
     for line in result.stdout.splitlines():
@@ -290,7 +290,7 @@ def companion_requirement(root: Path, hacc_version: str) -> str:
             return found.group(1)
     raise ValueError(
         f"Home Assistant's zwave_js manifest at {PACKAGE}=="
-        f"{hacc_version} declares no exact {COMPANION} requirement: "
+        f"{version} declares no exact {COMPANION} requirement: "
         f"{result.stdout.strip()[:200]}"
     )
 
@@ -488,7 +488,7 @@ def run_suite(worktree: Path) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Bump the pinned HACC version, run the suite against it, "
+            "Bump the pinned Home Assistant release, run the suite against it, "
             "and fast-forward the default branch when it passes."
         ),
         epilog=(

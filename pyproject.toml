@@ -46,21 +46,21 @@ wrap = 78
 # ``mypy --strict`` per file; without this, ``homeassistant.*``,
 # ``probatio``, ``yaml``, etc. resolve to ``Any`` and ``--strict``
 # then errors on every ``Any`` subclass / untyped decorator.
-# ``pytest-homeassistant-custom-component`` (HACC) ships HA core as
-# a transitive dependency, so its pin picks which HA API surface
-# mypy validates against. Leaving it unpinned would let that
-# surface move mid-run, silently invalidating a green result (HA
-# does remove APIs between releases -- e.g.
+# ``pytest-homeassistant``, Home Assistant's own test harness,
+# requires the matching HA release exactly, so its pin picks which
+# HA API surface mypy validates against. Leaving it unpinned would
+# let that surface move mid-run, silently invalidating a green
+# result (HA does remove APIs between releases -- e.g.
 # ``entity_registry.integration_entities``). The pin says what the
 # code is validated against, not what users run -- ``hacs.json``
-# declares the supported HA floor. ``scripts/hacc_upgrade.py`` owns
+# declares the supported HA floor. ``scripts/deps-upgrade.py`` owns
 # bumping it: don't move the pin by hand. It rewrites every pin site
 # to the newest release, runs the suite against it, and with
 # ``--push`` lands the bump only when that suite passes, so when run
-# on a schedule it keeps the pin on the newest HACC the suite passes
-# against. The literal below is the single source of truth for which
-# version that is -- never restate it in prose here or in docs,
-# because automation moves it and the prose would not follow.
+# on a schedule it keeps the pin on the newest release the suite
+# passes against. The literal below is the single source of truth
+# for which version that is -- never restate it in prose here or in
+# docs, because automation moves it and the prose would not follow.
 # ``zwave-js-server-python`` is the Z-Wave JS client the ZPM and ZRM
 # modules import types from. HA does not install it as a package
 # dependency -- its ``zwave_js`` component declares it as a component
@@ -69,7 +69,7 @@ wrap = 78
 # choice: the component declares an EXACT requirement and imports from
 # it, so the only client the pinned HA release can be imported against
 # is the one that release's ``zwave_js/manifest.json`` names. It
-# therefore moves whenever the HACC pin above moves. A ``pip``-style
+# therefore moves whenever the harness pin above moves. A ``pip``-style
 # resolve will happily install some other version, because the
 # component requirement is invisible to it; the failure shows up only
 # when a Z-Wave phase imports ``zwave_js`` and a name is missing.
@@ -82,12 +82,12 @@ wrap = 78
 # gone unused, never to pair it with ``unused-ignore`` -- see
 # DEVELOPMENT.md "Analysis-dep pinning and stub suppressions".
 mypy-extra-deps = [
-    "pytest-homeassistant-custom-component==0.13.375",
-    "zwave-js-server-python==0.73.1",
+    "pytest-homeassistant==2026.11.0",
+    "zwave-js-server-python==0.74.0",
     "types-PyYAML",
 ]
 # The version the integration declares and runs on, which is also
-# the only one HACC installs for.
+# the only one the harness pin installs for.
 mypy-python-version = "3.14"
 
 [tool.pytest.ini_options]
@@ -98,14 +98,17 @@ markers = [
 # Exclude docker tests from the default run. tests/run_all.py
 # uses tests_dir.glob('test_*.py'), which is non-recursive, so
 # it never discovers tests/docker/test_*.py either way.
-addopts = "-m 'not docker'"
-# pytest-homeassistant-custom-component (used by
-# test_hacc_harness.py) provides an async ``hass`` fixture.
+# ``-p no:respx`` keeps respx's pytest plugin from importing
+# ``httpx`` before Home Assistant installs its alias for it,
+# which pytest-homeassistant's own docs require.
+addopts = "-m 'not docker' -p no:respx"
+# pytest-homeassistant provides an async ``hass`` fixture.
 # In auto mode pytest-asyncio adopts each test's coroutine
 # without requiring per-test @mark.asyncio decoration; this
 # is what HA's own integration repos use. No effect on the
 # existing sync tests.
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 80
@@ -143,15 +146,15 @@ extend-select = ["E", "F", "W", "I", "B", "UP", "ARG"]
 
 [tool.mypy]
 # The version the integration declares and runs on, which is also what
-# HACC's HA stubs need to parse (they use ``type X[T] = ...``).
+# Home Assistant's own sources need to parse (they use
+# ``type X[T] = ...``).
 python_version = "3.14"
 strict = true
 # No ``files = [...]`` set: the canonical type check is the
 # delivered ``_repo_shared/tests/test_code_quality.py``,
 # which runs ``mypy --strict`` once per discovered file.
-# HA-coupled files install
-# ``pytest-homeassistant-custom-component`` via their PEP 723
-# blocks (project-wide fallback in
+# HA-coupled files install ``pytest-homeassistant`` via their
+# PEP 723 blocks (project-wide fallback in
 # ``[tool.repo-shared.code-quality] mypy-extra-deps``) so
 # ``homeassistant.*`` resolves against real types. A bare
 # ``uvx mypy`` from a checkout without those deps will not
@@ -210,11 +213,11 @@ module = ["blueprint_toolkit", "blueprint_toolkit.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# pytest-homeassistant-custom-component ships no ``py.typed``
+# pytest-homeassistant ships no ``py.typed``
 # marker, so ``mypy --strict`` flags every import from it as
 # ``[import-untyped]``. The HA-coupled test files import
 # ``MockConfigEntry`` / ``ClientSessionGenerator`` from it.
-module = ["pytest_homeassistant_custom_component.*"]
+module = ["pytest_homeassistant.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

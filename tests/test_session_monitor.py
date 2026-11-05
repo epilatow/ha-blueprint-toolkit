@@ -7,8 +7,8 @@
 #     "pytest-cov",
 #     "probatio",
 #     "pyyaml",
-#     "zwave-js-server-python==0.73.1",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "zwave-js-server-python==0.74.0",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -146,11 +146,11 @@ class TestStart:
 if __name__ == "__main__":
     from conftest import run_tests
 
-    # ``-p no:homeassistant`` disables pytest-HACC's plugin, which conflicts
-    # with the homeassistant-module stubs this file installs.
+    # ``-p no:pytest_homeassistant`` disables Home Assistant's pytest plugin,
+    # which conflicts with the homeassistant-module stubs this file installs.
     run_tests(
         __file__,
         _SCRIPT_PATH,
         REPO_ROOT,
-        pytest_args=["-p", "no:homeassistant"],
+        pytest_args=["-p", "no:pytest_homeassistant"],
     )

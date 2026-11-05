@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -20,7 +20,7 @@ the response-shape contract that hands the user-facing
 notification body back to the calling blueprint via
 ``response_variable``, and the
 EVENT_AUTOMATION_RELOADED -> kick-discovery flow. Same
-pytest-HACC harness as ``test_integration.py``.
+pytest-homeassistant harness as ``test_integration.py``.
 
 Each test sets up our integration via the config flow,
 seeds the ``hass.states`` fixture with the entities the
@@ -54,15 +54,13 @@ _SCRIPT_PATH = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
-# pytest-HACC's plugins refuse to load if any
-# homeassistant.components.* module is already in
+# pytest-homeassistant's patch_recorder plugin refuses to
+# load if Home Assistant's recorder modules are already in
 # sys.modules. Defer imports until inside the tests.
 DOMAIN = "blueprint_toolkit"
 SERVICE = "trigger_entity_controller"
@@ -71,40 +69,9 @@ LIGHT = "light.hallway"
 MOTION = "binary_sensor.motion"
 
 
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    hass: HomeAssistant,
-    # Requested for its side effect; pytest resolves fixtures by name
-    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
-    # on a fixture function.
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Symlink our integration into pytest-HACC's config_dir."""
-    import shutil
-
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-    yield
-    if dst.is_symlink():
-        dst.unlink()
-
-
 def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
@@ -116,7 +83,7 @@ async def _setup_integration(hass: Any) -> Any:
 
     Also explicitly sets up ``persistent_notification`` so
     the argparse-error code path can dispatch to it. The
-    pytest-HACC harness doesn't auto-load it.
+    pytest-homeassistant harness doesn't auto-load it.
     """
     from homeassistant.setup import async_setup_component
 
@@ -177,7 +144,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -208,7 +175,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -233,7 +200,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -267,7 +234,7 @@ class TestArgparseEmitsConfigErrorNotification:
         payload["controlled_entities_raw"] = [bad]
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -294,7 +261,7 @@ class TestArgparseEmitsConfigErrorNotification:
         Locks down that scope so a future refactor doesn't
         silently extend the check.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -314,7 +281,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -349,7 +316,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -385,7 +352,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -401,7 +368,7 @@ class TestArgparseEmitsConfigErrorNotification:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -426,7 +393,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -448,7 +415,7 @@ class TestServiceLayerAppliesActions:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -476,7 +443,7 @@ class TestServiceLayerAppliesActions:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -522,7 +489,7 @@ class TestAutoOffSchedulesAndFires:
         hass: HomeAssistant,
     ) -> None:
         from homeassistant.util import dt as dt_util
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_fire_time_changed,
             async_mock_service,
         )
@@ -585,8 +552,8 @@ class TestAutoOffSchedulesAndFires:
         # mechanism fired and reached the catch-up branch
         # of the logic. The full turn_off chain depends on
         # HA's automation runner re-firing the blueprint
-        # synchronously, which the pytest-HACC harness may
-        # short-circuit.  ``len(turn_off_calls)`` may stay
+        # synchronously, which the pytest-homeassistant
+        # harness may short-circuit.  ``len(turn_off_calls)`` may stay
         # at 0 in the harness; we deliberately don't
         # assert > 0 here. The live e2e walk-by test is
         # the real validation; this test guards the wiring
@@ -611,7 +578,7 @@ class TestServiceResponseShape:
         and runs the user-supplied ``notify_action``
         step against it.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -651,7 +618,7 @@ class TestServiceResponseShape:
         ``choose`` short-circuits without firing the
         user's notify action.
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 
@@ -714,7 +681,7 @@ class TestStateSavedBeforeResponseReturned:
         failure can't roll back the state save (which
         carries the pending ``auto_off_at`` timestamp).
         """
-        from pytest_homeassistant_custom_component.common import (
+        from pytest_homeassistant.common import (
             async_mock_service,
         )
 

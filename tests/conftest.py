@@ -75,6 +75,17 @@ def system_time_zone() -> Iterator[Callable[[str], None]]:
     time.tzset()
 
 
+@pytest.fixture
+def hass_config_dir(hass_tmp_config_dir: str) -> str:
+    """Give each test that starts ``hass`` its own config directory.
+
+    pytest-homeassistant otherwise points ``hass`` at the repo's
+    ``tests/testing_config``, and the integration writes blueprints
+    and state files into its config directory.
+    """
+    return hass_tmp_config_dir
+
+
 def coverage_source(script_path: Path, repo_root: Path) -> str:
     """The ``--cov`` source that measures ``script_path``.
 
@@ -384,9 +395,9 @@ class RecoveryEventsIntegrationBase:
 
     Inherited tests verify that ``register_blueprint_handler``'s
     discovery-and-kick wiring fires both at integration setup
-    (the ``hass.is_running`` immediate-call branch -- pytest-HACC
-    has HA up by the time the integration loads) and on every
-    ``EVENT_AUTOMATION_RELOADED``. The deferred
+    (the ``hass.is_running`` immediate-call branch -- the
+    ``hass`` fixture has HA up by the time the integration
+    loads) and on every ``EVENT_AUTOMATION_RELOADED``. The deferred
     ``EVENT_HOMEASSISTANT_STARTED`` branch is covered at the unit
     level by ``test_helpers_lifecycle.py``, which can simulate
     ``CoreState.starting`` cleanly.
@@ -522,7 +533,7 @@ class WatchdogFindingLifecycleBase:
         }
 
     def _notifications(self, hass: Any) -> dict[str, Any]:
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 

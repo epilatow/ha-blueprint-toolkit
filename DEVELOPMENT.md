@@ -98,7 +98,7 @@ if __name__ == "__main__":
 
 `_SCRIPT_PATH` names the code under test, which `--coverage` measures. A file
 that always needs a pytest option passes it as `pytest_args=`, as the files
-that stub the `homeassistant` modules do with `-p no:homeassistant`.
+that stub the `homeassistant` modules do with `-p no:pytest_homeassistant`.
 `tests/test_run_all.py` gates that every discovered file ends with this call.
 
 `tests/docker/test_dev_workflow.py` is the exception: its standalone entry
@@ -117,7 +117,7 @@ A doc that describes code changes in the same commit as that code (the shared
   per-automation file layout change.
 - `DEVELOPMENT.md` -- when dev-process tooling changes: test conventions, lint
   rules, required steps in the develop / test / commit cycle, or the workflow
-  of `dev-deploy.py`, `dev-install.py`, `release.py`, or `hacc_upgrade.py`.
+  of `dev-deploy.py`, `dev-install.py`, `release.py`, or `deps-upgrade.py`.
 - `DEVELOPMENT_AGENT.md` -- when agent-specific workflow changes (file
   markers, the dev-deploy verification checklist, etc.).
 - `README.md` -- when an automation is added, removed, or its one-line blurb
@@ -208,27 +208,30 @@ suite.
 `scripts/dev-install.py` and `scripts/dev-deploy.py` end-to-end. It is not run
 by `tests/run_all.py`; see `tests/docker/README.md`.
 
-### pytest-homeassistant-custom-component harness
+### pytest-homeassistant harness
 
-`tests/test_hacc_harness.py` uses
-[`pytest-homeassistant-custom-component`](https://pypi.org/project/pytest-homeassistant-custom-component/)
-(HACC) to stand up an in-process HA instance. `tests/test_integration.py` and
-the per-automation `tests/test_<service>_integration.py` files use the same
+`tests/test_ha_harness.py` uses Home Assistant's own
+[`pytest-homeassistant`](https://pypi.org/project/pytest-homeassistant/) to
+stand up an in-process HA instance. `tests/test_integration.py` and the
+per-automation `tests/test_<service>_integration.py` files use the same
 harness to exercise the integration's async lifecycle and each handler's full
 call path. All of them run in the default suite; the first run downloads HA
 into a uv-script env (about a minute), and later runs are cached.
 
-The HACC pin is exact, so the suite won't notice a future HA release breaking
-an interface we depend on until the pin moves. `scripts/hacc_upgrade.py` moves
-it and verifies the suite against the bump in a throwaway worktree; its module
-docstring covers the flow, and `--help` the flags and exit statuses.
+The harness is released with Home Assistant, and each release of it requires
+the matching HA release exactly, so its pin names the HA release the suite
+runs against. The pin is exact, so the suite won't notice a future HA release
+breaking an interface we depend on until the pin moves.
+`scripts/deps-upgrade.py` moves it and verifies the suite against the bump in
+a throwaway worktree; its module docstring covers the flow, and `--help` the
+flags and exit statuses.
 
 ```bash
-scripts/hacc_upgrade.py --dry-run    # report drift, change nothing
-scripts/hacc_upgrade.py              # build + verify, leave on its branch
-scripts/hacc_upgrade.py --push       # ... and land it on green
-scripts/hacc_upgrade.py --to X.Y.Z   # target a version other than latest
-scripts/hacc_upgrade.py --base REF   # verify on REF, not the default branch
+scripts/deps-upgrade.py --dry-run    # report drift, change nothing
+scripts/deps-upgrade.py              # build + verify, leave on its branch
+scripts/deps-upgrade.py --push       # ... and land it on green
+scripts/deps-upgrade.py --to X.Y.Z   # target a version other than latest
+scripts/deps-upgrade.py --base REF   # verify on REF, not the default branch
 ```
 
 A red suite blocks the bump and keeps the worktree for inspection. The failing
@@ -246,7 +249,7 @@ merged by hand. Two things to know about the handoff:
 
 - The base is taken as a committed ref, so commit any work still sitting in
   the checkout first.
-- The verified bump is left on a `hacc-upgrade/<version>` branch, the
+- The verified bump is left on a `deps-upgrade/<version>` branch, the
   namespace every later run sweeps. Merge it before the next run, or pass it
   as the next run's `--base`, which spares its ref (not its worktree). Only
   refs at the base commit are spared, so a second pending bump in that
@@ -275,7 +278,7 @@ requirements and consequences:
 
 `.python-version` pins the interpreter `uv` resolves against: every PEP 723
 script env, the project venv the `repo-shared` phase runs `pytest` in, the
-`uvx` gate tools, and the throwaway environment `scripts/hacc_upgrade.py`
+`uvx` gate tools, and the throwaway environment `scripts/deps-upgrade.py`
 resolves the Z-Wave client requirement in (which is why that call runs from
 the repo root). Without it `uv` selects the newest interpreter installed, so a
 host that gains a newer Python silently changes environment. Home Assistant's
@@ -389,7 +392,7 @@ reasons in `pyproject.toml`. Suppress a one-off inline with
 mypy `--strict` deps come from each file's PEP 723 `# /// script` block when
 present, otherwise from `[tool.repo-shared.code-quality] mypy-extra-deps` in
 `pyproject.toml`. Per-file blocks are kept only where a file needs more than
-the fallback -- e.g. the HACC test files under `tests/` add `pytest` /
+the fallback -- e.g. the HA-coupled test files under `tests/` add `pytest` /
 `pytest-cov`. Other files fall through to plain `mypy --strict` in the project
 venv; `pyproject.toml`'s `[[tool.mypy.overrides]]` covers transitive imports a
 checkout may not have installed.
@@ -414,15 +417,14 @@ The three kinds of analysis dep are pinned on different policies, and the
 differences are deliberate. The comment on `mypy-extra-deps` in
 `pyproject.toml` carries the reasoning.
 
-- **`pytest-homeassistant-custom-component`** is an exact pin that decides
-  which HA API surface the code type-checks against. `scripts/hacc_upgrade.py`
-  owns bumping it; don't move it by hand. The pin says what the code is
-  *validated* against, not what users run: `hacs.json` declares the supported
-  HA floor.
+- **`pytest-homeassistant`** is an exact pin that decides which HA API surface
+  the code type-checks against. `scripts/deps-upgrade.py` owns bumping it;
+  don't move it by hand. The pin says what the code is *validated* against,
+  not what users run: `hacs.json` declares the supported HA floor.
 - **`zwave-js-server-python`** is an exact pin whose value is derived: it has
   to be whatever HA's `zwave_js` component requires at the pinned release, or
   every Z-Wave phase dies in collection on a missing name that points at the
-  library rather than the pin. `hacc_upgrade.py` reads it out of the release
+  library rather than the pin. `deps-upgrade.py` reads it out of the release
   and rewrites every site in the same commit, stopping rather than guessing if
   the sites already disagree. One site is the bundled CLI's runtime list, so
   that rewrite changes shipped code and also bumps the integration version.
@@ -434,7 +436,7 @@ differences are deliberate. The comment on `mypy-extra-deps` in
 Two rules keep the pins honest. Neither this section nor `pyproject.toml`
 names a pinned version in prose, because automation moves the literal and
 prose would not follow. And every declaration site must name the *same*
-version: `hacc_upgrade.py` only rewrites sites carrying the version it is
+version: `deps-upgrade.py` only rewrites sites carrying the version it is
 replacing, so a site that has drifted to a third version is invisible to it.
 `tests/test_analysis_deps.py` gates that agreement separately.
 
@@ -446,8 +448,8 @@ suppression that outlives its condition describes the stubs as they were.
 
 The `[<code>,unused-ignore]` pairs under `custom_components/` are the other
 case. Those guard Home Assistant's own stubs, which arrive with the *pinned*
-HACC dep and change only when that pin is bumped, so the pairing lets a bump
-land without breaking the build.
+harness dep and change only when that pin is bumped, so the pairing lets a
+bump land without breaking the build.
 
 ## HA deployment testing
 

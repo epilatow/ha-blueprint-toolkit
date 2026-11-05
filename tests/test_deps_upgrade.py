@@ -8,7 +8,7 @@
 # ]
 # ///
 # This is AI generated code
-"""Tests for scripts/hacc_upgrade.py.
+"""Tests for scripts/deps-upgrade.py.
 
 Covers what gets rewritten, whether the run proceeds at all, and
 what it reports: pin parsing, the anchored rewrite, site
@@ -31,19 +31,21 @@ from typing import Self
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-_SCRIPT_PATH = REPO_ROOT / "scripts" / "hacc_upgrade.py"
+_SCRIPT_PATH = REPO_ROOT / "scripts" / "deps-upgrade.py"
 
-# hacc_upgrade is a bare script, imported off a runtime sys.path entry
+# deps-upgrade.py is a bare script, imported off a runtime sys.path entry
 # the way the other script tests reach render_docs / zwave_network_info.
+# A dash is no part of a module name, so it is imported through the
+# scripts/deps_upgrade.py alias.
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import hacc_upgrade  # noqa: E402
+import deps_upgrade  # noqa: E402
 
 # Every pin below is built from this rather than written out.
 # A literal declaration line in this file would be a real
 # declaration site to tests/test_analysis_deps.py, which scans .py
 # and requires every site to name the version pyproject.toml pins.
-PACKAGE = hacc_upgrade.PACKAGE
+PACKAGE = deps_upgrade.PACKAGE
 
 
 def _pyproject(*deps: str) -> str:
@@ -71,7 +73,7 @@ def _add_shipped_pin_site(root: Path, companion_pin: str) -> None:
     shipped = root / SHIPPED_PIN_REL
     shipped.parent.mkdir(parents=True, exist_ok=True)
     shipped.write_text(
-        f'VENV_DEPS = [\n    "{hacc_upgrade.COMPANION}=={companion_pin}",\n]\n'
+        f'VENV_DEPS = [\n    "{deps_upgrade.COMPANION}=={companion_pin}",\n]\n'
     )
     scripts = root / "scripts"
     scripts.mkdir(exist_ok=True)
@@ -140,31 +142,31 @@ def _clone_pair(
 class TestPinnedVersion:
     def test_returns_the_pinned_version(self) -> None:
         text = _pyproject(f"{PACKAGE}==1.2.3", "types-PyYAML")
-        assert hacc_upgrade.pinned_version(text) == "1.2.3"
+        assert deps_upgrade.pinned_version(text) == "1.2.3"
 
     def test_unpinned_entry_is_not_a_pin(self) -> None:
         """A bare entry carries no version to bump."""
         text = _pyproject(PACKAGE, "types-PyYAML")
         with pytest.raises(ValueError, match="no pinned"):
-            hacc_upgrade.pinned_version(text)
+            deps_upgrade.pinned_version(text)
 
     def test_missing_dep_raises(self) -> None:
         text = _pyproject("types-PyYAML")
         with pytest.raises(ValueError, match="no pinned"):
-            hacc_upgrade.pinned_version(text)
+            deps_upgrade.pinned_version(text)
 
     def test_non_list_raises(self) -> None:
         text = (
             '[tool.repo-shared.code-quality]\nmypy-extra-deps = "not-a-list"\n'
         )
         with pytest.raises(TypeError):
-            hacc_upgrade.pinned_version(text)
+            deps_upgrade.pinned_version(text)
 
 
 class TestRewritePins:
     def test_replaces_the_anchored_pin(self) -> None:
         text = f'#     "{PACKAGE}==1.2.3",\n'
-        out = hacc_upgrade.rewrite_pins(text, "1.2.3", "4.5.6")
+        out = deps_upgrade.rewrite_pins(text, "1.2.3", "4.5.6")
         assert out == f'#     "{PACKAGE}==4.5.6",\n'
 
     def test_a_longer_version_sharing_the_prefix_is_not_a_match(
@@ -172,7 +174,7 @@ class TestRewritePins:
     ) -> None:
         """Rewriting 1.2.3 must not maul 1.2.31 into 4.5.61."""
         text = f"{PACKAGE}==1.2.31"
-        assert hacc_upgrade.rewrite_pins(text, "1.2.3", "4.5.6") == text
+        assert deps_upgrade.rewrite_pins(text, "1.2.3", "4.5.6") == text
 
     def test_leaves_other_packages_on_the_same_version(self) -> None:
         """The version string alone is not enough to match on.
@@ -182,7 +184,7 @@ class TestRewritePins:
         the package name.
         """
         text = f"{PACKAGE}==1.2.3\nsomething-else==1.2.3\n"
-        out = hacc_upgrade.rewrite_pins(text, "1.2.3", "4.5.6")
+        out = deps_upgrade.rewrite_pins(text, "1.2.3", "4.5.6")
         assert f"{PACKAGE}==4.5.6" in out
         assert "something-else==1.2.3" in out
 
@@ -195,28 +197,28 @@ class TestRewritePins:
         agreement test would then flag it forever.
         """
         text = f"Pinned to {PACKAGE}==1.2.3."
-        out = hacc_upgrade.rewrite_pins(text, "1.2.3", "4.5.6")
+        out = deps_upgrade.rewrite_pins(text, "1.2.3", "4.5.6")
         assert out == f"Pinned to {PACKAGE}==4.5.6."
 
     def test_absent_pin_is_a_no_op(self) -> None:
         text = "nothing to see here\n"
-        assert hacc_upgrade.rewrite_pins(text, "1.2.3", "4.5.6") == text
+        assert deps_upgrade.rewrite_pins(text, "1.2.3", "4.5.6") == text
 
 
 class TestPinSites:
     def test_finds_the_real_declaration_sites(self) -> None:
-        current = hacc_upgrade.pinned_version(
+        current = deps_upgrade.pinned_version(
             (REPO_ROOT / "pyproject.toml").read_text()
         )
-        sites = hacc_upgrade.pin_sites(REPO_ROOT, current)
+        sites = deps_upgrade.pin_sites(REPO_ROOT, current)
 
         assert REPO_ROOT / "pyproject.toml" in sites
         assert len(sites) > 1, (
-            "every HACC-coupled test file repeats the pin in its own "
+            "every HA-coupled test file repeats the pin in its own "
             "PEP 723 block; finding only one site means discovery is "
             "broken and a bump would leave blocks disagreeing"
         )
-        assert all(p.suffix in hacc_upgrade.PIN_SUFFIXES for p in sites)
+        assert all(p.suffix in deps_upgrade.PIN_SUFFIXES for p in sites)
 
     def test_markdown_is_in_scope(self) -> None:
         """A declaration line in markdown must be rewritable.
@@ -224,37 +226,37 @@ class TestPinSites:
         The prose ban permits a dependency line in a doc, so one
         left unrewritten would go stale the moment the pin moved.
         """
-        assert ".md" in hacc_upgrade.PIN_SUFFIXES
+        assert ".md" in deps_upgrade.PIN_SUFFIXES
 
     def test_unknown_version_matches_nothing(self) -> None:
-        assert hacc_upgrade.pin_sites(REPO_ROOT, "0.0.0") == []
+        assert deps_upgrade.pin_sites(REPO_ROOT, "0.0.0") == []
 
 
 class TestGuards:
     def test_malformed_version_is_a_usage_error(self) -> None:
-        args = hacc_upgrade.parse_args(["--to", "not-a-version"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        args = deps_upgrade.parse_args(["--to", "not-a-version"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
 
     def test_matching_version_is_a_no_op(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _init_repo(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
 
-        args = hacc_upgrade.parse_args(["--to", "1.2.3"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--to", "1.2.3"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
     def test_dry_run_changes_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _init_repo(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
         before = subprocess.check_output(
             ["git", "status", "--porcelain"], cwd=tmp_path, text=True
         )
 
-        args = hacc_upgrade.parse_args(["--dry-run", "--to", "99.99.99"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--dry-run", "--to", "99.99.99"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         after = subprocess.check_output(
             ["git", "status", "--porcelain"], cwd=tmp_path, text=True
@@ -265,10 +267,10 @@ class TestGuards:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _init_repo(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
 
     def test_unreachable_remote_refuses(
         self,
@@ -289,11 +291,11 @@ class TestGuards:
             cwd=tmp_path,
             check=True,
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
         capsys.readouterr()
 
-        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
         assert "git fetch origin failed" in capsys.readouterr().err
 
     def test_dirty_checkout_refuses_the_landing(
@@ -302,11 +304,11 @@ class TestGuards:
         """The landing step fast-forwards this checkout."""
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         (clone / "scratch.txt").write_text("uncommitted\n")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.DIRTY
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.DIRTY
 
     def test_dirty_checkout_is_fine_without_push(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -314,10 +316,10 @@ class TestGuards:
         """No landing step, so this checkout is never touched."""
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         (clone / "scratch.txt").write_text("uncommitted\n")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
-        args = hacc_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
     def test_wrong_branch_refuses(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -328,14 +330,14 @@ class TestGuards:
         base the bump on that branch and push the result there.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         subprocess.run(
             ["git", "checkout", "-q", "-b", "feature"], cwd=clone, check=True
         )
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.DIRTY
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.DIRTY
 
 
 class TestLatestVersion:
@@ -364,7 +366,7 @@ class TestLatestVersion:
             lambda *_a, **_k: _Response(),
         )
         with pytest.raises(ValueError, match="unexpected version"):
-            hacc_upgrade.latest_version()
+            deps_upgrade.latest_version()
 
     def test_non_string_version_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -387,7 +389,7 @@ class TestLatestVersion:
             lambda *_a, **_k: _Response(),
         )
         with pytest.raises(TypeError):
-            hacc_upgrade.latest_version()
+            deps_upgrade.latest_version()
 
 
 class TestCompanionPin:
@@ -398,7 +400,7 @@ class TestCompanionPin:
         (clone / "pyproject.toml").write_text(
             _pyproject(
                 f"{PACKAGE}==1.2.3",
-                f"{hacc_upgrade.COMPANION}==0.70.0",
+                f"{deps_upgrade.COMPANION}==0.70.0",
                 "types-PyYAML",
             )
         )
@@ -415,20 +417,20 @@ class TestCompanionPin:
     ) -> None:
         """A coupled pin left behind breaks the Z-Wave phases."""
         _upstream, clone = self._repo_with_companion(tmp_path)
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.73.1",
         )
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         landed = (clone / "pyproject.toml").read_text()
         assert f"{PACKAGE}==4.5.6" in landed
-        assert f"{hacc_upgrade.COMPANION}==0.73.1" in landed
+        assert f"{deps_upgrade.COMPANION}==0.73.1" in landed
         assert "0.70.0" not in landed
         message = subprocess.check_output(
             ["git", "log", "-1", "--format=%B"], cwd=clone, text=True
@@ -444,16 +446,16 @@ class TestCompanionPin:
         rewrite that did not occur.
         """
         _upstream, clone = self._repo_with_companion(tmp_path)
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.70.0",
         )
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         message = subprocess.check_output(
             ["git", "log", "-1", "--format=%B"], cwd=clone, text=True
@@ -470,16 +472,16 @@ class TestCompanionPin:
         move, and the resolution would fail there anyway.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
         def _explode(_root: Path, _version: str) -> str:
             raise AssertionError("resolved a pin the repo never declared")
 
-        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _explode)
+        monkeypatch.setattr(deps_upgrade, "companion_requirement", _explode)
 
-        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
     def test_disagreeing_companion_sites_stop_the_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -487,39 +489,39 @@ class TestCompanionPin:
         """Which of the two to replace would be a guess."""
         _upstream, clone = self._repo_with_companion(tmp_path)
         (clone / "extra.toml").write_text(
-            f'dep = "{hacc_upgrade.COMPANION}==0.71.0"\n'
+            f'dep = "{deps_upgrade.COMPANION}==0.71.0"\n'
         )
         subprocess.run(["git", "add", "extra.toml"], cwd=clone, check=True)
         subprocess.run(["git", "commit", "-qm", "drift"], cwd=clone, check=True)
         subprocess.run(["git", "push", "-q"], cwd=clone, check=True)
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.73.1",
         )
 
-        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
 
 
 class TestDeclaredVersions:
     def test_collects_every_pinned_version(self, tmp_path: Path) -> None:
         _init_repo(tmp_path, "1.2.3")
         (tmp_path / "other.md").write_text(
-            f"- `{hacc_upgrade.COMPANION}==0.70.0`\n"
+            f"- `{deps_upgrade.COMPANION}==0.70.0`\n"
         )
         subprocess.run(["git", "add", "other.md"], cwd=tmp_path, check=True)
         subprocess.run(
             ["git", "commit", "-qm", "doc"], cwd=tmp_path, check=True
         )
 
-        assert hacc_upgrade.declared_versions(tmp_path, PACKAGE) == {"1.2.3"}
-        assert hacc_upgrade.declared_versions(
-            tmp_path, hacc_upgrade.COMPANION
+        assert deps_upgrade.declared_versions(tmp_path, PACKAGE) == {"1.2.3"}
+        assert deps_upgrade.declared_versions(
+            tmp_path, deps_upgrade.COMPANION
         ) == {"0.70.0"}
-        assert hacc_upgrade.declared_versions(tmp_path, "absent-pkg") == set()
+        assert deps_upgrade.declared_versions(tmp_path, "absent-pkg") == set()
 
     def test_sites_carry_the_file_each_version_came_from(
         self, tmp_path: Path
@@ -527,7 +529,7 @@ class TestDeclaredVersions:
         """The failure message names files, so the walk must keep them."""
         _init_repo(tmp_path, "1.2.3")
 
-        sites = hacc_upgrade.declared_sites(tmp_path, PACKAGE)
+        sites = deps_upgrade.declared_sites(tmp_path, PACKAGE)
 
         assert [
             (path.relative_to(tmp_path).as_posix(), version)
@@ -566,11 +568,11 @@ class TestCompanionRequirement:
     ) -> None:
         self._stub(
             monkeypatch,
-            stdout=f"pyserial==3.5\n{hacc_upgrade.COMPANION}==0.73.1\n",
+            stdout=f"pyserial==3.5\n{deps_upgrade.COMPANION}==0.73.1\n",
         )
 
         assert (
-            hacc_upgrade.companion_requirement(tmp_path, "0.13.372") == "0.73.1"
+            deps_upgrade.companion_requirement(tmp_path, "0.13.372") == "0.73.1"
         )
 
     def test_failed_resolution_raises_naming_the_pin(
@@ -580,7 +582,7 @@ class TestCompanionRequirement:
         self._stub(monkeypatch, returncode=1, stderr="no such version")
 
         with pytest.raises(ValueError, match="cannot read Home Assistant"):
-            hacc_upgrade.companion_requirement(tmp_path, "9.9.9")
+            deps_upgrade.companion_requirement(tmp_path, "9.9.9")
 
     def test_inexact_requirement_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -592,11 +594,11 @@ class TestCompanionRequirement:
         """
         self._stub(
             monkeypatch,
-            stdout=f"{hacc_upgrade.COMPANION}>=0.73.0,<0.74\n",
+            stdout=f"{deps_upgrade.COMPANION}>=0.73.0,<0.74\n",
         )
 
         with pytest.raises(ValueError, match="no exact"):
-            hacc_upgrade.companion_requirement(tmp_path, "0.13.372")
+            deps_upgrade.companion_requirement(tmp_path, "0.13.372")
 
 
 class TestCompanionDriftReport:
@@ -616,7 +618,7 @@ class TestCompanionDriftReport:
         for index, version in enumerate(versions):
             rel = f"site{index}.md"
             (clone / rel).write_text(
-                f"- `{hacc_upgrade.COMPANION}=={version}`\n"
+                f"- `{deps_upgrade.COMPANION}=={version}`\n"
             )
             paths.append(rel)
         if paths:
@@ -631,7 +633,7 @@ class TestCompanionDriftReport:
     ) -> None:
         clone = self._repo(tmp_path)
 
-        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+        deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
 
         assert "nothing coupled to move" in capsys.readouterr().out
 
@@ -651,8 +653,8 @@ class TestCompanionDriftReport:
         def _never(*_a: object, **_k: object) -> str:
             raise AssertionError("resolved despite disagreeing sites")
 
-        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _never)
-        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+        monkeypatch.setattr(deps_upgrade, "companion_requirement", _never)
+        deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
 
         out = capsys.readouterr().out
         assert "already disagrees" in out
@@ -671,8 +673,8 @@ class TestCompanionDriftReport:
         def _raise(*_a: object, **_k: object) -> str:
             raise ValueError("declares no exact requirement")
 
-        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _raise)
-        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+        monkeypatch.setattr(deps_upgrade, "companion_requirement", _raise)
+        deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
 
         assert "cannot resolve" in capsys.readouterr().out
 
@@ -684,12 +686,12 @@ class TestCompanionDriftReport:
     ) -> None:
         clone = self._repo(tmp_path, "0.73.0")
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.73.0",
         )
 
-        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+        deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
 
         assert "already matches" in capsys.readouterr().out
 
@@ -707,12 +709,12 @@ class TestCompanionDriftReport:
         """
         clone = self._repo(tmp_path, "0.70.0")
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.73.1",
         )
 
-        hacc_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
+        deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
 
         out = capsys.readouterr().out
         assert "would also move" in out
@@ -728,15 +730,15 @@ class TestCompanionDriftReport:
     ) -> None:
         """The report is only useful if --dry-run actually reaches it."""
         clone = self._repo(tmp_path, "0.70.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.73.1",
         )
 
-        args = hacc_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
         assert "would also move" in capsys.readouterr().out
 
 
@@ -754,20 +756,20 @@ class TestCompanionResolutionFailure:
         _upstream, clone = _clone_pair(
             tmp_path, "1.2.3", shipped_companion="0.70.0"
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
         def _raise(*_a: object, **_k: object) -> str:
             raise ValueError("declares no exact requirement")
 
-        monkeypatch.setattr(hacc_upgrade, "companion_requirement", _raise)
+        monkeypatch.setattr(deps_upgrade, "companion_requirement", _raise)
 
         def _never(_wt: Path) -> int:
             raise AssertionError("ran the suite despite an unresolved pin")
 
-        monkeypatch.setattr(hacc_upgrade, "run_suite", _never)
+        monkeypatch.setattr(deps_upgrade, "run_suite", _never)
 
-        args = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
 
 
 def _branch_exists(clone: Path, branch: str) -> bool:
@@ -820,23 +822,23 @@ class TestBaseRef:
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         feature = _branch_with_pin(clone, "feature", "2.0.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         capsys.readouterr()
 
-        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         # The drift is read off the base's pin, not the default
         # branch's, and the bump is built on the base's commit.
         out = capsys.readouterr().out
         assert "drift on feature: 2.0.0 -> 4.5.6" in out
         parent = subprocess.check_output(
-            ["git", "rev-parse", "hacc-upgrade/4.5.6^"], cwd=clone, text=True
+            ["git", "rev-parse", "deps-upgrade/4.5.6^"], cwd=clone, text=True
         ).strip()
         assert parent == feature
         built = subprocess.check_output(
-            ["git", "show", "hacc-upgrade/4.5.6:pyproject.toml"],
+            ["git", "show", "deps-upgrade/4.5.6:pyproject.toml"],
             cwd=clone,
             text=True,
         )
@@ -859,14 +861,14 @@ class TestBaseRef:
 
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         _branch_with_pin(clone, "feature", "2.0.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", _never)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", _never)
         capsys.readouterr()
 
-        args = hacc_upgrade.parse_args(
+        args = deps_upgrade.parse_args(
             ["--base", "feature", "--dry-run", "--to", "4.5.6"]
         )
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
         assert "drift on feature: 2.0.0 -> 4.5.6" in capsys.readouterr().out
         assert not (clone / ".wt").exists()
 
@@ -880,12 +882,12 @@ class TestBaseRef:
         than a surprising merge.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
-        args = hacc_upgrade.parse_args(
+        args = deps_upgrade.parse_args(
             ["--base", "main", "--push", "--to", "4.5.6"]
         )
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
 
     def test_push_refusal_precedes_the_fetch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -902,12 +904,12 @@ class TestBaseRef:
             cwd=clone,
             check=True,
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
-        args = hacc_upgrade.parse_args(
+        args = deps_upgrade.parse_args(
             ["--base", "main", "--push", "--to", "4.5.6"]
         )
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
 
     def test_does_not_need_a_recorded_default_branch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -926,15 +928,15 @@ class TestBaseRef:
 
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         _branch_with_pin(clone, "feature", "2.0.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
-        monkeypatch.setattr(hacc_upgrade, "default_branch", _unresolvable)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "default_branch", _unresolvable)
 
-        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
-        without_base = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(without_base) == hacc_upgrade.Exit.ERROR
+        without_base = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(without_base) == deps_upgrade.Exit.ERROR
 
     def test_a_base_in_the_tool_namespace_survives_the_sweep(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -946,29 +948,29 @@ class TestBaseRef:
         would otherwise destroy its own base mid-run.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        first = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(first) == hacc_upgrade.Exit.SUCCESS
+        first = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(first) == deps_upgrade.Exit.SUCCESS
 
-        second = hacc_upgrade.parse_args(
-            ["--base", "hacc-upgrade/4.5.6", "--to", "7.8.9"]
+        second = deps_upgrade.parse_args(
+            ["--base", "deps-upgrade/4.5.6", "--to", "7.8.9"]
         )
-        assert hacc_upgrade.run(second) == hacc_upgrade.Exit.SUCCESS
+        assert deps_upgrade.run(second) == deps_upgrade.Exit.SUCCESS
 
-        for branch in ("hacc-upgrade/4.5.6", "hacc-upgrade/7.8.9"):
+        for branch in ("deps-upgrade/4.5.6", "deps-upgrade/7.8.9"):
             assert _branch_exists(clone, branch), f"{branch} was swept"
         built = subprocess.check_output(
-            ["git", "show", "hacc-upgrade/7.8.9:pyproject.toml"],
+            ["git", "show", "deps-upgrade/7.8.9:pyproject.toml"],
             cwd=clone,
             text=True,
         )
         assert f"{PACKAGE}==7.8.9" in built
         # The base's ref is spared; its directory and venv are not.
-        assert not (clone / ".wt" / "hacc-upgrade" / "4.5.6").exists()
+        assert not (clone / ".wt" / "deps-upgrade" / "4.5.6").exists()
         # This run's own worktree stays for inspection.
-        assert (clone / ".wt" / "hacc-upgrade" / "7.8.9").is_dir()
+        assert (clone / ".wt" / "deps-upgrade" / "7.8.9").is_dir()
 
     def test_a_base_elsewhere_does_not_spare_the_namespace(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -979,16 +981,16 @@ class TestBaseRef:
         base run from sweeping at all and no test would notice.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        first = hacc_upgrade.parse_args(["--to", "4.5.6"])
-        assert hacc_upgrade.run(first) == hacc_upgrade.Exit.SUCCESS
+        first = deps_upgrade.parse_args(["--to", "4.5.6"])
+        assert deps_upgrade.run(first) == deps_upgrade.Exit.SUCCESS
 
         _branch_with_pin(clone, "feature", "2.0.0")
-        second = hacc_upgrade.parse_args(["--base", "feature", "--to", "7.8.9"])
-        assert hacc_upgrade.run(second) == hacc_upgrade.Exit.SUCCESS
-        assert not _branch_exists(clone, "hacc-upgrade/4.5.6")
+        second = deps_upgrade.parse_args(["--base", "feature", "--to", "7.8.9"])
+        assert deps_upgrade.run(second) == deps_upgrade.Exit.SUCCESS
+        assert not _branch_exists(clone, "deps-upgrade/4.5.6")
 
     def test_reports_the_result_as_perishable(
         self,
@@ -1004,12 +1006,12 @@ class TestBaseRef:
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         _branch_with_pin(clone, "feature", "2.0.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         capsys.readouterr()
 
-        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
         out = capsys.readouterr().out
         assert "merge it before the next run sweeps it" in out
         assert "--push" not in out
@@ -1028,11 +1030,11 @@ class TestBaseRef:
         ``--push``, whose own refusal returns the same status.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
         capsys.readouterr()
 
-        args = hacc_upgrade.parse_args(["--base", "", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        args = deps_upgrade.parse_args(["--base", "", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
         assert "needs a ref" in capsys.readouterr().err
 
     def test_a_base_that_is_the_rebuilt_branch_is_refused(
@@ -1044,15 +1046,15 @@ class TestBaseRef:
         that same ref would be destroyed after the sweep spared it.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        _branch_with_pin(clone, "hacc-upgrade/4.5.6", "2.0.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        _branch_with_pin(clone, "deps-upgrade/4.5.6", "2.0.0")
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        args = hacc_upgrade.parse_args(
-            ["--base", "hacc-upgrade/4.5.6", "--to", "4.5.6"]
+        args = deps_upgrade.parse_args(
+            ["--base", "deps-upgrade/4.5.6", "--to", "4.5.6"]
         )
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
-        assert _branch_exists(clone, "hacc-upgrade/4.5.6")
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
+        assert _branch_exists(clone, "deps-upgrade/4.5.6")
 
     def test_the_bump_message_records_how_the_run_was_driven(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1064,14 +1066,14 @@ class TestBaseRef:
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
         _branch_with_pin(clone, "feature", "2.0.0")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        args = hacc_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--base", "feature", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         body = subprocess.check_output(
-            ["git", "log", "-1", "--format=%B", "hacc-upgrade/4.5.6"],
+            ["git", "log", "-1", "--format=%B", "deps-upgrade/4.5.6"],
             cwd=clone,
             text=True,
         )
@@ -1107,14 +1109,14 @@ class TestBaseRef:
             cwd=pushed,
             check=True,
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
         assert not _branch_exists(clone, "origin/migration")
-        args = hacc_upgrade.parse_args(
+        args = deps_upgrade.parse_args(
             ["--base", "origin/migration", "--to", "4.5.6"]
         )
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
     def test_unknown_ref_is_a_usage_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1125,12 +1127,12 @@ class TestBaseRef:
         remote-tracking ref reads the updated ref.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
-        args = hacc_upgrade.parse_args(
+        args = deps_upgrade.parse_args(
             ["--base", "no-such-ref", "--to", "4.5.6"]
         )
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.USAGE
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.USAGE
         assert not (clone / ".wt").exists()
 
 
@@ -1151,7 +1153,7 @@ class TestShippedCodeChanged:
             ["git", "add", "custom_components"], cwd=tmp_path, check=True
         )
 
-        assert hacc_upgrade.shipped_code_changed(tmp_path) is True
+        assert deps_upgrade.shipped_code_changed(tmp_path) is True
 
     def test_false_for_analysis_only_changes(self, tmp_path: Path) -> None:
         _init_repo(tmp_path, "1.2.3")
@@ -1162,7 +1164,7 @@ class TestShippedCodeChanged:
             ["git", "add", "pyproject.toml"], cwd=tmp_path, check=True
         )
 
-        assert hacc_upgrade.shipped_code_changed(tmp_path) is False
+        assert deps_upgrade.shipped_code_changed(tmp_path) is False
 
 
 class TestPinSitesSymlinks:
@@ -1185,9 +1187,9 @@ class TestPinSitesSymlinks:
         subprocess.run(
             ["git", "commit", "-q", "-m", "links"], cwd=tmp_path, check=True
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
 
-        sites = hacc_upgrade.pin_sites(tmp_path, "1.2.3")
+        sites = deps_upgrade.pin_sites(tmp_path, "1.2.3")
         names = {p.name for p in sites}
         assert "real.md" in names
         assert "link.md" not in names
@@ -1204,14 +1206,14 @@ class TestSweepStaleWorktrees:
         unattended job.
         """
         _init_repo(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
-        root = tmp_path / ".wt" / hacc_upgrade.WORKTREE_PREFIX
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
+        root = tmp_path / ".wt" / deps_upgrade.WORKTREE_PREFIX
         root.mkdir(parents=True)
         (root / "9.9.9").mkdir()
         stray = root / "stray.txt"
         stray.write_text("not a worktree\n")
 
-        hacc_upgrade.sweep_stale_worktrees()
+        deps_upgrade.sweep_stale_worktrees()
 
         assert not (root / "9.9.9").exists()
         assert stray.exists()
@@ -1220,8 +1222,8 @@ class TestSweepStaleWorktrees:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _init_repo(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
-        hacc_upgrade.sweep_stale_worktrees()
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
+        deps_upgrade.sweep_stale_worktrees()
 
 
 class TestDefaultBranch:
@@ -1241,16 +1243,16 @@ class TestDefaultBranch:
         subprocess.run(
             ["git", "clone", "-q", str(upstream), str(clone)], check=True
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
-        assert hacc_upgrade.default_branch() == "release/v2"
+        assert deps_upgrade.default_branch() == "release/v2"
 
     def test_no_remote_falls_back_to_current(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _init_repo(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
-        assert hacc_upgrade.default_branch() == "main"
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
+        assert deps_upgrade.default_branch() == "main"
 
     def test_unresolvable_head_raises_rather_than_falling_back(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1270,10 +1272,10 @@ class TestDefaultBranch:
             cwd=tmp_path,
             check=True,
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", tmp_path)
 
         with pytest.raises(ValueError, match="no default branch"):
-            hacc_upgrade.default_branch()
+            deps_upgrade.default_branch()
 
 
 class TestLanding:
@@ -1282,11 +1284,11 @@ class TestLanding:
     ) -> None:
         """The remote must carry the bump, and local must follow."""
         upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         published = subprocess.check_output(
             ["git", "show", "main:pyproject.toml"],
@@ -1304,11 +1306,11 @@ class TestLanding:
     ) -> None:
         """A failing suite must leave both sides on the old pin."""
         upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 1)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 1)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.TESTS_FAILED
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.TESTS_FAILED
 
         published = subprocess.check_output(
             ["git", "show", "main:pyproject.toml"],
@@ -1322,15 +1324,15 @@ class TestLanding:
     ) -> None:
         """A suite that could not start is not a suite that failed."""
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "run_suite",
-            lambda _wt: hacc_upgrade.RUN_ALL_INFRA_ERROR,
+            lambda _wt: deps_upgrade.RUN_ALL_INFRA_ERROR,
         )
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
 
     def test_branch_ahead_of_origin_refuses(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1346,11 +1348,11 @@ class TestLanding:
         subprocess.run(
             ["git", "commit", "-q", "-m", "local"], cwd=clone, check=True
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.DIRTY
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.DIRTY
 
     def test_rewriting_shipped_code_bumps_the_manifest(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1366,23 +1368,23 @@ class TestLanding:
         upstream, clone = _clone_pair(
             tmp_path, "1.2.3", shipped_companion="0.70.0"
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.73.1",
         )
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         shipped = subprocess.check_output(
             ["git", "show", f"main:{SHIPPED_PIN_REL}"],
             cwd=upstream,
             text=True,
         )
-        assert f"{hacc_upgrade.COMPANION}==0.73.1" in shipped
+        assert f"{deps_upgrade.COMPANION}==0.73.1" in shipped
         manifest = json.loads(
             subprocess.check_output(
                 ["git", "show", f"main:{MANIFEST_REL}"],
@@ -1403,18 +1405,18 @@ class TestLanding:
         upstream, clone = _clone_pair(
             tmp_path, "1.2.3", shipped_companion="0.70.0"
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
         # The coupled pin is already what the target release wants, so
         # only analysis-only sites move.
         monkeypatch.setattr(
-            hacc_upgrade,
+            deps_upgrade,
             "companion_requirement",
             lambda _root, _version: "0.70.0",
         )
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
         manifest = json.loads(
             subprocess.check_output(
@@ -1443,12 +1445,12 @@ class TestLanding:
             cwd=clone,
             check=True,
         )
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
         # Without --push the ahead-of-origin guard does not apply,
         # so this reaches the comparison itself.
-        args = hacc_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
 
 
 class TestPreexistingDrift:
@@ -1474,15 +1476,15 @@ class TestPreexistingDrift:
             ["git", "commit", "-q", "-m", "drift"], cwd=clone, check=True
         )
         subprocess.run(["git", "push", "-q"], cwd=clone, check=True)
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
 
         def _unreached(_wt: Path) -> int:
             raise AssertionError("suite must not run with a drifted site")
 
-        monkeypatch.setattr(hacc_upgrade, "run_suite", _unreached)
+        monkeypatch.setattr(deps_upgrade, "run_suite", _unreached)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
         err = capsys.readouterr().err
         assert "drifted.toml pins 9.9.9" in err
 
@@ -1493,22 +1495,22 @@ class TestDowngradeGuard:
     ) -> None:
         """A yanked latest must not be landed unattended."""
         _upstream, clone = _clone_pair(tmp_path, "4.5.6")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "latest_version", lambda: "1.2.3")
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "latest_version", lambda: "1.2.3")
 
-        args = hacc_upgrade.parse_args(["--push"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--push"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
 
     def test_explicit_to_still_allows_a_rollback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The guard is about unattended runs, not deliberate ones."""
         upstream, clone = _clone_pair(tmp_path, "4.5.6")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 0)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "1.2.3"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.SUCCESS
+        args = deps_upgrade.parse_args(["--push", "--to", "1.2.3"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
         published = subprocess.check_output(
             ["git", "show", "main:pyproject.toml"], cwd=upstream, text=True
         )
@@ -1528,9 +1530,9 @@ class TestMainFunnel:
         def _boom(_args: object) -> int:
             raise OSError("disk gone")
 
-        monkeypatch.setattr(hacc_upgrade, "run", _boom)
-        assert hacc_upgrade.main(["--to", "1.2.3"]) == int(
-            hacc_upgrade.Exit.ERROR
+        monkeypatch.setattr(deps_upgrade, "run", _boom)
+        assert deps_upgrade.main(["--to", "1.2.3"]) == int(
+            deps_upgrade.Exit.ERROR
         )
 
 
@@ -1551,10 +1553,10 @@ class TestFailureMessage:
         suite_status: int,
     ) -> str:
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: suite_status)
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        hacc_upgrade.run(args)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: suite_status)
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        deps_upgrade.run(args)
         return capsys.readouterr().err
 
     def test_failed_suite_does_not_attribute_a_cause(
@@ -1581,7 +1583,7 @@ class TestFailureMessage:
         false on this branch.
         """
         err = self._run_and_capture(
-            tmp_path, monkeypatch, capsys, hacc_upgrade.RUN_ALL_INFRA_ERROR
+            tmp_path, monkeypatch, capsys, deps_upgrade.RUN_ALL_INFRA_ERROR
         )
         assert "could not complete" in err
         assert "not decidable" not in err
@@ -1602,11 +1604,11 @@ class TestFailureMessage:
         pin for something that never exercised it.
         """
         _upstream, clone = _clone_pair(tmp_path, "1.2.3")
-        monkeypatch.setattr(hacc_upgrade, "REPO_ROOT", clone)
-        monkeypatch.setattr(hacc_upgrade, "run_suite", lambda _wt: 127)
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 127)
 
-        args = hacc_upgrade.parse_args(["--push", "--to", "4.5.6"])
-        assert hacc_upgrade.run(args) == hacc_upgrade.Exit.ERROR
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.ERROR
         err = capsys.readouterr().err
         assert "could not complete" in err
         assert "not decidable" not in err
@@ -1617,7 +1619,7 @@ class TestFailureMessage:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        for status in (1, hacc_upgrade.RUN_ALL_INFRA_ERROR):
+        for status in (1, deps_upgrade.RUN_ALL_INFRA_ERROR):
             root = tmp_path / str(status)
             root.mkdir()
             err = self._run_and_capture(root, monkeypatch, capsys, status)
@@ -1640,7 +1642,7 @@ class TestHelpEpilog:
         reappear here.
         """
         with pytest.raises(SystemExit):
-            hacc_upgrade.parse_args(["--help"])
+            deps_upgrade.parse_args(["--help"])
         out = capsys.readouterr().out
 
         assert "5" in out
@@ -1653,22 +1655,22 @@ class TestHelpEpilog:
     ) -> None:
         """The scheduler keys on these, so none may go undocumented."""
         with pytest.raises(SystemExit):
-            hacc_upgrade.parse_args(["--help"])
+            deps_upgrade.parse_args(["--help"])
         out = capsys.readouterr().out
 
-        for code in hacc_upgrade.Exit:
+        for code in deps_upgrade.Exit:
             assert f"  {int(code)}  " in out
 
 
 class TestExitCodes:
     def test_success_is_zero(self) -> None:
         """The scheduler reads the exit status, so 0 must mean 0."""
-        assert int(hacc_upgrade.Exit.SUCCESS) == 0
+        assert int(deps_upgrade.Exit.SUCCESS) == 0
 
     def test_failure_codes_are_distinct(self) -> None:
-        codes = [int(c) for c in hacc_upgrade.Exit]
+        codes = [int(c) for c in deps_upgrade.Exit]
         assert len(codes) == len(set(codes))
-        assert all(c != 0 for c in codes if c != hacc_upgrade.Exit.SUCCESS)
+        assert all(c != 0 for c in codes if c != deps_upgrade.Exit.SUCCESS)
 
 
 if __name__ == "__main__":

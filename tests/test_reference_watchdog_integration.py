@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -21,7 +21,7 @@ executor offload of ``run_evaluation`` + sweep dispatch +
 ``update_instance_state``), and the
 automation-link-prefix-on-notification-body invariant the
 RW code review flagged as a P1 regression. Same
-pytest-HACC harness as ``test_integration.py``.
+pytest-homeassistant harness as ``test_integration.py``.
 """
 
 from __future__ import annotations
@@ -46,54 +46,21 @@ _SCRIPT_PATH = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
-# pytest-HACC's plugins refuse to load if any
-# homeassistant.components.* module is already in
+# pytest-homeassistant's patch_recorder plugin refuses to
+# load if Home Assistant's recorder modules are already in
 # sys.modules. Defer imports until inside the tests.
 DOMAIN = "blueprint_toolkit"
 SERVICE = "reference_watchdog"
 
 
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    hass: HomeAssistant,
-    # Requested for its side effect; pytest resolves fixtures by name
-    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
-    # on a fixture function.
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Symlink our integration into pytest-HACC's config_dir."""
-    import shutil
-
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-    yield
-    if dst.is_symlink():
-        dst.unlink()
-
-
 def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
     """Lazy-import wrapper for MockConfigEntry."""
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
@@ -106,7 +73,7 @@ async def _setup_integration(hass: Any) -> Any:
     Also explicitly sets up ``persistent_notification`` so
     the argparse-error code path can dispatch to it, and
     ``homeassistant`` for its voice-exposure store. The
-    pytest-HACC harness auto-loads neither.
+    pytest-homeassistant harness auto-loads neither.
     """
     from homeassistant.setup import async_setup_component
 
@@ -170,7 +137,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -203,7 +170,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -237,7 +204,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -270,7 +237,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -306,7 +273,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -338,7 +305,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -441,7 +408,7 @@ class TestServiceLayerScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -536,7 +503,7 @@ class TestServiceLayerScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -582,7 +549,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -621,7 +588,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -657,7 +624,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -713,7 +680,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -786,7 +753,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -848,7 +815,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -906,7 +873,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -934,7 +901,7 @@ class TestUnusedDeviceCheckEndToEnd:
     voice-exposure rescue, and notification-body assembly --
     not just the pure-Python logic units. Rationale: the
     truth-set construction in ``handler._build_truth_set``
-    only runs through pytest-HACC, so a logic-level test
+    only runs under a live hass, so a logic-level test
     can't catch a regression where (e.g.) a referenced
     device_id never reaches the rescue set.
     """
@@ -984,7 +951,7 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1087,7 +1054,7 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1173,7 +1140,7 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
             async_dismiss,
         )
@@ -1233,7 +1200,7 @@ class TestUnusedDeviceCheckEndToEnd:
             KNOWN_ASSISTANTS,
             async_expose_entity,
         )
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import device_registry as dr
@@ -1291,7 +1258,7 @@ class TestUnusedDeviceCheckEndToEnd:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
         from homeassistant.helpers import area_registry as ar
@@ -1408,7 +1375,7 @@ class TestUnusedDevicelessCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1451,7 +1418,8 @@ class TestFileEditorLinkEndToEnd:
     Patches ``is_hassio`` and ``get_addons_info`` at the
     import paths the detection helper late-imports from, so
     ``Config.file_editor_ingress_url`` flips to True under the
-    pytest-HACC harness without needing a real Supervisor.
+    pytest-homeassistant harness without needing a real
+    Supervisor.
     Two scenarios: a broken-references owner notification
     (yaml owner -> File: line links) and an unused-deviceless
     rollup (yaml-defined entity -> source: link).
@@ -1501,7 +1469,7 @@ class TestFileEditorLinkEndToEnd:
             )
             await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 
@@ -1575,7 +1543,7 @@ class TestFileEditorLinkEndToEnd:
             )
             await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification import (
+        from homeassistant.components.persistent_notification.helpers import (
             _async_get_or_create_notifications,
         )
 

@@ -28,15 +28,14 @@ once broken.
    to ``Any`` and ``mypy --strict`` checks none of the file's YAML
    code instead of erroring.
 
-2. Every declaration site names the same
-   ``pytest-homeassistant-custom-component`` version. A block that
-   disagrees type-checks against a different Home Assistant
-   release, and ``scripts/hacc_upgrade.py`` cannot repair it: that
-   tool rewrites sites carrying the version being replaced, so one
-   already drifted elsewhere is invisible to it.
+2. Every declaration site names the same ``pytest-homeassistant``
+   version. A block that disagrees type-checks against a different
+   Home Assistant release, and ``scripts/deps-upgrade.py`` cannot
+   repair it: that tool rewrites sites carrying the version being
+   replaced, so one already drifted elsewhere is invisible to it.
 
-3. The pinned ``pytest-homeassistant-custom-component`` version
-   appears only where the dependency is declared, never in prose.
+3. The pinned ``pytest-homeassistant`` version appears only where
+   the dependency is declared, never in prose.
    Automation rewrites the pin literal at every declaration site;
    prose restating it is not rewritten and goes stale silently.
    Enforcing this against the *current* pin is what makes it
@@ -47,7 +46,7 @@ once broken.
 4. ``.python-version`` satisfies every declared ``requires-python``
    floor -- the PEP 723 blocks plus ``[project]`` -- and agrees with
    the two mypy knobs. The interpreter is pinned for the same reason
-   the HACC version is -- it decides what the suite runs against --
+   the harness version is -- it decides what the suite runs against --
    but its failure mode is quieter: ``uv`` ignores a pin it cannot
    satisfy and resolves against the newest interpreter installed,
    exiting zero, so a pin that drifts below a floor silently stops
@@ -55,11 +54,11 @@ once broken.
 
 5. Every site pinning ``zwave-js-server-python`` names the same
    version. That pin's value is dictated by the Home Assistant
-   release the HACC pin selects -- HA's ``zwave_js`` component
+   release the harness pin selects -- HA's ``zwave_js`` component
    requires one exact client and imports from it -- so a site left
    behind runs against a client that release does not use, and says
    so as a missing name in ``zwave_js`` rather than as a pin
-   problem. ``scripts/hacc_upgrade.py`` moves these together; this
+   problem. ``scripts/deps-upgrade.py`` moves these together; this
    gates the result, for a pin that moved by some other route.
    Agreement is all it checks: whether the agreed version is the
    right one is settled by the Z-Wave phases, which import the
@@ -108,7 +107,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-HACC = "pytest-homeassistant-custom-component"
+HARNESS = "pytest-homeassistant"
 ZWAVE_CLIENT = "zwave-js-server-python"
 
 # Body of a PEP 723 inline-metadata block, per the spec's opening
@@ -122,7 +121,7 @@ _YAML_IMPORT = re.compile(r"^\s*(?:import yaml\b|from yaml\b)", re.MULTILINE)
 def _tracked(*suffixes: str) -> list[Path]:
     """Tracked files with these suffixes (all when none), symlinks excluded.
 
-    Skipping links matches what ``scripts/hacc_upgrade.py`` rewrites:
+    Skipping links matches what ``scripts/deps-upgrade.py`` rewrites:
     it refuses to edit through a tracked symlink, because the target
     is vendored content a drift test owns and ``git add`` on the link
     stages nothing. A gate that read through them could flag a pin the
@@ -301,12 +300,12 @@ class TestPinAgreement:
         sites carrying the version being replaced, so one already
         drifted to some third version is invisible to it.
         """
-        expected = _pinned_version(HACC)
+        expected = _pinned_version(HARNESS)
         # Match version digits only. A greedy ``[\w.]+`` would
         # swallow the period ending a markdown sentence, reporting
         # a site the upgrade tool's boundary-anchored match treats
         # as fine -- a permanent red with no automated repair.
-        pattern = re.compile(re.escape(f"{HACC}==") + r"(\d+(?:\.\d+)*)")
+        pattern = re.compile(re.escape(f"{HARNESS}==") + r"(\d+(?:\.\d+)*)")
         offenders: list[str] = []
         for path in _tracked(".py", ".toml", ".md"):
             for lineno, line in enumerate(
@@ -327,11 +326,11 @@ class TestPinAgreement:
 
 
 class TestPinnedVersionNotInProse:
-    @pytest.mark.parametrize("package", [HACC, ZWAVE_CLIENT])
+    @pytest.mark.parametrize("package", [HARNESS, ZWAVE_CLIENT])
     def test_version_only_at_declaration_sites(self, package: str) -> None:
         """Both pins are automation-moved, so both have this hazard.
 
-        ``scripts/hacc_upgrade.py`` rewrites every declaration site
+        ``scripts/deps-upgrade.py`` rewrites every declaration site
         for both packages in one commit. Prose naming either version
         is not a declaration site, so the rewrite leaves it behind.
 
@@ -370,8 +369,8 @@ class TestCompanionPinAgreement:
     def test_zwave_client_names_one_version(self) -> None:
         """Disagreeing sites break Home Assistant's own imports.
 
-        ``scripts/hacc_upgrade.py`` derives this pin from the Home
-        Assistant release the HACC pin selects and rewrites every site
+        ``scripts/deps-upgrade.py`` derives this pin from the Home
+        Assistant release the harness pin selects and rewrites every site
         in the same commit. This gates the result: a site left behind
         type-checks and runs against a client the pinned Home Assistant
         does not use, and the failure surfaces as a missing name in
@@ -399,8 +398,8 @@ class TestCompanionPinAgreement:
                 for version, paths in sorted(sites.items())
             )
             + "\n\nEvery site must name the version Home Assistant's "
-            "`zwave_js` component requires at the pinned HACC release. "
-            "`scripts/hacc_upgrade.py` moves them together; a site it "
+            "`zwave_js` component requires at the pinned release. "
+            "`scripts/deps-upgrade.py` moves them together; a site it "
             "missed is one it could not match."
         )
 

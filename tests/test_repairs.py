@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -30,12 +30,11 @@ Flows under test:
   service, then clears the issue.
 
 Same import-deferral pattern as tests/test_integration.py
-to avoid pytest-HACC's patch_recorder assertion.
+to avoid pytest-homeassistant's patch_recorder assertion.
 """
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,7 +42,6 @@ from typing import TYPE_CHECKING, Any
 # Make custom_components/ importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 _SCRIPT_PATH = (
@@ -51,11 +49,9 @@ _SCRIPT_PATH = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers import issue_registry as ir
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 
@@ -64,63 +60,8 @@ ISSUE_INSTALL_CONFLICTS = "install_conflicts"
 ISSUE_INSTALL_FAILURE = "install_failure"
 
 
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    hass: HomeAssistant,
-    # Requested for its side effect; pytest resolves fixtures by name
-    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
-    # on a fixture function.
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Symlink the integration into pytest-HACC's testing_config.
-
-    Mirrors the same fixture in ``tests/test_integration.py``.
-    Also wipes the install destinations (blueprints/, www/)
-    under config_dir before yielding, because pytest-HACC
-    reuses the testing_config directory across tests and
-    pre-seeded conflicts from one test would otherwise leak
-    into the next.
-    """
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-
-    # Wipe install destinations so leftover state from a
-    # previous test in the session doesn't pre-seed
-    # conflicts here.
-    config_dir = Path(hass.config.config_dir)
-    for sub in ("blueprints",):
-        target = config_dir / sub
-        if target.is_symlink() or target.is_file():
-            target.unlink()
-        elif target.is_dir():
-            shutil.rmtree(target)
-
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-    yield
-    if dst.is_symlink():
-        dst.unlink()
-    for sub in ("blueprints",):
-        target = config_dir / sub
-        if target.is_symlink() or target.is_file():
-            target.unlink()
-        elif target.is_dir():
-            shutil.rmtree(target)
-
-
 def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 

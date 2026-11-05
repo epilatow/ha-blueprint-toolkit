@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -49,70 +49,24 @@ _SCRIPT_PATH = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
-    from pytest_homeassistant_custom_component.typing import (
+    from pytest_homeassistant.typing import (
         ClientSessionGenerator,
     )
 
-# pytest-HACC's plugins (in particular patch_recorder)
-# refuse to load if any homeassistant.components.* module
-# is already in sys.modules. Importing anything from
-# pytest_homeassistant_custom_component.common at module
-# scope pulls those transitively, so we defer all
-# pytest-HACC + integration-package imports until inside
-# the test functions themselves.
+# pytest-homeassistant's patch_recorder plugin refuses to
+# load if Home Assistant's recorder modules are already in
+# sys.modules. Importing anything from
+# pytest_homeassistant.common at module scope pulls those
+# transitively, so we defer all pytest-homeassistant +
+# integration-package imports until inside the test
+# functions themselves.
 DOMAIN = "blueprint_toolkit"
 OPTION_CLI_SYMLINK_DIR = "cli_symlink_dir"
 OPTION_PROVISION_CLI_TOKEN = "provision_cli_token"
-
-
-@pytest.fixture(autouse=True)
-def install_our_integration(
-    hass: HomeAssistant,
-    # Requested for its side effect; pytest resolves fixtures by name
-    # so it can't be ``_``-prefixed, and ``usefixtures`` has no effect
-    # on a fixture function.
-    enable_custom_integrations: None,  # noqa: ARG001
-) -> Generator[None]:
-    """Make our integration discoverable to HA in every test.
-
-    pytest-HACC's hass.config.config_dir is its own
-    testing_config dir, not the repo root. We symlink our
-    custom_components/blueprint_toolkit/ into there
-    so HA's loader finds it. enable_custom_integrations
-    clears HA's loader cache so the symlink takes effect.
-    """
-    import shutil
-
-    src = (
-        Path(__file__).parent.parent / "custom_components" / "blueprint_toolkit"
-    )
-    cc = Path(hass.config.config_dir) / "custom_components"
-    cc.mkdir(exist_ok=True)
-    dst = cc / "blueprint_toolkit"
-    if dst.is_symlink() or dst.exists():
-        if dst.is_dir() and not dst.is_symlink():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
-    dst.symlink_to(src)
-    # The fixture-ordering already had enable_custom_integrations
-    # clear DATA_CUSTOM_COMPONENTS; re-clear in case symlink
-    # was added after.
-    from homeassistant.loader import DATA_CUSTOM_COMPONENTS
-
-    hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
-    yield
-    # Cleanup so subsequent tests don't pile symlinks on
-    # symlinks if pytest-HACC ever changes config_dir
-    # behavior between tests.
-    if dst.is_symlink():
-        dst.unlink()
 
 
 def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
@@ -120,7 +74,7 @@ def _mock_config_entry(**kwargs: Any) -> MockConfigEntry:
 
     See the module docstring on import deferral.
     """
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         MockConfigEntry,
     )
 

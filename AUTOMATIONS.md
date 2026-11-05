@@ -692,7 +692,7 @@ re-bootstrap on the next call. The bootstrap path should:
 tests/
 +-- test_<service>_logic.py          # logic.py unit tests
 +-- test_<service>_handler.py        # handler-side wiring + mutators
-+-- test_<service>_integration.py    # pytest-HACC end-to-end
++-- test_<service>_integration.py    # pytest-homeassistant end-to-end
 ```
 
 ### Schema-drift test

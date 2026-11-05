@@ -7,7 +7,7 @@
 #     "pytest-cov",
 #     "probatio",
 #     "PyYAML",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
@@ -433,12 +433,12 @@ class TestArgparseGuards(HandlerArgparseGuardsBase):
 if __name__ == "__main__":
     from conftest import run_tests
 
-    # ``-p no:homeassistant`` disables pytest-HACC's plugin,
-    # which fails to import against this file's stubbed
-    # ``homeassistant`` modules; HACC is a mypy-only dep here.
+    # ``-p no:pytest_homeassistant`` disables Home Assistant's pytest
+    # plugin, which fails to import against this file's stubbed
+    # ``homeassistant`` modules; the package is a mypy-only dep here.
     run_tests(
         __file__,
         _SCRIPT_PATH,
         REPO_ROOT,
-        pytest_args=["-p", "no:homeassistant"],
+        pytest_args=["-p", "no:pytest_homeassistant"],
     )

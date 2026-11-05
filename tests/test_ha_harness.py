@@ -4,16 +4,16 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
+#     "pytest-homeassistant==2026.11.0",
 #     "types-PyYAML",
 # ]
 # ///
 # This is AI generated code
-"""pytest-homeassistant-custom-component harness coverage.
+"""pytest-homeassistant harness coverage.
 
-Stands up a minimal HomeAssistant instance via the
-pytest-HACC plugin and uses it to validate the parts of
-this repo that need real HA at hand:
+Stands up a minimal HomeAssistant instance via Home
+Assistant's own pytest-homeassistant plugin and uses it to
+validate the parts of this repo that need real HA at hand:
 
 - HA's blueprint loader parses every blueprint under
   ``custom_components/blueprint_toolkit/bundled/blueprints/``
@@ -22,13 +22,14 @@ this repo that need real HA at hand:
   warnings, proving the harness itself works for the
   step-6 integration tests.
 
-Pinned to a specific (HA, pytest-HACC) pair because
-pytest-HACC versions are tied to homeassistant releases.
-The pin updates only when we explicitly bump.
+pytest-homeassistant is released with Home Assistant, one
+version per release, so its pin names the HA release the
+suite runs against. The pin updates only when we explicitly
+bump.
 
 Runs in the default test session (not docker-marked).
-First run installs the pinned HA and pytest-HACC into a
-uv-script env (large download, one-time per cache).
+First run installs the pinned HA and pytest-homeassistant
+into a uv-script env (large download, one-time per cache).
 Subsequent runs reuse the cache.
 
 The reconciler / installer get full coverage in
@@ -67,7 +68,7 @@ BLUEPRINT_DIR = BUNDLED_ROOT / "blueprints" / "automation" / "blueprint_toolkit"
 class TestHassFixtureSmoke:
     """The hass fixture starts and stops without exception.
 
-    Single test that proves pytest-HACC is correctly wired
+    Single test that proves pytest-homeassistant is correctly wired
     in this repo. Catches dependency-pin regressions and
     pyproject-config drift early.
     """

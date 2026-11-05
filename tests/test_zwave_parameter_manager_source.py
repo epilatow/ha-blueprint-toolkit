@@ -4,8 +4,8 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant-custom-component==0.13.375",
-#     "zwave-js-server-python==0.73.1",
+#     "pytest-homeassistant==2026.11.0",
+#     "zwave-js-server-python==0.74.0",
 #     "pyyaml",
 #     "types-PyYAML",
 # ]
@@ -35,9 +35,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
 # zwave_js_server and our own pure modules are safe to import at module
-# scope. pytest-HACC's patch_recorder plugin refuses to load if
+# scope. pytest-homeassistant's patch_recorder plugin refuses to load if
 # homeassistant.components.recorder.util is already imported, and
-# anything from pytest_homeassistant_custom_component.common pulls it in
+# anything from pytest_homeassistant.common pulls it in
 # transitively -- so MockConfigEntry, the HA registries, and the recorder
 # helper are deferred into the functions that use them.
 from zwave_js_server.model.node import Node
@@ -135,7 +135,7 @@ def _install_fleet(hass: HomeAssistant, node: Node) -> str:
     from homeassistant.helpers import area_registry as ar
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     driver = MagicMock()
     driver.controller.home_id = HOME_ID
@@ -222,7 +222,7 @@ async def test_read_fleet_empty_when_the_entry_is_not_loaded(
     disabled would raise -- and the handler turns an empty read, not
     an exception, into its "Z-Wave JS unavailable" notification.
     """
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry = MockConfigEntry(domain="zwave_js", data={})
     entry.add_to_hass(hass)
@@ -289,7 +289,7 @@ async def test_read_fleet_resolves_the_device_of_its_own_entry(
 
     from homeassistant.components.zwave_js.helpers import get_device_id
     from homeassistant.helpers import device_registry as dr
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     node = _node()
     dev_reg = dr.async_get(hass)
@@ -325,7 +325,7 @@ async def test_read_fleet_skips_an_ignored_entry_ahead_of_the_live_one(
     working controller, which the user cannot fix without deleting it.
     """
     from homeassistant.config_entries import SOURCE_IGNORE
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     ignored = MockConfigEntry(domain="zwave_js", data={}, source=SOURCE_IGNORE)
     ignored.add_to_hass(hass)
@@ -342,7 +342,7 @@ async def test_read_fleet_empty_while_the_driver_is_connecting(
 ) -> None:
     """A loaded entry whose client has no driver yet reads as empty."""
     from homeassistant.config_entries import ConfigEntryState
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry = MockConfigEntry(
         domain="zwave_js", data={}, state=ConfigEntryState.LOADED
@@ -370,7 +370,7 @@ async def test_get_driver_returns_the_loaded_entrys_driver(
 async def test_get_driver_none_without_a_loaded_entry(
     hass: HomeAssistant,
 ) -> None:
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     assert get_driver(hass) is None
 
@@ -383,7 +383,7 @@ async def test_get_driver_none_without_a_loaded_entry(
 async def test_read_fleet_last_awake_from_recorder(
     hass: HomeAssistant,
 ) -> None:
-    from pytest_homeassistant_custom_component.components.recorder.common import (  # noqa: E501
+    from pytest_homeassistant.components.recorder.common import (
         async_wait_recording_done,
     )
 
@@ -407,7 +407,7 @@ async def test_read_fleet_last_awake_is_in_ha_time_zone(
 ) -> None:
     from datetime import timedelta
 
-    from pytest_homeassistant_custom_component.components.recorder.common import (  # noqa: E501
+    from pytest_homeassistant.components.recorder.common import (
         async_wait_recording_done,
     )
 
