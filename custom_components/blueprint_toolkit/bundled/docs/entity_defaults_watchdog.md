@@ -93,14 +93,15 @@ These can drift from their expected values over time:
 
 - **Legacy entity name drift** -- some integrations (Lutron Caseta, for
   example) build each entity's name from the device's name. When you rename
-  such a device, HA stores a matching name on the entity. Without it, HA shows
-  the new device name in front of the old name ("Fan Main Bath Fan"), so the
-  watchdog flags an entity missing that name, or still holding one from an
-  earlier rename, and reports its entity ID only once the name is right, since
-  the expected ID depends on it. Where that name is just the device name, the
-  watchdog wants **Use device name** on instead. An entity with **Use device
-  name** on is never flagged for its name, because HA leaves you no name to
-  change.
+  such a device, HA stores the rest of that name on the entity ("Off" for
+  "Kitchen Remote Off") and shows it after the new device name. Without it, HA
+  shows the new device name in front of the whole old name ("Fan Main Bath
+  Fan"), so the watchdog flags an entity missing that name, or holding
+  another. While the `device-entity-name` check runs, it reports the entity's
+  ID only once the name is right, since the expected ID depends on it. Where
+  nothing is left of the name, HA turns on **Use device name**, and so does
+  the watchdog. An entity with **Use device name** on is never flagged for its
+  name, because HA leaves you no name to change.
 
 - **Deviceless ID drift** -- automations, scripts, helpers, template sensors,
   and similar user-named entities have entity IDs derived from their name at
@@ -122,18 +123,18 @@ These can drift from their expected values over time:
 ### Stale cached entity names
 
 Home Assistant caches an entity's name when it adds the entity -- at startup,
-when the entity's integration reloads, or when the entity's ID changes -- and
-builds the entity's default ID from that cached name. Renaming an entity while
-it stays loaded, such as a helper renamed in its settings, leaves the cached
-name behind until one of those happens.
+or when the entity's integration reloads -- and builds the entity's default ID
+from that cached name. Renaming an entity while it stays loaded, such as a
+helper renamed in its settings, leaves the cached name behind until one of
+those happens.
 
 Until then, the default ID Home Assistant would set comes from the old name,
 so the watchdog doesn't check that entity's ID. It reports the entity instead,
 grouped by integration so the attribution header can link to the integration.
 With **Create repairs** on, each integration's list is a one-click **Refresh
-cached entity names?** Repair: Submit gives each entity a temporary ID and
-restores it before moving on to the next entity, which makes Home Assistant
-cache the current name. With it off, each list is a notification:
+cached entity names?** Repair: Submit has Home Assistant cache each entity's
+current name, as adding the entity would. With it off, each list is a
+notification:
 
 ```text
 The Home Assistant cached internal entity name doesn't match the current
@@ -144,8 +145,7 @@ resolved.
 
 - Cached: "Main Bath Floor" -> Current: "Floor" (Main Bath)
 
-To resolve it, restart Home Assistant, or change each entity's ID to a
-temporary one (for example, add `_tmp` to the end) and then change it back.
+To resolve it, restart Home Assistant, which caches each entity's current name.
 ```
 
 The location is the entity's area, or its device's. The check runs with the
@@ -205,7 +205,7 @@ device name, which HA already adds automatically:
 name HA stores at a rename:
 
 ```text
-- `button.kitchen_remote_off`: set to "Remote Off"
+- `button.kitchen_remote_off`: set to "Off"
 ```
 
 **Names to unset** -- legacy entities on a renamed device whose name should

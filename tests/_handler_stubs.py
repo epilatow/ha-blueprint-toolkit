@@ -202,6 +202,17 @@ def install_homeassistant_stubs(
         lambda _hass, _entry: ""
     )
 
+    # Mirror HA's ``NextNamePart`` enum, which names the part a
+    # registry entry's name follows.
+    helpers_registry = types.ModuleType("homeassistant.helpers.registry")
+
+    class _NextNamePart(_enum.StrEnum):
+        AREA = "area"
+        DEVICE = "device"
+        PARENT_DEVICE = "parent_device"
+
+    helpers_registry.NextNamePart = _NextNamePart  # type: ignore[attr-defined]
+
     # Default no-op stubs for the two HA helpers a handler
     # might subscribe to. Per-port test files swap these for
     # capture-list variants that record invocations.
@@ -236,6 +247,7 @@ def install_homeassistant_stubs(
         helpers_entity_platform
     )
     sys.modules["homeassistant.helpers.entity_registry"] = helpers_er
+    sys.modules["homeassistant.helpers.registry"] = helpers_registry
     sys.modules["homeassistant.helpers.event"] = event
     sys.modules["homeassistant.util"] = util
     sys.modules["homeassistant.util.dt"] = util_dt

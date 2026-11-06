@@ -117,7 +117,7 @@
         "step": {
           "confirm": {
             "title": "Refresh cached entity names?",
-            "description": "{attribution}\n\n{summary}\n\n{entities}\n\nClick Submit to give each entity a temporary ID and then restore its ID, which makes Home Assistant cache its current name."
+            "description": "{attribution}\n\n{summary}\n\n{entities}\n\nClick Submit to have Home Assistant cache each entity's current name."
           }
         }
       }

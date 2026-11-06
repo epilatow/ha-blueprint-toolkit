@@ -183,14 +183,15 @@ integration's new name is what you actually want.</p>
 <li>
 <p><strong>Legacy entity name drift</strong> -- some integrations (Lutron Caseta, for
 example) build each entity's name from the device's name. When you rename
-such a device, HA stores a matching name on the entity. Without it, HA shows
-the new device name in front of the old name (&quot;Fan Main Bath Fan&quot;), so the
-watchdog flags an entity missing that name, or still holding one from an
-earlier rename, and reports its entity ID only once the name is right, since
-the expected ID depends on it. Where that name is just the device name, the
-watchdog wants <strong>Use device name</strong> on instead. An entity with <strong>Use device
-name</strong> on is never flagged for its name, because HA leaves you no name to
-change.</p>
+such a device, HA stores the rest of that name on the entity (&quot;Off&quot; for
+&quot;Kitchen Remote Off&quot;) and shows it after the new device name. Without it, HA
+shows the new device name in front of the whole old name (&quot;Fan Main Bath
+Fan&quot;), so the watchdog flags an entity missing that name, or holding
+another. While the <code>device-entity-name</code> check runs, it reports the entity's
+ID only once the name is right, since the expected ID depends on it. Where
+nothing is left of the name, HA turns on <strong>Use device name</strong>, and so does
+the watchdog. An entity with <strong>Use device name</strong> on is never flagged for its
+name, because HA leaves you no name to change.</p>
 </li>
 <li>
 <p><strong>Deviceless ID drift</strong> -- automations, scripts, helpers, template sensors,
@@ -212,17 +213,17 @@ registry entry.</p>
 </ul>
 <h3>Stale cached entity names</h3>
 <p>Home Assistant caches an entity's name when it adds the entity -- at startup,
-when the entity's integration reloads, or when the entity's ID changes -- and
-builds the entity's default ID from that cached name. Renaming an entity while
-it stays loaded, such as a helper renamed in its settings, leaves the cached
-name behind until one of those happens.</p>
+or when the entity's integration reloads -- and builds the entity's default ID
+from that cached name. Renaming an entity while it stays loaded, such as a
+helper renamed in its settings, leaves the cached name behind until one of
+those happens.</p>
 <p>Until then, the default ID Home Assistant would set comes from the old name,
 so the watchdog doesn't check that entity's ID. It reports the entity instead,
 grouped by integration so the attribution header can link to the integration.
 With <strong>Create repairs</strong> on, each integration's list is a one-click <strong>Refresh
-cached entity names?</strong> Repair: Submit gives each entity a temporary ID and
-restores it before moving on to the next entity, which makes Home Assistant
-cache the current name. With it off, each list is a notification:</p>
+cached entity names?</strong> Repair: Submit has Home Assistant cache each entity's
+current name, as adding the entity would. With it off, each list is a
+notification:</p>
 <pre><code class="language-text">The Home Assistant cached internal entity name doesn't match the current
 entity name for some entities. This can occur when these entities have been
 renamed. The cached internal entity name is used to generate default entity
@@ -231,8 +232,7 @@ resolved.
 
 - Cached: &quot;Main Bath Floor&quot; -&gt; Current: &quot;Floor&quot; (Main Bath)
 
-To resolve it, restart Home Assistant, or change each entity's ID to a
-temporary one (for example, add `_tmp` to the end) and then change it back.
+To resolve it, restart Home Assistant, which caches each entity's current name.
 </code></pre>
 <p>The location is the entity's area, or its device's. The check runs with the
 entity ID checks -- <code>device-entity-id</code> for device entities and <code>entity-id</code> for
@@ -276,7 +276,7 @@ device name, which HA already adds automatically:</p>
 </code></pre>
 <p><strong>Name overrides to set</strong> -- legacy entities on a renamed device, with the
 name HA stores at a rename:</p>
-<pre><code class="language-text">- `button.kitchen_remote_off`: set to &quot;Remote Off&quot;
+<pre><code class="language-text">- `button.kitchen_remote_off`: set to &quot;Off&quot;
 </code></pre>
 <p><strong>Names to unset</strong> -- legacy entities on a renamed device whose name should
 match the default. Turn on <strong>Use device name</strong> in each entity's settings:</p>

@@ -18,24 +18,25 @@ would use today:
   device and entity names. The handler makes that call.
 - Device entity name drift: ``entry.name``, a name
   override set by a user or HA's migration logic, against
-  ``entry.original_name``, the integration's default.
+  the entity's own name with none stored -- the
+  integration's default, less any device name HA strips
+  from it.
 - Legacy entity name drift: a ``has_entity_name=False``
   entity whose integration name embeds the device's default
   name needs a stored name once the device is renamed,
   because HA otherwise shows the new device name in front
   of the whole integration name. The handler reads the
-  entity's name from HA and compares it to the name HA
-  stores at a rename, ``_compute_recommended_override``.
-  Where that name is just the device name, a blank name is
-  the target instead (``USE_DEVICE_NAME``): HA shows both
-  the same way, but only blank follows a later rename.
+  entity's own name from HA and compares it to the name HA
+  stores at a rename, ``_compute_recommended_override``:
+  the rest of the integration name, or blank
+  (``USE_DEVICE_NAME``) where nothing is left.
 - No entity with HA's "Use device name" switch on is
   flagged for its name, since the switch leaves the user no
   name to change.
-- Redundant prefix: HA prepends the device name for
-  ``has_entity_name=True`` entities, so an override that
-  starts with it is redundant. The handler asks HA whether
-  one does.
+- Redundant prefix: HA puts the device name in front of an
+  entity's own name, so a stored name that starts with it
+  shows it twice. The handler checks the stored name
+  against the device name.
 - Deviceless entity ID drift: for registry entries with no
   ``device_id`` in ``DEVICELESS_DOMAINS``, the entity's ID
   against the one the handler gets from HA. That is what
@@ -131,9 +132,8 @@ _CACHED_NAME_DRIFT_SUMMARY = (
     " entities until this drift is resolved."
 )
 _CACHED_NAME_DRIFT_GUIDANCE = (
-    "To resolve it, restart Home Assistant, or change each entity's ID to"
-    " a temporary one (for example, add `_tmp` to the end) and then change"
-    " it back."
+    "To resolve it, restart Home Assistant, which caches each entity's"
+    " current name."
 )
 
 # Domains eligible for the deviceless entity_id drift
@@ -227,19 +227,25 @@ class EntityDriftInfo:
     has_entity_name: bool
     has_name_override: bool
     expected_entity_id: str | None
+    # The entity's own name, which HA shows after the device
+    # name: the stored name, else ``default_name``.
     current_name: str
+    # The integration's name for the entity.
     expected_name: str | None
-    # The entity's whole name as HA computes it today, which
-    # for a legacy entity can differ from any stored value.
+    # The entity's own name with nothing stored: the
+    # integration's name, less the device name HA strips from
+    # the front of a has_entity_name=False one.
+    default_name: str
+    # The entity's whole name as HA computes it today.
     full_name: str
     # The name HA shows, which the entity name exclude matches.
     friendly_name: str
     # True when HA's "Use device name" switch reads on. HA
     # stores no flag for it: it reads on while the entity's
-    # own name, less any device name prefix, is empty.
+    # own name is empty.
     uses_device_name: bool
-    # True when HA would strip the device name from the front
-    # of a has_entity_name=True entity's stored name.
+    # True when the stored name starts with the device name
+    # HA already shows in front of it.
     has_redundant_prefix: bool
     # Set when HA's cached name for the entity is stale.
     cached_name_drift: CachedNameDrift | None = None
@@ -707,11 +713,13 @@ class DeviceResult:
         )
 
 
-def _strip_device_prefix(name: str, prefix: str) -> str | None:
+def strip_device_prefix(name: str, prefix: str) -> str | None:
     """Return ``name`` without its leading ``prefix``.
 
     Returns None if ``name`` doesn't start with ``prefix``
     as a whole word, and "" if ``name`` is just ``prefix``.
+    HA keeps the match it strips device names with in private
+    registry code, so this copies it.
     """
     folded_prefix = prefix.casefold()
     head = name[: len(folded_prefix)]
@@ -749,9 +757,10 @@ def _compute_recommended_override(
     HA gives this name to has_entity_name=False entities
     whose ``entity_name`` embeds the device name, since it
     would otherwise show the new device name in front of
-    all of ``entity_name``. It does so only for an entity
-    with no stored name, so after a further rename this is
-    the name HA would have stored for the current device.
+    all of ``entity_name``: the rest of ``entity_name``,
+    which HA then shows after the device name. It does so
+    only for an entity with no stored name, so after a
+    further rename this is still the name HA stores.
 
     HA keeps this rule, and the prefix match under it, in
     private registry code, so they can only be copied.
@@ -760,9 +769,11 @@ def _compute_recommended_override(
 
     Returns None if not applicable (has_entity_name=True,
     the device hasn't been renamed, or entity_name doesn't
-    start with the device default name). ``default_name``
-    can come from another integration on a shared device;
-    the prefix match is what screens that out.
+    start with the device default name), and
+    ``USE_DEVICE_NAME`` if entity_name is just the device
+    default name. ``default_name`` can come from another
+    integration on a shared device; the prefix match is what
+    screens that out.
     """
     if has_entity_name:
         return None
@@ -770,12 +781,7 @@ def _compute_recommended_override(
         return None
     if device_default_name == device_display_name:
         return None
-    suffix = _strip_device_prefix(entity_name, device_default_name)
-    if suffix is None:
-        return None
-    if not suffix:
-        return device_display_name
-    return f"{device_display_name} {suffix}"
+    return strip_device_prefix(entity_name, device_default_name)
 
 
 def _check_id_enabled(config: Config) -> bool:
@@ -862,29 +868,26 @@ def _check_entity_drift(
     name_drifted = False
 
     # Compute has_entity_name=False recommendations
-    ha_name = _compute_recommended_override(
+    recommended = _compute_recommended_override(
         entity.expected_name or "",
         device.de.default_name,
         device.de.name,
         entity.has_entity_name,
     )
-    # A stored copy of the device name goes stale at the
-    # next device rename; a blank one follows it.
-    recommended = USE_DEVICE_NAME if ha_name == device.de.name else ha_name
     # HA hides the name field while its "Use device name"
     # switch is on, so such a name is never ours to change.
     name_settable = not entity.uses_device_name
     name_pending = (
         name_settable
         and recommended is not None
-        and entity.full_name != recommended
+        and entity.current_name != recommended
     )
     # HA derives the expected ID from the name, so a settable
-    # name not showing HA's name leaves that ID unusable as a
-    # target. A stored copy and a blank both show it.
-    id_unusable = (
-        name_settable and ha_name is not None and entity.full_name != ha_name
-    )
+    # name other than HA's leaves that ID unusable as a target
+    # until the name finding fixes it. With the name check off
+    # nothing will, so the ID is reported against the name the
+    # entity keeps.
+    id_unusable = name_pending and _check_name_enabled(config)
 
     # ID drift check. A stale cached name makes the expected
     # ID wrong, so the cached-name finding reports the entity
@@ -907,8 +910,7 @@ def _check_entity_drift(
             name_drifted = name_pending
         elif (
             entity.has_name_override
-            and entity.expected_name is not None
-            and entity.current_name != entity.expected_name
+            and entity.current_name != entity.default_name
         ):
             name_drifted = True
 

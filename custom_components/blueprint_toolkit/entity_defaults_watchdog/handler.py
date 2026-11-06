@@ -38,7 +38,6 @@ pattern):
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -49,13 +48,13 @@ from typing import TYPE_CHECKING, Any
 
 import probatio
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.registry import NextNamePart
 from homeassistant.util import dt as dt_util
 
 from ..const import DOMAIN
@@ -90,7 +89,6 @@ from ..helpers import (
 from . import logic
 
 if TYPE_CHECKING:
-    from homeassistant.core import Event, EventStateChangedData
     from homeassistant.helpers.entity import Entity
 
 _LOGGER = logging.getLogger(__name__)
@@ -741,28 +739,39 @@ def _build_device_inputs(
                     )
                 )
                 has_name_override = entry.name is not None
-                current_name = str(
-                    entry.name or entry.original_name or "",
-                )
                 expected_name: str | None = None
                 if has_name_override or not entry.has_entity_name:
                     expected_name = str(entry.original_name or "")
-                unprefixed_name = er.async_get_unprefixed_name(hass, entry)
+                # The entity's own name with nothing stored: HA strips
+                # the device name off a has_entity_name=False
+                # integration's name where it starts with it.
+                default_name = (
+                    entry.original_name_unprefixed
+                    if entry.original_name_unprefixed is not None
+                    else str(entry.original_name or "")
+                )
+                # HA puts the device name in front only of an entity
+                # whose next name part is its device.
+                device_prefixed = entry.next_name_part is NextNamePart.DEVICE
                 entity_infos.append(
                     logic.EntityDriftInfo(
                         entity_id=eid,
                         has_entity_name=entry.has_entity_name,
                         has_name_override=has_name_override,
                         expected_entity_id=expected_id,
-                        current_name=current_name,
+                        current_name=entry.entity_name,
                         expected_name=expected_name,
+                        default_name=default_name,
                         full_name=er.async_get_full_entity_name(hass, entry),
                         friendly_name=_friendly_name(hass, entry),
-                        uses_device_name=not unprefixed_name,
+                        uses_device_name=not entry.entity_name,
                         has_redundant_prefix=(
-                            entry.has_entity_name
+                            device_prefixed
                             and bool(entry.name)
-                            and unprefixed_name != entry.name
+                            and logic.strip_device_prefix(
+                                entry.name or "", dev_entry.name
+                            )
+                            is not None
                         ),
                         cached_name_drift=cached_name_drift,
                     ),
@@ -1157,62 +1166,30 @@ async def async_unregister(
 
 FIX_SERVICES: tuple[str, ...] = tuple(s.value for s in logic.FixServices)
 
-# How long an entity's temporary ID waits for HA to add the
-# entity back under it. The original ID is restored either
-# way.
-_READD_TIMEOUT_SECONDS = 10
 
-
-async def _refresh_cached_name(hass: HomeAssistant, entity_id: str) -> None:
+def _refresh_cached_name(hass: HomeAssistant, entity_id: str) -> None:
     """Have HA cache the current name of ``entity_id``.
 
-    HA caches an entity's name when it adds the entity, and an
-    ID change re-adds it, so the entity moves to a temporary ID
-    and, once HA has added it there, straight back. The restore
-    follows its own entity's move, so an interruption leaves at
-    most one entity on a temporary ID.
+    Each time HA adds an entity, its platform hands the registry
+    the entity's ``suggested_object_id`` through
+    ``async_get_or_create``, which stores it as the entry's
+    ``object_id_base``. The same call with only that value makes
+    the update the entity's next add would. An entity that is
+    gone or not loaded has no current name to cache.
     """
     ent_reg = er.async_get(hass)
-    if ent_reg.async_get(entity_id) is None:
+    entry = ent_reg.async_get(entity_id)
+    if entry is None:
         return
-    domain, object_id = entity_id.split(".", 1)
-    temporary_id = str(
-        ent_reg.async_get_available_entity_id(domain, f"{object_id}_tmp"),
+    entity = _live_entities(hass, [entry.platform]).get(entity_id)
+    if entity is None:
+        return
+    ent_reg.async_get_or_create(
+        entry.domain,
+        entry.platform,
+        entry.unique_id,
+        object_id_base=entity.suggested_object_id,
     )
-    readded = asyncio.Event()
-
-    @callback  # type: ignore[untyped-decorator,unused-ignore]
-    def _on_temporary_state(event: Event[EventStateChangedData]) -> None:
-        if event.data["new_state"] is not None:
-            readded.set()
-
-    unsub = async_track_state_change_event(
-        hass,
-        [temporary_id],
-        _on_temporary_state,
-    )
-    try:
-        ent_reg.async_update_entity(entity_id, new_entity_id=temporary_id)
-        try:
-            async with asyncio.timeout(_READD_TIMEOUT_SECONDS):
-                await readded.wait()
-        except TimeoutError:
-            _LOGGER.warning(
-                "%s was not added back as %s within %d seconds;"
-                " restoring its ID anyway",
-                entity_id,
-                temporary_id,
-                _READD_TIMEOUT_SECONDS,
-            )
-        finally:
-            # An entity removed meanwhile has no ID left to restore.
-            if ent_reg.async_get(temporary_id) is not None:
-                ent_reg.async_update_entity(
-                    temporary_id,
-                    new_entity_id=entity_id,
-                )
-    finally:
-        unsub()
 
 
 def _lookup_repair(
@@ -1340,7 +1317,7 @@ async def async_register_fix_services(hass: HomeAssistant) -> None:
         if not isinstance(payload, logic.CachedNameDriftRepair):
             return
         for entity_id in payload.entity_ids:
-            await _refresh_cached_name(hass, entity_id)
+            _refresh_cached_name(hass, entity_id)
 
     register_fix_service(
         hass,

@@ -2417,10 +2417,12 @@ class TestLegacyNamesFollowHomeAssistant:
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
 
-    async def test_stored_copy_of_device_name_is_not_drift(
+    async def test_blank_name_ha_stores_is_not_drift(
         self,
         hass: HomeAssistant,
     ) -> None:
+        # Nothing is left of an integration name that is just the
+        # device's name, so HA stores a blank one.
         from homeassistant.helpers import entity_registry as er
 
         await _setup_integration(hass)
@@ -2433,17 +2435,20 @@ class TestLegacyNamesFollowHomeAssistant:
         await self._rename_device(hass, device_id, "Fan")
         stored = er.async_get(hass).async_get("switch.main_bath_fan")
         assert stored is not None
-        assert stored.name == "Fan"
+        assert stored.name == ""
 
         await self._scan(hass)
 
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
 
-    async def test_copy_left_by_an_earlier_rename_is_unset(
+    async def test_stored_copy_of_the_device_name_is_unset(
         self,
         hass: HomeAssistant,
     ) -> None:
+        # Older releases stored a copy of the device name at a
+        # rename, and HA keeps one it cannot strip the current
+        # device name from, which then shows both.
         from homeassistant.helpers import entity_registry as er
 
         await _setup_integration(hass)
@@ -2453,15 +2458,18 @@ class TestLegacyNamesFollowHomeAssistant:
             original_name="Main Bath Fan",
             entity_id="switch.main_bath_fan",
         )
-        await self._rename_device(hass, device_id, "Fan")
         await self._rename_device(hass, device_id, "Exhaust")
+        er.async_get(hass).async_update_entity(
+            "switch.main_bath_fan",
+            name="Fan",
+        )
 
         await self._scan(hass)
 
         repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
-        assert '"Fan" -> `<unset>`' in entities
+        assert '"Exhaust Fan" -> `<unset>`' in entities
 
         await hass.services.async_call(
             DOMAIN,
@@ -2489,8 +2497,8 @@ class TestLegacyNamesFollowHomeAssistant:
         self,
         hass: HomeAssistant,
     ) -> None:
-        # An entity's own area turns HA's switch off for a stored
-        # copy, which leaves the name editable.
+        # HA shows no device name in front of an entity with its
+        # own area, but a rename still stores a blank name for it.
         from homeassistant.helpers import area_registry as ar
         from homeassistant.helpers import entity_registry as er
 
@@ -2506,6 +2514,7 @@ class TestLegacyNamesFollowHomeAssistant:
         er.async_get(hass).async_update_entity(
             "switch.main_bath_fan",
             area_id=closet.id,
+            name="Fan",
         )
 
         await self._scan(hass)
@@ -2546,11 +2555,9 @@ class TestLegacyNamesFollowHomeAssistant:
             in entities
         )
 
-    @pytest.mark.parametrize("stored_name", ["", "Main Bath Sensor"])
     async def test_use_device_name_is_left_alone_on_modern_entity(
         self,
         hass: HomeAssistant,
-        stored_name: str,
     ) -> None:
         from homeassistant.helpers import entity_registry as er
 
@@ -2571,7 +2578,7 @@ class TestLegacyNamesFollowHomeAssistant:
             original_name="Temperature",
             object_id_base="Temperature",
         )
-        ent_reg.async_update_entity(modern.entity_id, name=stored_name)
+        ent_reg.async_update_entity(modern.entity_id, name="")
 
         await self._scan(hass)
 
@@ -2751,10 +2758,14 @@ class TestLegacyNamesFollowHomeAssistant:
             in attribution
         )
 
-    async def test_second_rename_flags_the_stale_name(
+    async def test_second_rename_keeps_the_name_ha_stored(
         self,
         hass: HomeAssistant,
     ) -> None:
+        # The stored name is only what follows the device name, so
+        # a later rename leaves it right.
+        from homeassistant.helpers import entity_registry as er
+
         await _setup_integration(hass)
         device_id = self._plant(
             hass,
@@ -2764,13 +2775,13 @@ class TestLegacyNamesFollowHomeAssistant:
         )
         await self._rename_device(hass, device_id, "Remote")
         await self._rename_device(hass, device_id, "Clicker")
+        entry = er.async_get(hass).async_get("button.main_bath_remote_off")
+        assert entry is not None
+        assert er.async_get_full_entity_name(hass, entry) == "Clicker Off"
 
         await self._scan(hass)
 
-        repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
-        assert len(repairs) == 1
-        entities = (repairs[0].translation_placeholders or {})["entities"]
-        assert '"Remote Off" -> "Clicker Off"' in entities
+        assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
 
 
 class TestRedundantPrefixComesFromHomeAssistant:
@@ -3551,41 +3562,15 @@ class TestCachedNameDrift:
         assert entry is not None
         assert entry.object_id_base == "Floor"
         assert hass.states.get(self._HELPER) is not None
-        assert [
-            entity_id for entity_id in ent_reg.entities if "_tmp" in entity_id
-        ] == []
-        assert [
-            state.entity_id
-            for state in hass.states.async_all()
-            if "_tmp" in state.entity_id
-        ] == []
+        assert await _recreate_entity_ids(
+            hass,
+            hass_ws_client,
+            [self._HELPER],
+        ) == {self._HELPER: self._HELPER}
         await self._scan(hass, create_repairs=True)
         assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
-    async def test_submit_steps_around_a_taken_temporary_id(
-        self,
-        hass: HomeAssistant,
-        hass_ws_client: WebSocketGenerator,
-    ) -> None:
-        from homeassistant.helpers import entity_registry as er
-
-        await _setup_integration(hass)
-        await self._create_helper(hass, hass_ws_client, "Main Bath Floor Tmp")
-        await self._renamed_helper(hass, hass_ws_client)
-        await self._scan(hass, create_repairs=True)
-
-        await self._submit(hass)
-
-        ent_reg = er.async_get(hass)
-        entry = ent_reg.async_get(self._HELPER)
-        assert entry is not None
-        assert entry.object_id_base == "Floor"
-        bystander = ent_reg.async_get(f"{self._HELPER}_tmp")
-        assert bystander is not None
-        assert bystander.object_id_base == "Main Bath Floor Tmp"
-        assert ent_reg.async_get(f"{self._HELPER}_tmp_2") is None
-
-    async def test_submit_restores_each_entity_before_the_next(
+    async def test_submit_changes_no_entity_id(
         self,
         hass: HomeAssistant,
         hass_ws_client: WebSocketGenerator,
@@ -3621,50 +3606,21 @@ class TestCachedNameDrift:
         await self._submit(hass)
         unsub()
 
-        assert renames == [
-            ("input_boolean.alpha", "input_boolean.alpha_tmp"),
-            ("input_boolean.alpha_tmp", "input_boolean.alpha"),
-            ("input_boolean.beta", "input_boolean.beta_tmp"),
-            ("input_boolean.beta_tmp", "input_boolean.beta"),
-        ]
-
-    async def test_entity_that_never_comes_back_is_restored(
-        self,
-        hass: HomeAssistant,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        from homeassistant.helpers import entity_registry as er
-
-        from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
-            handler as edw,
-        )
-
-        await _setup_integration(hass)
-        # A registry entry with no loaded entity is never added
-        # back under its temporary ID.
-        er.async_get(hass).async_get_or_create(
-            domain="input_boolean",
-            platform="input_boolean",
-            unique_id="unloaded",
-            suggested_object_id="unloaded",
-        )
-        monkeypatch.setattr(edw, "_READD_TIMEOUT_SECONDS", 0)
-
-        await edw._refresh_cached_name(hass, "input_boolean.unloaded")
-
+        assert renames == []
         ent_reg = er.async_get(hass)
-        assert ent_reg.async_get("input_boolean.unloaded") is not None
-        assert ent_reg.async_get("input_boolean.unloaded_tmp") is None
-        assert "restoring its ID anyway" in caplog.text
+        for entity_id, name in (
+            ("input_boolean.alpha", "Alpha Renamed"),
+            ("input_boolean.beta", "Beta Renamed"),
+        ):
+            entry = ent_reg.async_get(entity_id)
+            assert entry is not None
+            assert entry.object_id_base == name
 
-    async def test_entity_removed_while_on_its_temporary_id_is_left_gone(
+    async def test_entity_that_is_not_loaded_is_left_alone(
         self,
         hass: HomeAssistant,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import asyncio
-
+        # With no live entity there is no current name to cache.
         from homeassistant.helpers import entity_registry as er
 
         from custom_components.blueprint_toolkit.entity_defaults_watchdog import (  # noqa: E501
@@ -3676,20 +3632,15 @@ class TestCachedNameDrift:
         ent_reg.async_get_or_create(
             domain="input_boolean",
             platform="input_boolean",
-            unique_id="removed",
-            suggested_object_id="removed",
+            unique_id="unloaded",
+            object_id_base="Unloaded",
         )
-        monkeypatch.setattr(edw, "_READD_TIMEOUT_SECONDS", 0.1)
 
-        refresh = hass.async_create_task(
-            edw._refresh_cached_name(hass, "input_boolean.removed"),
-        )
-        await asyncio.sleep(0)
-        ent_reg.async_remove("input_boolean.removed_tmp")
-        await refresh
+        edw._refresh_cached_name(hass, "input_boolean.unloaded")
 
-        assert ent_reg.async_get("input_boolean.removed") is None
-        assert ent_reg.async_get("input_boolean.removed_tmp") is None
+        entry = ent_reg.async_get("input_boolean.unloaded")
+        assert entry is not None
+        assert entry.object_id_base == "Unloaded"
 
     async def test_entity_removed_before_submit_is_skipped(
         self,
@@ -3703,39 +3654,9 @@ class TestCachedNameDrift:
 
         await _setup_integration(hass)
 
-        await edw._refresh_cached_name(hass, "input_boolean.gone")
+        edw._refresh_cached_name(hass, "input_boolean.gone")
 
-        assert er.async_get(hass).async_get("input_boolean.gone_tmp") is None
-
-    async def test_id_round_trip_caches_the_current_name(
-        self,
-        hass: HomeAssistant,
-        hass_ws_client: WebSocketGenerator,
-    ) -> None:
-        from homeassistant.helpers import entity_registry as er
-
-        await _setup_integration(hass)
-        await self._renamed_helper(hass, hass_ws_client)
-        await self._scan(hass)
-        assert list(self._notifications(hass)) == ["cached_name_input_boolean"]
-        ent_reg = er.async_get(hass)
-        temporary = f"{self._HELPER}_tmp"
-
-        ent_reg.async_update_entity(self._HELPER, new_entity_id=temporary)
-        await hass.async_block_till_done()
-        ent_reg.async_update_entity(temporary, new_entity_id=self._HELPER)
-        await hass.async_block_till_done()
-
-        entry = ent_reg.async_get(self._HELPER)
-        assert entry is not None
-        assert entry.object_id_base == "Floor"
-        assert await _recreate_entity_ids(
-            hass,
-            hass_ws_client,
-            [self._HELPER],
-        ) == {self._HELPER: self._HELPER}
-        await self._scan(hass)
-        assert self._notifications(hass) == {}
+        assert er.async_get(hass).async_get("input_boolean.gone") is None
 
     async def test_stored_name_outranks_the_cached_one(
         self,

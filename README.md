@@ -52,7 +52,7 @@ are standalone -- self-contained YAML blueprints with no service handler.
 
 ## Prerequisites
 
-- Home Assistant 2026.10 or newer
+- Home Assistant 2026.11 or newer
 - Python 3.14+
 - [uv](https://docs.astral.sh/uv/) (for development)
 
