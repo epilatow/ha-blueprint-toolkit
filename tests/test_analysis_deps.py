@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --script --exact
 # /// script
 # requires-python = ">=3.14"
 # dependencies = [
@@ -87,6 +87,13 @@ once broken.
    reverse: a script claiming an older one is claiming support it
    cannot deliver the moment it imports a module formatted at the
    floor.
+
+8. Every ``uv run`` shebang syncs its script's environment exactly
+   (``DEVELOPMENT.md`` "Shebangs"). ``uv`` caches one environment per
+   script and otherwise only adds to it, so a dependency dropped from
+   a block stays installed, and a dropped pytest plugin keeps loading,
+   in every checkout that ran the script before. A fresh checkout and
+   CI never had it, so they test something different.
 """
 
 from __future__ import annotations
@@ -113,7 +120,7 @@ _YAML_IMPORT = re.compile(r"^\s*(?:import yaml\b|from yaml\b)", re.MULTILINE)
 
 
 def _tracked(*suffixes: str) -> list[Path]:
-    """Tracked files with these suffixes, symlinks excluded.
+    """Tracked files with these suffixes (all when none), symlinks excluded.
 
     Skipping links matches what ``scripts/hacc_upgrade.py`` rewrites:
     it refuses to edit through a tracked symlink, because the target
@@ -130,7 +137,7 @@ def _tracked(*suffixes: str) -> list[Path]:
     return [
         path
         for rel in out.split("\0")
-        if rel and rel.endswith(suffixes)
+        if rel and (not suffixes or rel.endswith(suffixes))
         if not (path := REPO_ROOT / rel).is_symlink()
     ]
 
@@ -633,6 +640,44 @@ class TestShippedCodeTakesTheFallback:
             "extending it, so it drops the deps the fallback "
             "carries and has to restate its pins. Move whatever "
             "the file needs into the fallback and delete the block."
+        )
+
+
+_UV_SHEBANG_PREFIX = "#!/usr/bin/env -S uv run"
+_EXACT_UV_SHEBANG = "#!/usr/bin/env -S uv run --script --exact"
+
+
+class TestScriptEnvironmentsAreExact:
+    def test_uv_shebangs_sync_exactly(self) -> None:
+        """A script env holds only what its block declares.
+
+        ``uv`` keeps one cached environment per script and, without
+        ``--exact``, only ever adds to it. A dependency dropped from
+        a block stays installed, and a dropped pytest plugin keeps
+        loading itself into every run of that file.
+        """
+        uv_scripts: list[str] = []
+        offenders: list[str] = []
+        # Every tracked file, not only ``.py``: a shebang script needs
+        # no extension.
+        for path in _tracked():
+            with path.open("rb") as handle:
+                raw = handle.readline()
+            first_line = raw.decode(errors="replace").rstrip("\r\n")
+            if not first_line.startswith(_UV_SHEBANG_PREFIX):
+                continue
+            rel = str(path.relative_to(REPO_ROOT))
+            uv_scripts.append(rel)
+            if first_line != _EXACT_UV_SHEBANG:
+                offenders.append(f"{rel}: {first_line}")
+
+        # The gate below passes vacuously on an empty match.
+        assert uv_scripts, f"no tracked file starts {_UV_SHEBANG_PREFIX!r}"
+        assert not offenders, (
+            "uv-run script(s) without the exact-sync shebang:\n  "
+            + "\n  ".join(offenders)
+            + f"\n\nUse `{_EXACT_UV_SHEBANG}` so the cached environment "
+            "drops whatever the script's block no longer declares."
         )
 
 

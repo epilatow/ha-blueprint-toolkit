@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --script --exact
 # /// script
 # requires-python = ">=3.14"
 # dependencies = ["markdown-it-py==3.0.0"]

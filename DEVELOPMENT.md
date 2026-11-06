@@ -51,8 +51,15 @@ them at the standard discovery path. A new skill only needs its directory +
 
 ### Shebangs
 
-- **Executable scripts** (test files, `run_all.py`) use the PEP 723 shebang
-  `#!/usr/bin/env -S uv run --script` with inline dependency declarations.
+- **Executable scripts** (test files, `run_all.py`, and the uv-run tools under
+  `scripts/`) use the PEP 723 shebang
+  `#!/usr/bin/env -S uv run --script --exact` with inline dependency
+  declarations. `--exact` departs from the shared convention on purpose: `uv`
+  keeps one cached environment per script and by default only ever adds to it,
+  so a dependency dropped from a script's block stays installed. A dropped
+  pytest plugin, for one, still loads itself into every later run. `--exact`
+  removes whatever the block no longer declares, and
+  `tests/test_analysis_deps.py` gates the form.
 
 - **Anything that runs where `uv` is absent** uses plain
   `#!/usr/bin/env python3` with stdlib-only imports (or imports HA provides):
