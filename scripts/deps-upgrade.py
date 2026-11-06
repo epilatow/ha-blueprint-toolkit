@@ -44,16 +44,17 @@ The flow mirrors ``repo-shared upgrade``:
 - Publish the bump and fast-forward the default branch, with
   ``--push``. Without it the bump stays on its branch.
 
-The Z-Wave client pin rides along. It is pinned exactly too, but its
-value is dictated by the Home Assistant release the harness pin selects,
-so the bump reads it out of that release and rewrites it in the same
-commit rather than leaving a coupled pin behind. That value comes from
-the release's own component manifest, which is read as a file rather
-than imported -- importing ``zwave_js`` requires the very library whose
-version is being resolved. If a future Home Assistant release relaxes
-that requirement to a range there is nothing exact to read, and the
-bump stops instead of guessing; note that this halts the whole bump,
-not just its Z-Wave part.
+The client libraries in ``COMPANIONS`` ride along. Each is the library
+one Home Assistant component imports at an exact version -- ``zwave_js``
+the Z-Wave JS client, ``hassio`` the Supervisor client -- so its pin is
+dictated by the release the harness pin selects. The bump reads each
+out of that release and rewrites it in the same commit rather than
+leaving a coupled pin behind. The value comes from the component's own
+manifest, which is read as a file rather than imported -- importing the
+component requires the very library whose version is being resolved.
+If a future Home Assistant release relaxes one of those requirements to
+a range there is nothing exact to read, and the bump stops instead of
+guessing; note that this halts the whole bump, not just that pin.
 
 The manifest version is bumped only when a rewrite actually touched
 ``custom_components/``. ``tests/test_manifest.py`` enforces that
@@ -73,18 +74,42 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 import tomllib
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "pytest-homeassistant"
-# The Z-Wave client library is pinned exactly too, but its value is not
-# a choice: it has to be whatever the pinned Home Assistant release's
-# zwave_js component requires. See ``companion_requirement``.
-COMPANION = "zwave-js-server-python"
+
+
+@dataclass(frozen=True)
+class Companion:
+    """A client library pinned to what one Home Assistant component needs.
+
+    It is pinned exactly too, but its value is not a choice: it has to be
+    whatever the pinned release's ``component`` requires. See
+    ``companion_requirement``. ``label`` names the pin in the message of
+    a bump that moves it.
+    """
+
+    package: str
+    component: str
+    label: str
+
+
+COMPANIONS = (
+    Companion("zwave-js-server-python", "zwave_js", "Z-Wave client"),
+    Companion("aiohasupervisor", "hassio", "Supervisor client"),
+)
+# Prints a component's requirements, run inside the target release's
+# environment by ``companion_requirement``.
+REQUIREMENTS_READER = (
+    Path(__file__).resolve().parent / "ha_component_requirements.py"
+)
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 NETWORK_TIMEOUT_SECONDS = 30
 
@@ -238,29 +263,25 @@ def declared_versions(root: Path, package: str) -> set[str]:
     return {version for _, version in declared_sites(root, package)}
 
 
-def companion_requirement(root: Path, version: str) -> str:
-    """Return the Z-Wave client version the target release needs.
+def companion_requirement(
+    root: Path, version: str, companion: Companion
+) -> str:
+    """Return the ``companion`` version the target release needs.
 
-    Home Assistant's own ``zwave_js`` component pins one exact
-    ``zwave-js-server-python`` and imports from it, so the version this
-    repo declares has to be that one: an older library fails those
-    imports and takes every Z-Wave phase down in collection, naming the
-    library rather than the pin that chose it. The answer is a property
-    of the release being pinned, so it is read out of the release rather
-    than tracked by hand -- from the component's own manifest, without
-    importing the component, which would need the library present.
+    Home Assistant's own component pins one exact client and imports
+    from it, so the version this repo declares has to be that one: an
+    older library fails those imports, so every phase importing the
+    component fails with an error naming the library rather than the pin
+    that chose it. The answer is a property of the release being
+    pinned, so it is read out of the release rather than tracked by hand
+    -- from the component's own manifest, without importing the
+    component, which would need the library present.
 
     Runs from ``root`` so this throwaway environment resolves against
     the repo's ``.python-version`` like every other one. Without that it
     would take the newest interpreter on the host, which is how a
     resolution silently stops meaning what the suite validates against.
     """
-    code = (
-        "import json, pathlib, homeassistant;"
-        "p = pathlib.Path(homeassistant.__file__).parent"
-        " / 'components' / 'zwave_js' / 'manifest.json';"
-        "print('\\n'.join(json.loads(p.read_text())['requirements']))"
-    )
     result = subprocess.run(
         [
             "uv",
@@ -270,8 +291,8 @@ def companion_requirement(root: Path, version: str) -> str:
             "--with",
             f"{PACKAGE}=={version}",
             "python",
-            "-c",
-            code,
+            str(REQUIREMENTS_READER),
+            companion.component,
         ],
         cwd=root,
         capture_output=True,
@@ -280,17 +301,20 @@ def companion_requirement(root: Path, version: str) -> str:
     )
     if result.returncode != 0:
         raise ValueError(
-            f"cannot read Home Assistant's zwave_js requirements at "
-            f"{PACKAGE}=={version}: {result.stderr.strip()[:400]}"
+            f"cannot read Home Assistant's {companion.component} "
+            f"requirements at {PACKAGE}=={version}: "
+            f"{result.stderr.strip()[:400]}"
         )
-    needle = re.compile(re.escape(f"{COMPANION}==") + r"(\d+(?:\.\d+)*)")
+    needle = re.compile(
+        re.escape(f"{companion.package}==") + r"(\d+(?:\.\d+)*)"
+    )
     for line in result.stdout.splitlines():
         found = needle.fullmatch(line.strip())
         if found:
             return found.group(1)
     raise ValueError(
-        f"Home Assistant's zwave_js manifest at {PACKAGE}=="
-        f"{version} declares no exact {COMPANION} requirement: "
+        f"Home Assistant's {companion.component} manifest at {PACKAGE}=="
+        f"{version} declares no exact {companion.package} requirement: "
         f"{result.stdout.strip()[:200]}"
     )
 
@@ -391,7 +415,7 @@ def sweep_stale_worktrees(keep: str | None = None) -> None:
 
 
 def report_companion_drift(root: Path, target: str, branch_point: str) -> None:
-    """Print what the coupled pin would become, for ``--dry-run``.
+    """Print what each coupled pin would become, for ``--dry-run``.
 
     Reports rather than raises: a reporting run should not fail over
     a resolution problem a real run would stop on, and the resolution
@@ -402,37 +426,66 @@ def report_companion_drift(root: Path, target: str, branch_point: str) -> None:
     drifted from the branch point can declare different sites than the
     ones a real run would rewrite.
     """
-    declared = declared_versions(root, COMPANION)
+    for companion in COMPANIONS:
+        _report_one_companion(root, target, branch_point, companion)
+
+
+def _report_one_companion(
+    root: Path, target: str, branch_point: str, companion: Companion
+) -> None:
+    package = companion.package
+    declared = declared_versions(root, package)
     if not declared:
-        print(f"no {COMPANION} pin declared; nothing coupled to move")
+        print(f"no {package} pin declared; nothing coupled to move")
         return
     print(
-        f"reading {COMPANION} sites from this checkout; a real run "
+        f"reading {package} sites from this checkout; a real run "
         f"rewrites them in a worktree built from {branch_point}"
     )
     if len(declared) > 1:
         print(
-            f"warning: {COMPANION} already disagrees across sites "
+            f"warning: {package} already disagrees across sites "
             f"({', '.join(sorted(declared))}); a real run would stop "
             "rather than guess which to replace"
         )
         return
     try:
-        wanted = companion_requirement(root, target)
+        wanted = companion_requirement(root, target, companion)
     except ValueError as exc:
-        print(f"warning: cannot resolve {COMPANION} for {target}: {exc}")
+        print(f"warning: cannot resolve {package} for {target}: {exc}")
         return
     current = declared.pop()
     if current == wanted:
-        print(f"{COMPANION}: {current} already matches {PACKAGE}=={target}")
+        print(f"{package}: {current} already matches {PACKAGE}=={target}")
         return
-    sites = pin_sites(root, current, COMPANION)
+    sites = pin_sites(root, current, package)
     print(
-        f"would also move {COMPANION}: {current} -> {wanted} "
+        f"would also move {package}: {current} -> {wanted} "
         f"across {len(sites)} site(s):"
     )
     for path in sites:
         print(f"  {path.relative_to(root)}")
+
+
+def companion_paragraph(moved: Sequence[Companion]) -> str:
+    """The bump message's account of the client pins it moved."""
+    if len(moved) == 1:
+        (only,) = moved
+        text = (
+            f"The {only.label} pin moves with it. That version is not a "
+            f"choice: Home Assistant's own {only.component} component "
+            "requires one exact client and imports from it, so it is read "
+            "out of the release being pinned."
+        )
+    else:
+        labels = " and ".join(companion.label for companion in moved)
+        text = (
+            f"The {labels} pins move with it. Those versions are not a "
+            "choice: each is the one exact client a Home Assistant "
+            "component requires and imports from, so each is read out of "
+            "the release being pinned."
+        )
+    return textwrap.fill(text, width=60) + "\n"
 
 
 def shipped_code_changed(worktree: Path) -> bool:
@@ -782,55 +835,62 @@ def run(args: argparse.Namespace) -> Exit:
 
     rel_sites = [str(p.relative_to(worktree)) for p in sites]
 
-    # The Z-Wave client pin is derived from the target release, so it
-    # moves in the same commit. Left behind, it fails the Z-Wave phases
-    # on an import error that names the library instead of the pin.
-    companion_declared = declared_sites(worktree, COMPANION)
-    companion_current = {version for _, version in companion_declared}
-    if len(companion_current) > 1:
-        # An unattended run leaves only what it printed, so name the
-        # files rather than just the versions that disagree.
-        listing = "\n  ".join(
-            f"{path.relative_to(worktree)} pins {version}"
-            for path, version in sorted(
-                companion_declared, key=lambda site: str(site[0])
+    # Each client pin is derived from the target release, so it moves in
+    # the same commit. Left behind, it fails every phase importing its
+    # component on an import error that names the library instead of the
+    # pin.
+    moved: list[Companion] = []
+    for companion in COMPANIONS:
+        package = companion.package
+        companion_declared = declared_sites(worktree, package)
+        companion_current = {version for _, version in companion_declared}
+        if len(companion_current) > 1:
+            # An unattended run leaves only what it printed, so name the
+            # files rather than just the versions that disagree.
+            listing = "\n  ".join(
+                f"{path.relative_to(worktree)} pins {version}"
+                for path, version in sorted(
+                    companion_declared, key=lambda site: str(site[0])
+                )
             )
-        )
-        return _fail(
-            f"{COMPANION} is pinned to several versions; reconcile them "
-            f"by hand before a bump can move them (worktree {worktree} "
-            f"kept):\n  {listing}",
-            Exit.ERROR,
-        )
-    companion_moved = False
-    if companion_current:
+            return _fail(
+                f"{package} is pinned to several versions; reconcile them "
+                f"by hand before a bump can move them (worktree "
+                f"{worktree} kept):\n  {listing}",
+                Exit.ERROR,
+            )
+        if not companion_current:
+            continue
         # Exactly one version, per the guard above.
         stale_companion = companion_current.pop()
         try:
-            companion_target = companion_requirement(worktree, target)
+            companion_target = companion_requirement(
+                worktree, target, companion
+            )
         except ValueError as exc:
             return _fail(f"{exc} (worktree {worktree} kept)", Exit.ERROR)
-        if companion_target != stale_companion:
-            companion_moved = True
-            print(
-                f"{COMPANION}: {stale_companion} -> {companion_target} "
-                f"(required by {PACKAGE}=={target})"
-            )
-            companion_sites = pin_sites(worktree, stale_companion, COMPANION)
-            for path in companion_sites:
-                path.write_text(
-                    rewrite_pins(
-                        path.read_text(),
-                        stale_companion,
-                        companion_target,
-                        COMPANION,
-                    )
+        if companion_target == stale_companion:
+            continue
+        moved.append(companion)
+        print(
+            f"{package}: {stale_companion} -> {companion_target} "
+            f"(required by {PACKAGE}=={target})"
+        )
+        companion_sites = pin_sites(worktree, stale_companion, package)
+        for path in companion_sites:
+            path.write_text(
+                rewrite_pins(
+                    path.read_text(),
+                    stale_companion,
+                    companion_target,
+                    package,
                 )
-            rel_sites.extend(
-                str(p.relative_to(worktree))
-                for p in companion_sites
-                if str(p.relative_to(worktree)) not in rel_sites
             )
+        rel_sites.extend(
+            str(p.relative_to(worktree))
+            for p in companion_sites
+            if str(p.relative_to(worktree)) not in rel_sites
+        )
 
     if not git_ok("add", *rel_sites, cwd=worktree):
         return _fail(
@@ -871,17 +931,11 @@ def run(args: argparse.Namespace) -> Exit:
             "landed yet, so this was merged by hand.\n"
         )
     message = f"- deps: Bump {PACKAGE} to {target}.\n\n{provenance}"
-    # Only claim the coupled move when it happened. The pin can be
-    # declared and already correct for the target release, and these
-    # messages are permanent.
-    if companion_moved:
-        message += (
-            "\n"
-            "The Z-Wave client pin moves with it. That version is not\n"
-            "a choice: Home Assistant's own zwave_js component requires\n"
-            "one exact client and imports from it, so it is read out of\n"
-            "the release being pinned.\n"
-        )
+    # Only claim a coupled move that happened. A pin can be declared and
+    # already correct for the target release, and these messages are
+    # permanent.
+    if moved:
+        message += "\n" + companion_paragraph(moved)
     if not git_ok("commit", "-m", message, cwd=worktree):
         return _fail(
             f"cannot commit the bump (worktree {worktree} kept)",

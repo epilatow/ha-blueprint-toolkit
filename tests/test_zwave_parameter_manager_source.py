@@ -5,6 +5,7 @@
 #     "pytest",
 #     "pytest-cov",
 #     "pytest-homeassistant==2026.11.0",
+#     "aiohasupervisor==0.8.1",
 #     "zwave-js-server-python==0.74.0",
 #     "pyyaml",
 #     "types-PyYAML",

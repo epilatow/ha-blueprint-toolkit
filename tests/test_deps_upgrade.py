@@ -21,6 +21,7 @@ fast-forward without a multi-minute suite run.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,10 @@ import deps_upgrade  # noqa: E402
 # declaration site to tests/test_analysis_deps.py, which scans .py
 # and requires every site to name the version pyproject.toml pins.
 PACKAGE = deps_upgrade.PACKAGE
+ZWAVE, SUPERVISOR = (
+    next(c for c in deps_upgrade.COMPANIONS if c.component == component)
+    for component in ("zwave_js", "hassio")
+)
 
 
 def _pyproject(*deps: str) -> str:
@@ -73,7 +78,7 @@ def _add_shipped_pin_site(root: Path, companion_pin: str) -> None:
     shipped = root / SHIPPED_PIN_REL
     shipped.parent.mkdir(parents=True, exist_ok=True)
     shipped.write_text(
-        f'VENV_DEPS = [\n    "{deps_upgrade.COMPANION}=={companion_pin}",\n]\n'
+        f'VENV_DEPS = [\n    "{ZWAVE.package}=={companion_pin}",\n]\n'
     )
     scripts = root / "scripts"
     scripts.mkdir(exist_ok=True)
@@ -393,14 +398,17 @@ class TestLatestVersion:
 
 
 class TestCompanionPin:
-    """The Z-Wave client pin is derived, so the bump moves it too."""
+    """The client pins are derived, so the bump moves them too."""
 
-    def _repo_with_companion(self, tmp_path: Path) -> tuple[Path, Path]:
+    def _repo_with_companion(
+        self, tmp_path: Path, *extra: str
+    ) -> tuple[Path, Path]:
         upstream, clone = _clone_pair(tmp_path, "1.2.3")
         (clone / "pyproject.toml").write_text(
             _pyproject(
                 f"{PACKAGE}==1.2.3",
-                f"{deps_upgrade.COMPANION}==0.70.0",
+                f"{ZWAVE.package}==0.70.0",
+                *extra,
                 "types-PyYAML",
             )
         )
@@ -422,7 +430,7 @@ class TestCompanionPin:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.73.1",
+            lambda _root, _version, _companion: "0.73.1",
         )
 
         args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
@@ -430,12 +438,43 @@ class TestCompanionPin:
 
         landed = (clone / "pyproject.toml").read_text()
         assert f"{PACKAGE}==4.5.6" in landed
-        assert f"{deps_upgrade.COMPANION}==0.73.1" in landed
+        assert f"{ZWAVE.package}==0.73.1" in landed
         assert "0.70.0" not in landed
         message = subprocess.check_output(
             ["git", "log", "-1", "--format=%B"], cwd=clone, text=True
         )
-        assert "Z-Wave client pin moves with it" in message
+        assert "Z-Wave client pin moves with it" in " ".join(message.split())
+
+    def test_bump_moves_every_declared_companion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each client pin is resolved against its own component."""
+        _upstream, clone = self._repo_with_companion(
+            tmp_path, f"{SUPERVISOR.package}==0.7.0"
+        )
+        monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
+        monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
+        wanted = {ZWAVE.package: "0.73.1", SUPERVISOR.package: "0.8.1"}
+
+        def _resolve(
+            _root: Path, _version: str, companion: deps_upgrade.Companion
+        ) -> str:
+            return wanted[companion.package]
+
+        monkeypatch.setattr(deps_upgrade, "companion_requirement", _resolve)
+
+        args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
+        assert deps_upgrade.run(args) == deps_upgrade.Exit.SUCCESS
+
+        landed = (clone / "pyproject.toml").read_text()
+        assert f"{ZWAVE.package}==0.73.1" in landed
+        assert f"{SUPERVISOR.package}==0.8.1" in landed
+        message = subprocess.check_output(
+            ["git", "log", "-1", "--format=%B"], cwd=clone, text=True
+        )
+        assert "Z-Wave client and Supervisor client pins move with it" in (
+            " ".join(message.split())
+        )
 
     def test_message_claims_the_coupled_move_only_when_it_happened(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -451,7 +490,7 @@ class TestCompanionPin:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.70.0",
+            lambda _root, _version, _companion: "0.70.0",
         )
 
         args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
@@ -475,7 +514,7 @@ class TestCompanionPin:
         monkeypatch.setattr(deps_upgrade, "REPO_ROOT", clone)
         monkeypatch.setattr(deps_upgrade, "run_suite", lambda _wt: 0)
 
-        def _explode(_root: Path, _version: str) -> str:
+        def _explode(_root: Path, _version: str, _companion: object) -> str:
             raise AssertionError("resolved a pin the repo never declared")
 
         monkeypatch.setattr(deps_upgrade, "companion_requirement", _explode)
@@ -488,9 +527,7 @@ class TestCompanionPin:
     ) -> None:
         """Which of the two to replace would be a guess."""
         _upstream, clone = self._repo_with_companion(tmp_path)
-        (clone / "extra.toml").write_text(
-            f'dep = "{deps_upgrade.COMPANION}==0.71.0"\n'
-        )
+        (clone / "extra.toml").write_text(f'dep = "{ZWAVE.package}==0.71.0"\n')
         subprocess.run(["git", "add", "extra.toml"], cwd=clone, check=True)
         subprocess.run(["git", "commit", "-qm", "drift"], cwd=clone, check=True)
         subprocess.run(["git", "push", "-q"], cwd=clone, check=True)
@@ -499,7 +536,7 @@ class TestCompanionPin:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.73.1",
+            lambda _root, _version, _companion: "0.73.1",
         )
 
         args = deps_upgrade.parse_args(["--to", "4.5.6"])
@@ -509,18 +546,16 @@ class TestCompanionPin:
 class TestDeclaredVersions:
     def test_collects_every_pinned_version(self, tmp_path: Path) -> None:
         _init_repo(tmp_path, "1.2.3")
-        (tmp_path / "other.md").write_text(
-            f"- `{deps_upgrade.COMPANION}==0.70.0`\n"
-        )
+        (tmp_path / "other.md").write_text(f"- `{ZWAVE.package}==0.70.0`\n")
         subprocess.run(["git", "add", "other.md"], cwd=tmp_path, check=True)
         subprocess.run(
             ["git", "commit", "-qm", "doc"], cwd=tmp_path, check=True
         )
 
         assert deps_upgrade.declared_versions(tmp_path, PACKAGE) == {"1.2.3"}
-        assert deps_upgrade.declared_versions(
-            tmp_path, deps_upgrade.COMPANION
-        ) == {"0.70.0"}
+        assert deps_upgrade.declared_versions(tmp_path, ZWAVE.package) == {
+            "0.70.0"
+        }
         assert deps_upgrade.declared_versions(tmp_path, "absent-pkg") == set()
 
     def test_sites_carry_the_file_each_version_came_from(
@@ -568,11 +603,12 @@ class TestCompanionRequirement:
     ) -> None:
         self._stub(
             monkeypatch,
-            stdout=f"pyserial==3.5\n{deps_upgrade.COMPANION}==0.73.1\n",
+            stdout=f"pyserial==3.5\n{ZWAVE.package}==0.73.1\n",
         )
 
         assert (
-            deps_upgrade.companion_requirement(tmp_path, "0.13.372") == "0.73.1"
+            deps_upgrade.companion_requirement(tmp_path, "0.13.372", ZWAVE)
+            == "0.73.1"
         )
 
     def test_failed_resolution_raises_naming_the_pin(
@@ -582,7 +618,7 @@ class TestCompanionRequirement:
         self._stub(monkeypatch, returncode=1, stderr="no such version")
 
         with pytest.raises(ValueError, match="cannot read Home Assistant"):
-            deps_upgrade.companion_requirement(tmp_path, "9.9.9")
+            deps_upgrade.companion_requirement(tmp_path, "9.9.9", ZWAVE)
 
     def test_inexact_requirement_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -594,11 +630,68 @@ class TestCompanionRequirement:
         """
         self._stub(
             monkeypatch,
-            stdout=f"{deps_upgrade.COMPANION}>=0.73.0,<0.74\n",
+            stdout=f"{ZWAVE.package}>=0.73.0,<0.74\n",
         )
 
         with pytest.raises(ValueError, match="no exact"):
-            deps_upgrade.companion_requirement(tmp_path, "0.13.372")
+            deps_upgrade.companion_requirement(tmp_path, "0.13.372", ZWAVE)
+
+    def test_reads_the_component_the_companion_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each client is read out of its own component's manifest."""
+        commands: list[list[str]] = []
+
+        def _run(
+            cmd: list[str], **_k: object
+        ) -> subprocess.CompletedProcess[str]:
+            commands.append(cmd)
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=f"{SUPERVISOR.package}==0.8.1\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        assert (
+            deps_upgrade.companion_requirement(
+                tmp_path, "2026.11.0", SUPERVISOR
+            )
+            == "0.8.1"
+        )
+        assert f"{PACKAGE}==2026.11.0" in commands[0]
+        assert commands[0][-2:] == [
+            str(deps_upgrade.REQUIREMENTS_READER),
+            SUPERVISOR.component,
+        ]
+
+    def test_reader_prints_the_component_requirements(
+        self, tmp_path: Path
+    ) -> None:
+        """The reader the resolution runs reads the manifest it names.
+
+        A stand-in ``homeassistant`` package carrying one component
+        manifest lets the real script run without Home Assistant.
+        """
+        component = tmp_path / "homeassistant" / "components" / "demo"
+        component.mkdir(parents=True)
+        (tmp_path / "homeassistant" / "__init__.py").write_text("")
+        (component / "manifest.json").write_text(
+            json.dumps({"requirements": ["a==1", "b==2"]})
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(deps_upgrade.REQUIREMENTS_READER), "demo"],
+            env={**os.environ, "PYTHONPATH": str(tmp_path)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == ["a==1", "b==2"]
 
 
 class TestCompanionDriftReport:
@@ -617,9 +710,7 @@ class TestCompanionDriftReport:
         paths = []
         for index, version in enumerate(versions):
             rel = f"site{index}.md"
-            (clone / rel).write_text(
-                f"- `{deps_upgrade.COMPANION}=={version}`\n"
-            )
+            (clone / rel).write_text(f"- `{ZWAVE.package}=={version}`\n")
             paths.append(rel)
         if paths:
             subprocess.run(["git", "add", *paths], cwd=clone, check=True)
@@ -688,7 +779,7 @@ class TestCompanionDriftReport:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.73.0",
+            lambda _root, _version, _companion: "0.73.0",
         )
 
         deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
@@ -711,7 +802,7 @@ class TestCompanionDriftReport:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.73.1",
+            lambda _root, _version, _companion: "0.73.1",
         )
 
         deps_upgrade.report_companion_drift(clone, "4.5.6", "origin/main")
@@ -734,7 +825,7 @@ class TestCompanionDriftReport:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.73.1",
+            lambda _root, _version, _companion: "0.73.1",
         )
 
         args = deps_upgrade.parse_args(["--dry-run", "--to", "4.5.6"])
@@ -1373,7 +1464,7 @@ class TestLanding:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.73.1",
+            lambda _root, _version, _companion: "0.73.1",
         )
 
         args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])
@@ -1384,7 +1475,7 @@ class TestLanding:
             cwd=upstream,
             text=True,
         )
-        assert f"{deps_upgrade.COMPANION}==0.73.1" in shipped
+        assert f"{ZWAVE.package}==0.73.1" in shipped
         manifest = json.loads(
             subprocess.check_output(
                 ["git", "show", f"main:{MANIFEST_REL}"],
@@ -1412,7 +1503,7 @@ class TestLanding:
         monkeypatch.setattr(
             deps_upgrade,
             "companion_requirement",
-            lambda _root, _version: "0.70.0",
+            lambda _root, _version, _companion: "0.70.0",
         )
 
         args = deps_upgrade.parse_args(["--push", "--to", "4.5.6"])

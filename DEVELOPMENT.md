@@ -279,12 +279,12 @@ requirements and consequences:
 `.python-version` pins the interpreter `uv` resolves against: every PEP 723
 script env, the project venv the `repo-shared` phase runs `pytest` in, the
 `uvx` gate tools, and the throwaway environment `scripts/deps-upgrade.py`
-resolves the Z-Wave client requirement in (which is why that call runs from
-the repo root). Without it `uv` selects the newest interpreter installed, so a
-host that gains a newer Python silently changes environment. Home Assistant's
-native dependencies publish no wheels for a brand-new release, so such a host
-builds them from source and most phases fail at once, with a compiler error
-that doesn't mention the interpreter.
+resolves the component client requirements in (which is why that call runs
+from the repo root). Without it `uv` selects the newest interpreter installed,
+so a host that gains a newer Python silently changes environment. Home
+Assistant's native dependencies publish no wheels for a brand-new release, so
+such a host builds them from source and most phases fail at once, with a
+compiler error that doesn't mention the interpreter.
 
 Cached envs hide a moved pin, because only a *fresh* resolution picks the new
 interpreter: an existing checkout keeps passing while a new worktree, a new
@@ -421,13 +421,17 @@ differences are deliberate. The comment on `mypy-extra-deps` in
   the code type-checks against. `scripts/deps-upgrade.py` owns bumping it;
   don't move it by hand. The pin says what the code is *validated* against,
   not what users run: `hacs.json` declares the supported HA floor.
-- **`zwave-js-server-python`** is an exact pin whose value is derived: it has
-  to be whatever HA's `zwave_js` component requires at the pinned release, or
-  every Z-Wave phase dies in collection on a missing name that points at the
-  library rather than the pin. `deps-upgrade.py` reads it out of the release
-  and rewrites every site in the same commit, stopping rather than guessing if
-  the sites already disagree. One site is the bundled CLI's runtime list, so
-  that rewrite changes shipped code and also bumps the integration version.
+- **Component client libraries** (`zwave-js-server-python`, `aiohasupervisor`)
+  are exact pins whose values are derived: each has to be whatever the HA
+  component that imports it (`zwave_js`, `hassio`) requires at the pinned
+  release, or every phase importing that component fails on a missing name
+  that points at the library rather than the pin. `deps-upgrade.py` reads each
+  out of the release and rewrites every site in the same commit, stopping
+  rather than guessing if the sites already disagree. `pytest-homeassistant`
+  installs only HA's core requirements, so a test that imports one of those
+  components declares its client in its own block. One
+  `zwave-js-server-python` site is the bundled CLI's runtime list, so moving
+  that pin changes shipped code and also bumps the integration version.
 - **Type stubs** (`types-PyYAML`) are unpinned at every site, so every run
   resolves whatever typeshed published last. "Latest" is the only
   configuration the checks have to satisfy, at the cost that a typeshed

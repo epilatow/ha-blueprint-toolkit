@@ -34,13 +34,13 @@ once broken.
    repair it: that tool rewrites sites carrying the version being
    replaced, so one already drifted elsewhere is invisible to it.
 
-3. The pinned ``pytest-homeassistant`` version appears only where
-   the dependency is declared, never in prose.
-   Automation rewrites the pin literal at every declaration site;
-   prose restating it is not rewritten and goes stale silently.
-   Enforcing this against the *current* pin is what makes it
-   stick: a prose mention gets written with whatever version is
-   pinned that day, so it fails here at the moment it is
+3. The pinned ``pytest-homeassistant`` version, and each pinned
+   component client library's, appears only where the dependency is
+   declared, never in prose. Automation rewrites the pin literal at
+   every declaration site; prose restating it is not rewritten and
+   goes stale silently. Enforcing this against the *current* pin is
+   what makes it stick: a prose mention gets written with whatever
+   version is pinned that day, so it fails here at the moment it is
    introduced, and a stale one never reaches a commit.
 
 4. ``.python-version`` satisfies every declared ``requires-python``
@@ -52,16 +52,16 @@ once broken.
    exiting zero, so a pin that drifts below a floor silently stops
    pinning anything.
 
-5. Every site pinning ``zwave-js-server-python`` names the same
-   version. That pin's value is dictated by the Home Assistant
-   release the harness pin selects -- HA's ``zwave_js`` component
-   requires one exact client and imports from it -- so a site left
-   behind runs against a client that release does not use, and says
-   so as a missing name in ``zwave_js`` rather than as a pin
-   problem. ``scripts/deps-upgrade.py`` moves these together; this
-   gates the result, for a pin that moved by some other route.
-   Agreement is all it checks: whether the agreed version is the
-   right one is settled by the Z-Wave phases, which import the
+5. Every site pinning a component's client library -- each of
+   ``scripts/deps-upgrade.py``'s ``COMPANIONS`` -- names the same
+   version. Each value is dictated by the Home Assistant release the
+   harness pin selects -- the component requires one exact client
+   and imports from it -- so a site left behind runs against a client
+   that release does not use, and says so as a missing name in the
+   component rather than as a pin problem. ``scripts/deps-upgrade.py``
+   moves these together; this gates the result, for a pin that moved
+   by some other route. Agreement is all it checks: whether the agreed
+   version is the right one is settled by the phases that import the
    component for real.
 
 6. No file under ``custom_components/`` carries a PEP 723 block.
@@ -100,15 +100,30 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
+
+# deps-upgrade.py is a bare script, imported off a runtime sys.path entry
+# through its scripts/deps_upgrade.py alias, as tests/test_deps_upgrade.py
+# does.
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import deps_upgrade  # noqa: E402
+
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 HARNESS = "pytest-homeassistant"
-ZWAVE_CLIENT = "zwave-js-server-python"
+# Each component client library, and the Home Assistant component that
+# requires it. Read from the tool that moves the pins, so a client it
+# starts moving is gated here too.
+COMPONENT_CLIENTS = {
+    companion.package: companion.component
+    for companion in deps_upgrade.COMPANIONS
+}
 
 # Body of a PEP 723 inline-metadata block, per the spec's opening
 # and closing sentinel lines.
@@ -268,6 +283,22 @@ def _pinned_version(package: str) -> str:
     return version
 
 
+def _site_versions(package: str) -> dict[str, list[str]]:
+    """Each version ``package`` is pinned to, with the files pinning it.
+
+    Every declaration site counts, not only the shared fallback: a
+    component's client library can be declared by just the test files
+    that import the component.
+    """
+    pattern = re.compile(re.escape(f"{package}==") + r"(\d+(?:\.\d+)*)")
+    sites: dict[str, list[str]] = {}
+    for path in _tracked(".py", ".toml", ".md"):
+        for found in pattern.finditer(path.read_text()):
+            rel = str(path.relative_to(REPO_ROOT))
+            sites.setdefault(found.group(1), []).append(rel)
+    return sites
+
+
 class TestPep723YamlStubs:
     def test_yaml_importers_declare_types_pyyaml(self) -> None:
         offenders: list[str] = []
@@ -326,33 +357,36 @@ class TestPinAgreement:
 
 
 class TestPinnedVersionNotInProse:
-    @pytest.mark.parametrize("package", [HARNESS, ZWAVE_CLIENT])
+    @pytest.mark.parametrize("package", [HARNESS, *COMPONENT_CLIENTS])
     def test_version_only_at_declaration_sites(self, package: str) -> None:
-        """Both pins are automation-moved, so both have this hazard.
+        """Every pin here is automation-moved, so each has this hazard.
 
         ``scripts/deps-upgrade.py`` rewrites every declaration site
-        for both packages in one commit. Prose naming either version
-        is not a declaration site, so the rewrite leaves it behind.
+        for these packages in one commit. Prose naming any of their
+        versions is not a declaration site, so the rewrite leaves it
+        behind.
 
-        Skips a package the fallback does not declare, matching the
-        tool, which resolves nothing where there is no such pin. Only
-        the Z-Wave client is optional in practice, but hard-coding
-        which one would make this disagree with the tool the moment
-        that changes.
+        Skips a package nothing declares, matching the tool, which
+        resolves nothing where there is no such pin. Only the client
+        libraries are optional in practice, but hard-coding which
+        would make this disagree with the tool the moment that changes.
         """
-        version = _declared_version(package)
-        if version is None:
-            pytest.skip(f"{package} is not declared in mypy-extra-deps")
+        versions = set(_site_versions(package))
+        if not versions:
+            pytest.skip(f"nothing pins {package}")
         offenders: list[str] = []
         for path in _tracked(".md", ".toml"):
             for lineno, line in enumerate(
                 path.read_text().splitlines(), start=1
             ):
-                if version not in line or f"{package}==" in line:
+                if f"{package}==" in line or not any(
+                    version in line for version in versions
+                ):
                     continue
                 rel = path.relative_to(REPO_ROOT)
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
+        version = ", ".join(sorted(versions))
         assert not offenders, (
             f"the pinned {package} version ({version}) appears outside "
             "a dependency declaration:\n  "
@@ -366,39 +400,37 @@ class TestPinnedVersionNotInProse:
 
 
 class TestCompanionPinAgreement:
-    def test_zwave_client_names_one_version(self) -> None:
+    @pytest.mark.parametrize(
+        ("package", "component"), sorted(COMPONENT_CLIENTS.items())
+    )
+    def test_client_names_one_version(
+        self, package: str, component: str
+    ) -> None:
         """Disagreeing sites break Home Assistant's own imports.
 
         ``scripts/deps-upgrade.py`` derives this pin from the Home
         Assistant release the harness pin selects and rewrites every site
         in the same commit. This gates the result: a site left behind
         type-checks and runs against a client the pinned Home Assistant
-        does not use, and the failure surfaces as a missing name in
-        ``zwave_js``, naming the library rather than the pin.
+        does not use, and the failure surfaces as a missing name in the
+        component, naming the library rather than the pin.
 
         It gates agreement only, not correctness against Home
         Assistant. Checking the latter here would mean resolving the
-        pinned release on every run; the suite's Z-Wave phases import
-        ``zwave_js`` for real and fail if the agreed version is the
-        wrong one, so a uniformly stale pin is caught there.
+        pinned release on every run; the phases that import the
+        component for real fail if the agreed version is the wrong one,
+        so a uniformly stale pin is caught there.
         """
-        pattern = re.compile(
-            re.escape(f"{ZWAVE_CLIENT}==") + r"(\d+(?:\.\d+)*)"
-        )
-        sites: dict[str, list[str]] = {}
-        for path in _tracked(".py", ".toml", ".md"):
-            for found in pattern.finditer(path.read_text()):
-                rel = str(path.relative_to(REPO_ROOT))
-                sites.setdefault(found.group(1), []).append(rel)
+        sites = _site_versions(package)
 
         assert len(sites) <= 1, (
-            f"{ZWAVE_CLIENT} is pinned to several versions:\n  "
+            f"{package} is pinned to several versions:\n  "
             + "\n  ".join(
                 f"{version}: {', '.join(sorted(paths))}"
                 for version, paths in sorted(sites.items())
             )
             + "\n\nEvery site must name the version Home Assistant's "
-            "`zwave_js` component requires at the pinned release. "
+            f"`{component}` component requires at the pinned release. "
             "`scripts/deps-upgrade.py` moves them together; a site it "
             "missed is one it could not match."
         )
