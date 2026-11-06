@@ -2469,7 +2469,7 @@ class TestLegacyNamesFollowHomeAssistant:
         repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
-        assert '"Exhaust Fan" -> `<unset>`' in entities
+        assert '"Exhaust Fan" -> `<unset>` (Uses device name)' in entities
 
         await hass.services.async_call(
             DOMAIN,
@@ -2522,7 +2522,7 @@ class TestLegacyNamesFollowHomeAssistant:
         repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
-        assert '"Fan" -> `<unset>`' in entities
+        assert '"Fan" -> `<unset>` (Uses device name)' in entities
 
     async def test_use_device_name_is_left_alone_on_suffixed_entity(
         self,
@@ -2639,13 +2639,15 @@ class TestLegacyNamesFollowHomeAssistant:
         repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
+        lines = entities.splitlines()
         assert (
-            '`switch.main_bath_fan`: "Fan Main Bath Fan" -> `<unset>`'
-            in entities
-        )
+            '- `switch.main_bath_fan`: "Fan Main Bath Fan"'
+            " -> `<unset>` (Uses device name)"
+        ) in lines
         assert (
-            '`fan.main_bath_fan`: "Fan Main Bath Fan" -> `<unset>`' in entities
-        )
+            '- `fan.main_bath_fan`: "Fan Main Bath Fan"'
+            " -> `<unset>` (Uses device name)"
+        ) in lines
 
         ent_reg.async_update_entity("switch.main_bath_fan", name="")
         ent_reg.async_update_entity("fan.main_bath_fan", name="")
@@ -2676,7 +2678,7 @@ class TestLegacyNamesFollowHomeAssistant:
         repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
         assert len(repairs) == 1
         entities = (repairs[0].translation_placeholders or {})["entities"]
-        assert '"Fan Main Bath Fan" -> `<unset>`' in entities
+        assert '"Fan Main Bath Fan" -> `<unset>` (Uses device name)' in entities
         # The doubled ID HA derives from the cleared name is not offered.
         assert self._repairs(hass, "fix_edw_entity_id_drift") == []
 
@@ -2781,6 +2783,70 @@ class TestLegacyNamesFollowHomeAssistant:
 
         await self._scan(hass)
 
+        assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
+
+    @pytest.mark.parametrize(
+        ("original_name", "device_name", "default", "line"),
+        [
+            ("Kitchen Remote On", "Kitchen Remote", "On", '"Custom" -> "On"'),
+            (
+                "Unassigned Smart Away",
+                "Smart Bridge",
+                "Unassigned Smart Away",
+                '"Custom" -> "Unassigned Smart Away"',
+            ),
+            (
+                "Kitchen Remote",
+                "Kitchen Remote",
+                "",
+                '"Custom" -> `<unset>` (Uses device name)',
+            ),
+        ],
+    )
+    async def test_cleared_name_shows_the_default_ha_shows(
+        self,
+        hass: HomeAssistant,
+        original_name: str,
+        device_name: str,
+        default: str,
+        line: str,
+    ) -> None:
+        from homeassistant.helpers import entity_registry as er
+
+        await _setup_integration(hass)
+        self._plant(
+            hass,
+            device_name=device_name,
+            original_name=original_name,
+            entity_id="button.planted",
+        )
+        ent_reg = er.async_get(hass)
+        ent_reg.async_update_entity("button.planted", name="Custom")
+        planted = ent_reg.async_get("button.planted")
+        assert planted is not None
+        # The default the entity's settings in HA show.
+        assert planted.as_partial_dict["original_name"] == default
+
+        await self._scan(hass)
+
+        repairs = self._repairs(hass, "fix_edw_device_entity_name_drift")
+        assert len(repairs) == 1
+        entities = (repairs[0].translation_placeholders or {})["entities"]
+        assert entities == f"- `button.planted`: {line}"
+
+        await hass.services.async_call(
+            DOMAIN,
+            "fix_edw_device_entity_name_drift",
+            {"notification_id": repairs[0].issue_id},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+        await self._scan(hass)
+
+        fixed = ent_reg.async_get("button.planted")
+        assert fixed is not None
+        assert fixed.name is None
+        assert fixed.entity_name == default
         assert self._repairs(hass, "fix_edw_device_entity_name_drift") == []
 
 

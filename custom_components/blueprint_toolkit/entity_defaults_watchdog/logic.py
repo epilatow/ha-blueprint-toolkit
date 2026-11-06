@@ -269,7 +269,9 @@ class DriftDetail:
     id_drifted: bool
     name_drifted: bool
     current_name: str
-    expected_name: str | None
+    # The entity's ``default_name``, which the notification and
+    # the repair show as the name a cleared override falls back to.
+    default_name: str
     has_redundant_prefix: bool = False
     recommended_override: str | None = None
     # Default entity_id the registry would have if no
@@ -922,7 +924,7 @@ def _check_entity_drift(
         id_drifted=id_drifted,
         name_drifted=name_drifted,
         current_name=entity.full_name if name_pending else entity.current_name,
-        expected_name=entity.expected_name,
+        default_name=entity.default_name,
         has_redundant_prefix=entity.has_redundant_prefix,
         recommended_override=recommended,
         expected_entity_id=entity.expected_entity_id,
@@ -1032,9 +1034,9 @@ def _build_device_notification_message(
         )
         for d in name_redundant:
             current = helpers.md_escape(d.current_name)
-            expected = helpers.md_escape(d.expected_name or "")
+            target = _name_target(d.default_name)
             lines.append(
-                f'- `{d.entity_id}`: "{current}" -> "{expected}"',
+                f'- `{d.entity_id}`: "{current}" -> {target}',
             )
         device_name = helpers.md_escape(device.de.name)
         lines.append(
@@ -1813,29 +1815,36 @@ class EvaluationResult:
     )
 
 
+def _name_target(name: str) -> str:
+    """Render the name an entity is to end up with.
+
+    An empty one is a name HA's "Use device name" switch reads
+    on for, shown as ``<unset>`` with that switch's label. It
+    is a code span because markdown would otherwise take it
+    for an HTML tag. Any other name is user-controllable, so it
+    is ``md_escape``d.
+    """
+    if name == USE_DEVICE_NAME:
+        return "`<unset>` (Uses device name)"
+    return f'"{helpers.md_escape(name)}"'
+
+
 def _name_drift_line(d: DriftDetail) -> str:
     """Render one ``old -> new`` name-drift bullet.
 
-    New value is the recommended override (set case),
-    ``<unset>`` (``USE_DEVICE_NAME`` case), or the expected
-    default name (clear case); falls back to a prose phrase
-    when the default name isn't known. The current name +
-    the override are user-controllable, so both are
-    ``md_escape``d; the entity_id is a code span, as is
-    ``<unset>``, which markdown would otherwise take for an
-    HTML tag.
+    New value is the recommended override (set case) or the
+    default name a cleared override falls back to (clear
+    case), rendered by ``_name_target``. The current name is
+    user-controllable, so it is ``md_escape``d; the entity_id
+    is a code span.
     """
     new = (
         d.recommended_override
         if d.recommended_override is not None
-        else d.expected_name
+        else d.default_name
     )
     current = helpers.md_escape(d.current_name)
-    if d.recommended_override == USE_DEVICE_NAME:
-        return f'- `{d.entity_id}`: "{current}" -> `<unset>`'
-    if new:
-        return f'- `{d.entity_id}`: "{current}" -> "{helpers.md_escape(new)}"'
-    return f'- `{d.entity_id}`: "{current}" -> the integration default name'
+    return f'- `{d.entity_id}`: "{current}" -> {_name_target(new)}'
 
 
 def _build_device_repair_specs(

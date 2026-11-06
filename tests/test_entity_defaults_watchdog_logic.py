@@ -647,7 +647,7 @@ class TestUseDeviceNameRendering:
             id_drifted=False,
             name_drifted=True,
             current_name="Fan Main Bath Fan",
-            expected_name="Main Bath Fan",
+            default_name="Main Bath Fan",
             recommended_override=USE_DEVICE_NAME,
         )
 
@@ -676,7 +676,7 @@ class TestUseDeviceNameRendering:
             id_drifted=False,
             name_drifted=True,
             current_name="Old Temp",
-            expected_name="Temperature",
+            default_name="Temperature",
         )
         message = _build_device_notification_message(
             _device(),
@@ -705,9 +705,9 @@ class TestUseDeviceNameRendering:
         )
         specs, repairs = _build_device_repair_specs(cfg, [result])
         placeholders = specs[0].translation_placeholders or {}
-        assert (
-            placeholders["entities"]
-            == '- `switch.main_bath_fan`: "Fan Main Bath Fan" -> `<unset>`'
+        assert placeholders["entities"] == (
+            '- `switch.main_bath_fan`: "Fan Main Bath Fan"'
+            " -> `<unset>` (Uses device name)"
         )
         payload = next(iter(repairs.values()))
         assert isinstance(payload, DeviceEntityNameDriftRepair)
@@ -802,7 +802,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="Old Temp",
-                expected_name="Temperature",
+                default_name="Temperature",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -819,7 +819,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="Kitchen Sensor CO2",
-                expected_name="CO2",
+                default_name="CO2",
                 has_redundant_prefix=True,
             ),
         ]
@@ -827,6 +827,61 @@ class TestBuildNotificationMessage:
         assert "**Name overrides with redundant" in msg
         assert "Kitchen Sensor" in msg
         assert "already adds" in msg
+
+    @pytest.mark.parametrize(
+        ("current_name", "default_name", "target"),
+        [
+            ("Kitchen Sensor CO2", "CO2", '"CO2"'),
+            ("Kitchen Sensor", "", "`<unset>` (Uses device name)"),
+        ],
+    )
+    def test_redundant_prefix_target_matches_the_repair(
+        self,
+        current_name: str,
+        default_name: str,
+        target: str,
+    ) -> None:
+        drifted = [
+            DriftDetail(
+                entity_id="sensor.kitchen_co2",
+                id_drifted=False,
+                name_drifted=True,
+                current_name=current_name,
+                default_name=default_name,
+                has_redundant_prefix=True,
+            ),
+        ]
+        msg = _build_device_notification_message(
+            _device(device_name="Kitchen Sensor"), drifted
+        )
+        line = f'- `sensor.kitchen_co2`: "{current_name}" -> {target}'
+        assert line in msg.splitlines()
+
+    def test_legacy_redundant_prefix_target_drops_the_device_name(
+        self,
+    ) -> None:
+        """The target is the name HA's entity settings show, not the
+        integration's whole name.
+        """
+        device = _device(
+            device_name="Kitchen Remote",
+            default_name="Kitchen Remote",
+            entities=[
+                _entity_drift(
+                    entity_id="button.kitchen_remote_off",
+                    expected_entity_id="button.kitchen_remote_off",
+                    has_entity_name=False,
+                    has_name_override=True,
+                    current_name="Kitchen Remote Off",
+                    expected_name="Kitchen Remote Off",
+                    default_name="Off",
+                    has_redundant_prefix=True,
+                ),
+            ],
+        )
+        result = _evaluate_device(_config(), device)
+        line = '- `button.kitchen_remote_off`: "Kitchen Remote Off" -> "Off"'
+        assert line in result.notification_message.splitlines()
 
     def test_id_only_section(self) -> None:
         device = _device()
@@ -836,7 +891,7 @@ class TestBuildNotificationMessage:
                 id_drifted=True,
                 name_drifted=False,
                 current_name="Battery",
-                expected_name=None,
+                default_name="",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -854,7 +909,7 @@ class TestBuildNotificationMessage:
                 id_drifted=True,
                 name_drifted=True,
                 current_name="Old",
-                expected_name="New",
+                default_name="New",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -869,14 +924,14 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="Old",
-                expected_name="New",
+                default_name="New",
             ),
             DriftDetail(
                 entity_id="sensor.id_issue",
                 id_drifted=True,
                 name_drifted=False,
                 current_name="Fine",
-                expected_name=None,
+                default_name="",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -894,7 +949,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="Fan Angle",
-                expected_name=None,
+                default_name="",
                 recommended_override="Angle",
             ),
         ]
@@ -911,7 +966,7 @@ class TestBuildNotificationMessage:
                 id_drifted=True,
                 name_drifted=False,
                 current_name="X",
-                expected_name=None,
+                default_name="",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -926,7 +981,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="Old",
-                expected_name="New",
+                default_name="New",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -940,7 +995,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="bad [name]",
-                expected_name="ok",
+                default_name="ok",
             ),
         ]
         msg = _build_device_notification_message(device, drifted)
@@ -954,7 +1009,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="bad [a]",
-                expected_name="exp [b]",
+                default_name="exp [b]",
                 has_redundant_prefix=True,
             ),
         ]
@@ -975,7 +1030,7 @@ class TestBuildNotificationMessage:
                 id_drifted=False,
                 name_drifted=True,
                 current_name="cur",
-                expected_name="exp",
+                default_name="exp",
                 recommended_override="rec [override]",
             ),
         ]
@@ -1974,13 +2029,14 @@ def _drift(
     name_drifted: bool = False,
     expected_entity_id: str | None = None,
     recommended_override: str | None = None,
+    default_name: str = "Default",
 ) -> DriftDetail:
     return DriftDetail(
         entity_id=entity_id,
         id_drifted=id_drifted,
         name_drifted=name_drifted,
         current_name="Current",
-        expected_name=None,
+        default_name=default_name,
         recommended_override=recommended_override,
         expected_entity_id=expected_entity_id,
     )
@@ -2077,15 +2133,40 @@ class TestBuildDeviceRepairSpecs:
         assert spec.translation_key == "edw_device_entity_name_drift"
         ph = spec.translation_placeholders
         assert ph is not None
-        # Clear case (no recommended override, no expected
-        # name): the entities line renders the default-name
-        # prose on the right-hand side.
-        assert ph["entities"] == (
-            '- `sensor.x`: "Current" -> the integration default name'
-        )
+        # Clear case (no recommended override): the entities line
+        # shows the default the cleared name falls back to.
+        assert ph["entities"] == '- `sensor.x`: "Current" -> "Default"'
         payload = repairs[expected_id]
         assert isinstance(payload, DeviceEntityNameDriftRepair)
         # None target clears the override (revert to default).
+        assert payload.entity_name_targets == (("sensor.x", None),)
+
+    @pytest.mark.parametrize(
+        ("default_name", "line"),
+        [
+            ("On", '- `sensor.x`: "Current" -> "On"'),
+            ("", '- `sensor.x`: "Current" -> `<unset>` (Uses device name)'),
+        ],
+    )
+    def test_cleared_name_shows_its_default(
+        self,
+        default_name: str,
+        line: str,
+    ) -> None:
+        cfg = _config(create_repairs=True)
+        result = _device_result(
+            drifted_entities=[
+                _drift(
+                    entity_id="sensor.x",
+                    name_drifted=True,
+                    default_name=default_name,
+                ),
+            ],
+        )
+        specs, repairs = _build_device_repair_specs(cfg, [result])
+        assert (specs[0].translation_placeholders or {})["entities"] == line
+        payload = next(iter(repairs.values()))
+        assert isinstance(payload, DeviceEntityNameDriftRepair)
         assert payload.entity_name_targets == (("sensor.x", None),)
 
     def test_both_drifts_emit_two_specs(self) -> None:
