@@ -34,7 +34,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from conftest import RecoveryEventsIntegrationBase
+from conftest import RecoveryEventsIntegrationBase, persistent_notifications
 
 REPO_ROOT = Path(__file__).parent.parent
 _SCRIPT_PATH = (
@@ -252,13 +252,9 @@ async def test_pending_notification_dismisses_on_convergence(
     _capture_zwave_services(hass)
     await _setup_integration(hass)
 
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert any(nid.endswith("__pending") for nid in notifs), list(notifs)
 
     # Simulate the sleeping device waking and applying the write: swap in a
@@ -272,7 +268,7 @@ async def test_pending_notification_dismisses_on_convergence(
 
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
 
 
@@ -284,10 +280,6 @@ async def test_pending_report_disabled_when_interval_zero(hass: Any) -> None:
     _capture_zwave_services(hass)
     await _setup_integration(hass)
 
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
     await hass.services.async_call(
         DOMAIN,
         SERVICE,
@@ -295,7 +287,7 @@ async def test_pending_report_disabled_when_interval_zero(hass: Any) -> None:
         blocking=True,
     )
     await hass.async_block_till_done()
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
 
 
@@ -315,13 +307,9 @@ async def test_stale_pending_dismissed_after_state_reset(hass: Any) -> None:
     _capture_zwave_services(hass)
     await _setup_integration(hass)
 
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert any(nid.endswith("__pending") for nid in notifs), list(notifs)
 
     # Reproduce the post-reload fresh-instance condition without tearing down
@@ -336,16 +324,12 @@ async def test_stale_pending_dismissed_after_state_reset(hass: Any) -> None:
 
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert not any(nid.endswith("__pending") for nid in notifs), list(notifs)
 
 
 def _desired_shown(hass: Any) -> bool:
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     return any(nid.endswith("__desired") for nid in notifs)
 
 
@@ -405,11 +389,7 @@ async def test_invalid_policy_emits_config_error(hass: Any) -> None:
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
 
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert any("config_error" in nid for nid in notifs), list(notifs)
 
 
@@ -424,11 +404,7 @@ async def test_unused_policy_emits_notification(hass: Any) -> None:
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
 
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert any("unused" in nid for nid in notifs), list(notifs)
 
 
@@ -440,11 +416,7 @@ async def test_no_zwave_js_emits_unavailable(hass: Any) -> None:
     await hass.services.async_call(DOMAIN, SERVICE, _payload(), blocking=True)
     await hass.async_block_till_done()
 
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
-    notifs = _async_get_or_create_notifications(hass)
+    notifs = persistent_notifications(hass)
     assert any("unavailable" in nid for nid in notifs), list(notifs)
 
 

@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
+from conftest import persistent_notifications
 
 REPO_ROOT = Path(__file__).parent.parent
 _SCRIPT_PATH = (
@@ -144,11 +145,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_bad_call__config_error"
@@ -175,11 +172,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_overlap__config_error"
@@ -200,11 +193,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_no_entity__config_error"
@@ -234,11 +223,7 @@ class TestArgparseEmitsConfigErrorNotification:
         payload["controlled_entities_raw"] = [bad]
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_baddomain__config_error"
@@ -281,11 +266,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_trigger_ok__config_error"
@@ -316,11 +297,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_link__config_error"
@@ -352,11 +329,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_escape__config_error"
@@ -393,11 +366,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_trigger_entity_controller"
             "__automation.tec_dismiss__config_error"

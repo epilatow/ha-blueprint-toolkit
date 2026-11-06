@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from conftest import (
     RecoveryEventsIntegrationBase,
+    persistent_notifications,
 )
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -138,11 +139,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_bad_call__config_error"
@@ -171,11 +168,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_bad_regex__config_error"
@@ -205,11 +198,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_match_all__config_error"
@@ -238,11 +227,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_link__config_error"
@@ -274,11 +259,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_escape__config_error"
@@ -306,11 +287,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_dismiss__config_error"
@@ -409,11 +386,7 @@ class TestServiceLayerScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         # Exactly one per-owner notification with the RW
         # prefix should be present (modulo unrelated HA
         # notifications); identify it by the
@@ -504,11 +477,7 @@ class TestServiceLayerScan:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         owner_notifs = {
             nid: spec
             for nid, spec in notifs.items()
@@ -550,11 +519,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_unmatched__unmatched_directives"
@@ -589,11 +554,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_unmatched_dev_regex__unmatched_directives"
@@ -625,15 +586,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_toggle__unmatched_directives"
         )
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         assert notif_id in notifs, "first run should fire the notification"
 
         # Second run: toggle off -> the prior notification
@@ -650,7 +607,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        notifs = _async_get_or_create_notifications(hass)
+        notifs = persistent_notifications(hass)
         assert notif_id not in notifs, (
             "toggle-off run must dismiss the prior unmatched-directives notif"
         )
@@ -681,15 +638,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_categories__unmatched_directives"
         )
-        body = _async_get_or_create_notifications(hass)[notif_id]["message"]
+        body = persistent_notifications(hass)[notif_id]["message"]
         assert "exclude_integrations" in body
         assert "exclude_entities" in body
         assert "exclude_entity_id_regex" in body
@@ -754,11 +707,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         prefix = (
             "blueprint_toolkit_reference_watchdog__automation.rw_capbypass__"
         )
@@ -816,15 +765,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_customize__unmatched_directives"
         )
-        notifs = _async_get_or_create_notifications(hass)
+        notifs = persistent_notifications(hass)
         if notif_id in notifs:
             body = notifs[notif_id]["message"]
             assert "sensor.removed_in_customize" not in body, (
@@ -874,15 +819,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_reference_watchdog"
             "__automation.rw_brokenref__unmatched_directives"
         )
-        notifs = _async_get_or_create_notifications(hass)
+        notifs = persistent_notifications(hass)
         # The unmatched-directives notification spec is always
         # dispatched, but it's inactive (auto-dismiss) when there
         # are no unmatched entries -- so it shouldn't appear in the
@@ -952,11 +893,7 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         per_device = [
             (nid, body)
             for nid, body in notifs.items()
@@ -1055,11 +992,7 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         unused_dev_notifs = {
             nid
             for nid in notifs
@@ -1141,12 +1074,11 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
+        from homeassistant.components.persistent_notification import (
             async_dismiss,
         )
 
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         rescued_notifs = {
             nid
             for nid in notifs
@@ -1179,7 +1111,7 @@ class TestUnusedDeviceCheckEndToEnd:
             blocking=True,
         )
         await hass.async_block_till_done()
-        notifs2: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs2: dict[str, Any] = persistent_notifications(hass)
         flagged_notifs = {
             nid
             for nid in notifs2
@@ -1200,9 +1132,6 @@ class TestUnusedDeviceCheckEndToEnd:
         from homeassistant.components.homeassistant.exposed_entities import (
             KNOWN_ASSISTANTS,
             async_expose_entity,
-        )
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
         )
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
@@ -1247,7 +1176,7 @@ class TestUnusedDeviceCheckEndToEnd:
 
         flagged = [
             nid
-            for nid in _async_get_or_create_notifications(hass)
+            for nid in persistent_notifications(hass)
             if nid.startswith(
                 "blueprint_toolkit_reference_watchdog"
                 "__automation.rw_hidden__unused_device_"
@@ -1259,9 +1188,6 @@ class TestUnusedDeviceCheckEndToEnd:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
         from homeassistant.helpers import area_registry as ar
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
@@ -1300,10 +1226,7 @@ class TestUnusedDeviceCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        bodies = [
-            n["message"]
-            for n in _async_get_or_create_notifications(hass).values()
-        ]
+        bodies = [n["message"] for n in persistent_notifications(hass).values()]
         expected = (
             f"Device: [Vac](/config/devices/device/{device.id}) (Living Room)"
         )
@@ -1376,11 +1299,7 @@ class TestUnusedDevicelessCheckEndToEnd:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         rollup_notifs = {
             nid: spec["message"]
             for nid, spec in notifs.items()
@@ -1470,11 +1389,7 @@ class TestFileEditorLinkEndToEnd:
             )
             await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         owner_notifs = [
             spec["message"]
             for nid, spec in notifs.items()
@@ -1544,11 +1459,7 @@ class TestFileEditorLinkEndToEnd:
             )
             await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         rollup = next(
             (
                 spec["message"]

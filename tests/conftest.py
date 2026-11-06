@@ -1,6 +1,8 @@
 """Pytest configuration - runs before test collection."""
 # This is AI generated code
 
+from __future__ import annotations
+
 import argparse
 import atexit
 import os
@@ -12,9 +14,16 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC
 from pathlib import Path
-from typing import Any, ClassVar, NoReturn
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 import pytest
+
+if TYPE_CHECKING:
+    from homeassistant.components.persistent_notification import (
+        Notification,
+        UpdateType,
+    )
+    from homeassistant.core import HomeAssistant
 
 # Repository root
 _REPO_ROOT = Path(__file__).parent.parent
@@ -84,6 +93,54 @@ def hass_config_dir(hass_tmp_config_dir: str) -> str:
     and state files into its config directory.
     """
     return hass_tmp_config_dir
+
+
+# The ``hass.data`` key the ``hass`` fixture below keeps the
+# persistent notifications under, by ID.
+_NOTIFICATIONS_KEY = "blueprint_toolkit_test_notifications"
+
+
+@pytest.fixture
+async def hass(hass: HomeAssistant) -> HomeAssistant:
+    """pytest-homeassistant's ``hass``, recording persistent notifications.
+
+    Home Assistant reports each notification it creates, updates, or
+    dismisses to a callback registered through the component's public
+    ``async_register_callback``, before the call making the change
+    returns. Registered before any test code runs, the copy kept here is
+    the current set at every point, which ``persistent_notifications``
+    reads.
+    """
+    from homeassistant.components import persistent_notification
+    from homeassistant.core import callback
+
+    notifications: dict[str, Notification] = {}
+
+    @callback  # type: ignore[untyped-decorator,unused-ignore]
+    def _record(
+        update_type: UpdateType,
+        changed: dict[str, Notification],
+    ) -> None:
+        if update_type is persistent_notification.UpdateType.REMOVED:
+            for notification_id in changed:
+                notifications.pop(notification_id, None)
+        else:
+            notifications.update(changed)
+
+    persistent_notification.async_register_callback(hass, _record)
+    hass.data[_NOTIFICATIONS_KEY] = notifications
+    return hass
+
+
+def persistent_notifications(
+    hass: HomeAssistant,
+) -> dict[str, Notification]:
+    """A snapshot of the persistent notifications HA holds, by ID.
+
+    Read from what the ``hass`` fixture records.
+    """
+    recorded: dict[str, Notification] = hass.data[_NOTIFICATIONS_KEY]
+    return dict(recorded)
 
 
 def coverage_source(script_path: Path, repo_root: Path) -> str:
@@ -533,15 +590,11 @@ class WatchdogFindingLifecycleBase:
         }
 
     def _notifications(self, hass: Any) -> dict[str, Any]:
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         prefix = f"{self._DOMAIN}_{self.service}__{self._INSTANCE_ID}__"
         return {
             notification_id: notification
             for notification_id, notification in (
-                _async_get_or_create_notifications(hass).items()
+                persistent_notifications(hass).items()
             )
             if notification_id.startswith(prefix)
         }

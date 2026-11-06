@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 # Make custom_components/ importable as a top-level package.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from conftest import RecoveryEventsIntegrationBase
+from conftest import RecoveryEventsIntegrationBase, persistent_notifications
 
 REPO_ROOT = Path(__file__).parent.parent
 _SCRIPT_PATH = (
@@ -97,15 +97,11 @@ def _payload(
 
 async def _scan(hass: HomeAssistant, **kwargs: Any) -> dict[str, Any]:
     """Run one scan; return the live notifications."""
-    from homeassistant.components.persistent_notification.helpers import (
-        _async_get_or_create_notifications,
-    )
-
     await hass.services.async_call(
         DOMAIN, SERVICE, _payload(**kwargs), blocking=True
     )
     await hass.async_block_till_done()
-    notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+    notifs: dict[str, Any] = persistent_notifications(hass)
     return notifs
 
 
@@ -172,11 +168,7 @@ class TestConfigErrors:
             DOMAIN, SERVICE, {"instance_id": INSTANCE}, blocking=True
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs = _async_get_or_create_notifications(hass)
+        notifs = persistent_notifications(hass)
         notif_id = (
             f"blueprint_toolkit_battery_watchdog__{INSTANCE}__config_error"
         )

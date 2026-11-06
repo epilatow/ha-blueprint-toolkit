@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import (
     RecoveryEventsIntegrationBase,
     WatchdogFindingLifecycleBase,
+    persistent_notifications,
 )
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -136,11 +137,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_bad_call__config_error"
@@ -161,11 +158,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_bad_check__config_error"
@@ -190,11 +183,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_bad_regex__config_error"
@@ -219,11 +208,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_match_all__config_error"
@@ -252,11 +237,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_link__config_error"
@@ -287,11 +268,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_dismiss__config_error"
@@ -418,11 +395,7 @@ class TestPerDeviceLinkPrefix:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         # Find the per-device notification (suffix
         # ``device_<device_id>``).
         # Diagnostic-state introspection helps if the
@@ -474,15 +447,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_unmatched__unmatched_directives"
         )
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         assert notif_id in notifs
         body: str = notifs[notif_id]["message"]
         assert "typoed_integration" in body
@@ -507,15 +476,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_toggle__unmatched_directives"
         )
-        assert notif_id in _async_get_or_create_notifications(hass)
+        assert notif_id in persistent_notifications(hass)
 
         # Toggle off -> dismissed even with the same value.
         await hass.services.async_call(
@@ -529,7 +494,7 @@ class TestUnmatchedDirectives:
             blocking=True,
         )
         await hass.async_block_till_done()
-        assert notif_id not in _async_get_or_create_notifications(hass)
+        assert notif_id not in persistent_notifications(hass)
 
     async def test_cap_bypass_unmatched_directives_always_surfaces(
         self,
@@ -602,11 +567,7 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         prefix = "blueprint_toolkit_device_watchdog__automation.dw_capbypass__"
         per_device = [
             nid for nid in notifs if nid.startswith(f"{prefix}device_")
@@ -650,15 +611,11 @@ class TestUnmatchedDirectives:
         )
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         notif_id = (
             "blueprint_toolkit_device_watchdog"
             "__automation.dw_regex_cats__unmatched_directives"
         )
-        body = _async_get_or_create_notifications(hass)[notif_id]["message"]
+        body = persistent_notifications(hass)[notif_id]["message"]
         assert "exclude_device_name_regex" in body
         assert "exclude_entity_id_regex" in body
         assert "xyz_no_device_matches" in body
@@ -778,10 +735,6 @@ class TestDisabledDiagnosticsDirectives:
         hass: HomeAssistant,
         **overrides: Any,
     ) -> bool:
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
         await hass.services.async_call(
             DOMAIN,
             SERVICE,
@@ -797,7 +750,7 @@ class TestDisabledDiagnosticsDirectives:
             "unmatched_directives" in notification_id
             and "exclude_entity_id_regex" in notification["message"]
             for notification_id, notification in (
-                _async_get_or_create_notifications(hass).items()
+                persistent_notifications(hass).items()
             )
         )
 
@@ -942,9 +895,6 @@ class TestStaleNotificationTime:
     ) -> None:
         from datetime import timedelta
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
         from homeassistant.util import dt as dt_util
@@ -982,10 +932,7 @@ class TestStaleNotificationTime:
 
         local = reported.astimezone(dt_util.get_default_time_zone())
         assert local.utcoffset() == timedelta(hours=5, minutes=30)
-        bodies = [
-            n["message"]
-            for n in _async_get_or_create_notifications(hass).values()
-        ]
+        bodies = [n["message"] for n in persistent_notifications(hass).values()]
         expected = f"Most recent update {local:%Y-%m-%d %H:%M:%S} via"
         assert any(expected in body for body in bodies), bodies
 
@@ -1012,9 +959,6 @@ class TestDeviceAreaInHeader:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
         from homeassistant.helpers import entity_registry as er
 
         await _setup_integration(hass)
@@ -1035,10 +979,7 @@ class TestDeviceAreaInHeader:
         )
         await hass.async_block_till_done()
 
-        bodies = [
-            n["message"]
-            for n in _async_get_or_create_notifications(hass).values()
-        ]
+        bodies = [n["message"] for n in persistent_notifications(hass).values()]
         expected = (
             f"Device: [Vac](/config/devices/device/{device_id}) (Living Room)"
         )
@@ -1112,9 +1053,6 @@ class TestExcludedIntegrationCoversTheDevice:
         self,
         hass: HomeAssistant,
     ) -> None:
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
         from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
 
@@ -1156,7 +1094,7 @@ class TestExcludedIntegrationCoversTheDevice:
             await hass.async_block_till_done()
             return [
                 notification_id
-                for notification_id in _async_get_or_create_notifications(hass)
+                for notification_id in persistent_notifications(hass)
                 if "__automation.dw_shared__device_" in notification_id
             ]
 

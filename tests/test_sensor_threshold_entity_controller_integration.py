@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from conftest import (
     RecoveryEventsIntegrationBase,
+    persistent_notifications,
 )
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -142,11 +143,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_sensor_threshold_entity_controller"
             "__automation.stec_bad_call__config_error"
@@ -170,11 +167,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_sensor_threshold_entity_controller"
             "__automation.stec_empty__config_error"
@@ -198,11 +191,7 @@ class TestArgparseEmitsConfigErrorNotification:
         )
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_sensor_threshold_entity_controller"
             "__automation.stec_bad_switch__config_error"
@@ -243,11 +232,7 @@ class TestArgparseEmitsConfigErrorNotification:
         await hass.services.async_call(DOMAIN, SERVICE, payload, blocking=True)
         await hass.async_block_till_done()
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_sensor_threshold_entity_controller"
             "__automation.stec_bad_domain__config_error"
@@ -278,11 +263,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_sensor_threshold_entity_controller"
             "__automation.stec_link__config_error"
@@ -315,11 +296,7 @@ class TestArgparseEmitsConfigErrorNotification:
             blocking=True,
         )
 
-        from homeassistant.components.persistent_notification.helpers import (
-            _async_get_or_create_notifications,
-        )
-
-        notifs: dict[str, Any] = _async_get_or_create_notifications(hass)
+        notifs: dict[str, Any] = persistent_notifications(hass)
         notif_id = (
             "blueprint_toolkit_sensor_threshold_entity_controller"
             "__automation.stec_dismiss__config_error"
