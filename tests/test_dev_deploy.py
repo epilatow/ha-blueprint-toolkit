@@ -18,33 +18,19 @@ hides on read still lands on the host as a file.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
 
+# A dash is no part of a module name, so the script under test is
+# imported through its tests/dev_deploy.py alias.
+import dev_deploy
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 DEV_DEPLOY = REPO_ROOT / "scripts" / "dev-deploy.py"
-
-
-def _load_dev_deploy() -> object:
-    """Import dev-deploy.py under a module name Python accepts.
-
-    The hyphen in the filename is not a legal identifier, so the
-    file cannot be imported by name; everything it does at import
-    time sits behind a ``__main__`` guard. ``dev_deploy`` is the
-    name ``run_tests --coverage`` measures.
-    """
-    spec = importlib.util.spec_from_file_location("dev_deploy", DEV_DEPLOY)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def _tar_members(src: Path, env: dict[str, str]) -> list[str]:
@@ -101,8 +87,7 @@ class TestShippingArchive:
         on read, so ``tar -t`` reports a clean archive either way,
         while the host's ``tar`` writes the companion out as a file.
         """
-        module = _load_dev_deploy()
-        env = module.tar_env()  # type: ignore[attr-defined]
+        env = dev_deploy.tar_env()
 
         names = _tar_members(payload, env)
 
@@ -115,8 +100,7 @@ class TestShippingArchive:
         )
 
     def test_env_sets_the_documented_opt_out(self) -> None:
-        module = _load_dev_deploy()
-        assert module.tar_env()["COPYFILE_DISABLE"] == "1"  # type: ignore[attr-defined]
+        assert dev_deploy.tar_env()["COPYFILE_DISABLE"] == "1"
 
     @pytest.mark.skipif(
         sys.platform != "darwin",

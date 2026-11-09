@@ -100,21 +100,15 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
+# A dash is no part of a module name, so scripts/deps-upgrade.py is
+# imported through its tests/deps_upgrade.py alias.
+import deps_upgrade
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-
-# deps-upgrade.py is a bare script, imported off a runtime sys.path entry
-# through its scripts/deps_upgrade.py alias, as tests/test_deps_upgrade.py
-# does.
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-
-import deps_upgrade  # noqa: E402
-
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 HARNESS = "pytest-homeassistant"
 # Each component client library, and the Home Assistant component that

@@ -29,18 +29,13 @@ import urllib.request
 from pathlib import Path
 from typing import Self
 
+# A dash is no part of a module name, so the script under test is
+# imported through its tests/deps_upgrade.py alias.
+import deps_upgrade
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 _SCRIPT_PATH = REPO_ROOT / "scripts" / "deps-upgrade.py"
-
-# deps-upgrade.py is a bare script, imported off a runtime sys.path entry
-# the way the other script tests reach render_docs / zwave_network_info.
-# A dash is no part of a module name, so it is imported through the
-# scripts/deps_upgrade.py alias.
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-
-import deps_upgrade  # noqa: E402
 
 # Every pin below is built from this rather than written out.
 # A literal declaration line in this file would be a real

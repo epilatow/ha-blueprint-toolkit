@@ -101,6 +101,12 @@ that always needs a pytest option passes it as `pytest_args=`, as the files
 that stub the `homeassistant` modules do with `-p no:pytest_homeassistant`.
 `tests/test_run_all.py` gates that every discovered file ends with this call.
 
+A dash is no part of a module name, so a test that imports a dashed script,
+such as `scripts/dev-deploy.py`, does so through a symlink in `tests/` named
+for it with underscores, `tests/dev_deploy.py`. The alias lives beside the
+tests because nothing else imports it, and its name is the module `--coverage`
+measures.
+
 `tests/docker/test_dev_workflow.py` is the exception: its standalone entry
 point calls `pytest.main()` directly so it can force the otherwise excluded
 `docker` marker and select the Docker test path.
