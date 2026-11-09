@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant==2026.11.0",
+#     "pytest-homeassistant==2026.11.1",
 #     "zwave-js-server-python==0.74.0",
 #     "pyyaml",
 #     "types-PyYAML",

@@ -7,7 +7,7 @@
 #     "pytest-cov",
 #     "probatio",
 #     "PyYAML",
-#     "pytest-homeassistant==2026.11.0",
+#     "pytest-homeassistant==2026.11.1",
 #     "types-PyYAML",
 # ]
 # ///

@@ -8,7 +8,7 @@
 #     "probatio",
 #     "PyYAML",
 #     "Jinja2>=3",
-#     "pytest-homeassistant==2026.11.0",
+#     "pytest-homeassistant==2026.11.1",
 #     "types-PyYAML",
 # ]
 # ///

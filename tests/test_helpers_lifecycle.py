@@ -5,7 +5,7 @@
 #     "pytest",
 #     "pytest-asyncio",
 #     "pytest-cov",
-#     "pytest-homeassistant==2026.11.0",
+#     "pytest-homeassistant==2026.11.1",
 #     "types-PyYAML",
 # ]
 # ///
