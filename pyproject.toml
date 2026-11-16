@@ -30,7 +30,7 @@ dependencies = [
 shipped-python-version = "3.14"
 
 [tool.uv.sources]
-epilatow-repo-shared = { git = "https://github.com/epilatow/repo-shared", rev = "97fdfeb833cd43fe2f3faeaa6815603f4329e849" }
+epilatow-repo-shared = { git = "https://github.com/epilatow/repo-shared", rev = "f6d7cf90acd1747571ef88d06d1f19b93f6e19cb" }
 
 [tool.repo-shared.markdown]
 # Repo's pre-existing markdown was wrapped at 78 (markdownlint.json
