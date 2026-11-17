@@ -23,9 +23,6 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
         return 2
-    if homeassistant.__file__ is None:
-        print("homeassistant is not a regular package", file=sys.stderr)
-        return 1
     manifest = (
         Path(homeassistant.__file__).parent
         / "components"

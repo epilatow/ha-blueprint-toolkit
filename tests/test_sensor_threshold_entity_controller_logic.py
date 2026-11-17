@@ -831,7 +831,8 @@ class TestEndToEnd:
                     current_time=t,
                 ),
             )
-        assert state.baseline is None
+        baseline_before_spike = state.baseline
+        assert baseline_before_spike is None
 
         # Shower starts: humidity spikes
         t += timedelta(seconds=30)

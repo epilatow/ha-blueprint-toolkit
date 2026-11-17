@@ -58,12 +58,9 @@ __all__ = (
 )
 
 
-# A concept's user value. ``float`` covers ``int`` through the numeric
-# tower, so spelling the union with ``int`` as well is redundant --
-# PYI041 rejects it in a parameter annotation and would leave the
-# dataclass fields spelled differently from the functions that take
-# them. One alias keeps every site identical.
-type GenericValue = bool | float
+# Keep int explicit so mypy can distinguish integer RANGE values from bool
+# and float when analyzing isinstance checks.
+type GenericValue = bool | int | float
 
 
 # -- Z-Wave protocol ---------------------------------------------

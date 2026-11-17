@@ -118,8 +118,9 @@ class TestOnReload:
         def _cancel() -> None:
             canceled.append(1)
 
-        s1 = _make_state("automation.a", armed_interval_minutes=5)
-        s1.cancel_timer = _cancel
+        s1 = _make_state(
+            "automation.a", armed_interval_minutes=5, cancel_timer=_cancel
+        )
         s2 = _make_state("automation.b", armed_interval_minutes=10)
         # No timer on s2; should not raise.
         h = _hass_with_instances({"automation.a": s1, "automation.b": s2})

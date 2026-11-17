@@ -14,6 +14,7 @@ disabling entities, and force-on behavior.
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
+from typing import assert_never
 
 from .. import helpers
 
@@ -546,4 +547,4 @@ def evaluate(config: Config, inputs: Inputs) -> Result:
     if inputs.event_type == EventType.TIMER:
         return _handle_timer(config, inputs)
 
-    return Result(reason="unknown event type")
+    assert_never(inputs.event_type)

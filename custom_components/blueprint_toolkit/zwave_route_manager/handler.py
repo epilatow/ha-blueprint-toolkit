@@ -38,7 +38,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, assert_never
 
 import probatio
 from homeassistant.config_entries import ConfigEntry
@@ -1280,12 +1280,7 @@ async def _bridge_apply_actions(
             )
         if kind == logic.RouteActionKind.CLEAR_PRIORITY_SUC_RETURN_ROUTES:
             return await client.delete_suc_return_routes(action.node_id)
-        return bridge.ApiResult(
-            success=False,
-            message=f"unknown RouteActionKind: {action.kind!r}",
-            api_echo=None,
-            result=None,
-        )
+        assert_never(kind)
 
     async def _one(
         client: bridge.ZwaveJsUiClient,
@@ -1438,8 +1433,6 @@ def _build_entity_to_resolution(
     device_to_node: dict[str, int] = {}
     for dev in dev_reg.devices:
         for ident in dev.identifiers:
-            if len(ident) < 2:
-                continue
             domain = ident[0]
             if domain != "zwave_js":
                 continue

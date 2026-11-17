@@ -20,6 +20,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "validate_zwave_mapping_proposal.py"
 
@@ -337,6 +339,43 @@ def test_legitimate_diff_passes_all_checks(tmp_path: Path) -> None:
         },
     )
     proc = _run(proposed, current, extraction)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "all checks passed" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("concept", "label"),
+    [
+        ("motion_sensitivity", "Motion Sensitivity"),
+        ("humidity_report_threshold", "Humidity Report Threshold"),
+    ],
+)
+def test_non_mapping_instances_are_ignored(
+    tmp_path: Path, concept: str, label: str
+) -> None:
+    extraction = tmp_path / "extraction.json"
+    _write_json(
+        extraction,
+        {
+            "command_classes": {
+                "112": {
+                    "labels": [
+                        {
+                            "label": label,
+                            "instances": [None, "invalid", 42],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    current = tmp_path / "current.json"
+    _write_json(current, {"locators": {}})
+    proposed = tmp_path / "proposed.json"
+    _write_json(proposed, {"locators": {concept: {"labels": [label]}}})
+
+    proc = _run(proposed, current, extraction)
+
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "all checks passed" in proc.stdout
 

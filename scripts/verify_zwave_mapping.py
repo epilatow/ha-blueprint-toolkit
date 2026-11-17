@@ -40,7 +40,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, assert_never
 
 import yaml
 
@@ -202,7 +202,7 @@ def _locator_matches(locator: Locator, device: Device) -> list[ParamMeta]:
             if p.id.command_class == locator.command_class
             and p.id.property_ == locator.property_
         ]
-    return []
+    assert_never(locator)
 
 
 def _classify_device(device: Device, mapping: MappingTable) -> _DeviceReport:

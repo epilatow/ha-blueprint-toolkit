@@ -113,9 +113,12 @@ def _hass_with_instances(
 class TestOnReload:
     def test_cancels_timers_and_dispatchers(self) -> None:
         canceled: list[str] = []
-        s1 = _make_state("automation.a", armed_interval_minutes=5)
-        s1.cancel_timer = lambda: canceled.append("timer")
-        s1.cancel_dispatcher = lambda: canceled.append("dispatcher")
+        s1 = _make_state(
+            "automation.a",
+            armed_interval_minutes=5,
+            cancel_timer=lambda: canceled.append("timer"),
+            cancel_dispatcher=lambda: canceled.append("dispatcher"),
+        )
         s2 = _make_state("automation.b", armed_interval_minutes=10)
         h = _hass_with_instances({"automation.a": s1, "automation.b": s2})
 

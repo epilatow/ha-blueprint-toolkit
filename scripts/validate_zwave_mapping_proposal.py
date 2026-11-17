@@ -312,7 +312,11 @@ def _instances_by_label(
                 if isinstance(entry, dict) and isinstance(
                     entry.get("label"), str
                 ):
-                    out[entry["label"]] = entry.get("instances", [])
+                    out[entry["label"]] = [
+                        inst
+                        for inst in entry.get("instances", [])
+                        if isinstance(inst, dict)
+                    ]
     return out
 
 
@@ -347,8 +351,6 @@ def _direction_findings(
             continue
         for label in loc["labels"]:
             for inst in insts_by_label.get(label, []):
-                if not isinstance(inst, dict):
-                    continue
                 direction = _classify_direction(inst, low_tokens, high_tokens)
                 if direction == "ascending":
                     continue
@@ -395,8 +397,6 @@ def _unit_findings(
             continue
         for label in loc["labels"]:
             for inst in insts_by_label.get(label, []):
-                if not isinstance(inst, dict):
-                    continue
                 du = inst.get("unit")
                 du = du if isinstance(du, str) else None
                 raw, _ = _convert_quantity(1.0, gp.units, du)

@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
-from typing import Any
+from typing import Any, assert_never
 
 from .. import helpers
 
@@ -283,7 +283,7 @@ class Controller:
             return self._handle_switch(state, inputs)
         if inputs.event_type == EventType.TIMER:
             return self._handle_timer(state, inputs)
-        return Result()
+        assert_never(inputs.event_type)
 
     def _handle_sensor(
         self,
