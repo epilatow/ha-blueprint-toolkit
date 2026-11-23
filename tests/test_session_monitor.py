@@ -8,7 +8,7 @@
 #     "probatio",
 #     "pyyaml",
 #     "zwave-js-server-python==0.74.0",
-#     "pytest-homeassistant==2026.11.1",
+#     "pytest-homeassistant==2026.11.2",
 #     "types-PyYAML",
 # ]
 # ///

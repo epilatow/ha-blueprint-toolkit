@@ -4,7 +4,7 @@
 # dependencies = [
 #     "pytest",
 #     "pytest-cov",
-#     "pytest-homeassistant==2026.11.1",
+#     "pytest-homeassistant==2026.11.2",
 #     "types-PyYAML",
 # ]
 # ///
